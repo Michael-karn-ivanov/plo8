@@ -1,0 +1,1 @@
+Python library, defining major types to implement game engine: card (from deuce to ace, 4 suits), hand (4 cards), shared cards (consisting of flop, turn, river), deck.
