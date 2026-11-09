@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# post-commit hook for plo8.
+#
+# After a commit (or `git commit --amend`):
+#   * if any spec.md changed -> run the Claude `planner` sub-agent
+#   * if any plan.md changed -> run the Claude `coder` sub-agent
+#
+# For a regular commit the changes are HEAD vs its parent.
+# For an amend the changes are HEAD vs the pre-amend commit, so amending in
+# the planner's plan.md edits triggers the coder without re-running the planner.
+#
+# Env:
+#   PLO8_SKIP_CLAUDE_HOOK=1   skip this hook entirely
+#
+# Enable once per clone: ./scripts/install-hooks.sh
+#   (or: git config core.hooksPath .githooks)
+
+set -euo pipefail
+
+if [[ "${PLO8_SKIP_CLAUDE_HOOK:-}" == "1" ]]; then
+  exit 0
+fi
+
+# Avoid recursion if an agent ever commits.
+if [[ -n "${PLO8_CLAUDE_HOOK_RUNNING:-}" ]]; then
+  exit 0
+fi
+export PLO8_CLAUDE_HOOK_RUNNING=1
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "[plo8 post-commit] 'claude' CLI not found in PATH; skipping sub-agents." >&2
+  exit 0
+fi
+
+# Determine the base to diff against.
+last_action="$(git reflog -1 --format=%gs HEAD 2>/dev/null || true)"
+if [[ "$last_action" == "commit (amend)"* ]] && git rev-parse -q --verify 'HEAD@{1}' >/dev/null; then
+  base="$(git rev-parse 'HEAD@{1}')"
+  mode="amend"
+elif git rev-parse -q --verify 'HEAD~1' >/dev/null; then
+  base="$(git rev-parse 'HEAD~1')"
+  mode="commit"
+else
+  base=""  # root commit
+  mode="initial commit"
+fi
+
+if [[ -n "$base" ]]; then
+  changed="$(git diff --name-only "$base" HEAD)"
+else
+  changed="$(git diff-tree --root --no-commit-id --name-only -r HEAD)"
+fi
+
+spec_files="$(grep -E '(^|/)spec\.md$' <<<"$changed" || true)"
+plan_files="$(grep -E '(^|/)plan\.md$' <<<"$changed" || true)"
+
+if [[ -z "$spec_files" && -z "$plan_files" ]]; then
+  exit 0
+fi
+
+diff_for() {
+  # $@ = files
+  if [[ -n "$base" ]]; then
+    git diff "$base" HEAD -- "$@"
+  else
+    git show --format= HEAD -- "$@"
+  fi
+}
+
+run_agent() {
+  local agent="$1" files="$2" what="$3"
+  local diff
+  # shellcheck disable=SC2086
+  diff="$(diff_for $files)"
+
+  echo "[plo8 post-commit] ${what} changed (${mode}); running '${agent}' sub-agent..." >&2
+  local prompt
+  prompt="$(cat <<EOF
+The following ${what} file(s) were changed in the latest git ${mode} ($(git rev-parse --short HEAD)):
+${files}
+
+This is the "current diff" for these files (the working tree is already committed):
+
+\`\`\`diff
+${diff}
+\`\`\`
+
+Perform your task based on this diff. Do not commit or amend.
+EOF
+)"
+  claude -p --agent "$agent" --permission-mode acceptEdits "$prompt" \
+    || echo "[plo8 post-commit] '${agent}' sub-agent failed (exit $?)." >&2
+}
+
+# Planner first: it may rewrite plan.md, which the coder consumes on the next commit/amend.
+if [[ -n "$spec_files" ]]; then
+  run_agent planner "$spec_files" "spec.md"
+fi
+if [[ -n "$plan_files" ]]; then
+  run_agent coder "$plan_files" "plan.md"
+fi
+
+echo "[plo8 post-commit] Done. Review the agent's changes with 'git status' / 'git diff'." >&2
+exit 0
