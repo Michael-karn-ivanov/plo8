@@ -1,0 +1,18 @@
+# Core value types (Card, Hand, Board, Deck) for the PLO8 game engine.
+
+python_library(
+    name = "entities",
+    srcs = glob(["entities/**/*.py"]),
+    # Module paths are taken relative to this directory, so the sources under
+    # entities/ import as `entities.*`. With base_module = "entities" they would
+    # import as `entities.entities.*`.
+    base_module = "",
+    visibility = ["PUBLIC"],
+)
+
+python_test(
+    name = "entities_test",
+    srcs = glob(["tests/*.py"]),
+    base_module = "entities_tests",
+    deps = [":entities"],
+)
