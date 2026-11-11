@@ -125,6 +125,15 @@ A mutable 52-card deck. It is the only mutable type in the library.
 - `__len__`, `__contains__`, `remaining() -> tuple[Card, ...]`.
 - `reset()` restores all 52 cards in canonical order. It does not shuffle.
 
+## Changes requested by engine
+
+The engine (`//engine`) reuses `Card`, `Rank`, `Suit`, `Hand`, `Board`, `Street` and
+`Deck` from this library instead of defining its own. It needs no new types or
+methods, only one guaranteed property:
+- **Pickling** (already works, now a requirement): every type must survive
+  `pickle` round-trips with equality and hashing preserved, because the engine sends
+  hands, boards and cards to agent processes over `multiprocessing` connections.
+
 ## Build (buck2)
 
 `entities/BUCK`:
@@ -149,3 +158,5 @@ supports, and run with `buck2 test //entities:entities_test`.
 - **Deck:** a fresh deck has 52 unique cards; dealing reduces `len` and never
   repeats a card; overdealing raises; a seeded RNG gives the same order every
   time; `remove` and `reset` behave correctly.
+- **Pickling:** `Card`, `Hand`, `Board`, `Street` and a partly dealt `Deck` round-trip
+  through `pickle` and compare equal (and hash equal) to the originals.
