@@ -86,6 +86,11 @@ _SUIT_ORDER: tuple[Suit, ...] = (Suit.CLUBS, Suit.DIAMONDS, Suit.HEARTS, Suit.SP
 _SUIT_TO_INDEX: dict[Suit, int] = {s: i for i, s in enumerate(_SUIT_ORDER)}
 
 
+def _card_from_index(i: int) -> "Card":
+    """Unpickling hook: resolve a pickled card to its interned `ALL_CARDS` instance."""
+    return Card.from_index(i)
+
+
 @dataclass(frozen=True, slots=True, order=True)
 class Card:
     """An immutable playing card.
@@ -112,6 +117,10 @@ class Card:
         if not isinstance(self.suit, Suit):
             raise ValueError(f"invalid suit: {self.suit!r}")
         object.__setattr__(self, "_key", (int(rank), self.suit.index))
+
+    def __reduce__(self):
+        # Pickle as the compact card index; unpickling returns the interned card.
+        return (_card_from_index, (self.index,))
 
     @property
     def index(self) -> int:

@@ -20,6 +20,17 @@ class Deck:
         self._rng = rng if rng is not None else random.Random()
         self._cards: list[Card] = list(ALL_CARDS)
 
+    # Explicit pickle state (a __slots__ class has no __dict__), so every pickle
+    # protocol works. The RNG state travels with the deck, so an unpickled deck
+    # shuffles exactly like the original would have.
+    def __getstate__(self) -> tuple[random.Random, list[Card]]:
+        return (self._rng, list(self._cards))
+
+    def __setstate__(self, state: tuple[random.Random, list[Card]]) -> None:
+        rng, cards = state
+        self._rng = rng
+        self._cards = list(cards)
+
     def shuffle(self) -> None:
         self._rng.shuffle(self._cards)
 
