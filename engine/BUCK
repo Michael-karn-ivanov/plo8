@@ -1,0 +1,18 @@
+# Fixed-limit Omaha Hi-Lo 8-or-better table engine (Player, Dealer, Environment).
+
+python_library(
+    name = "engine",
+    srcs = glob(["engine/**/*.py"]),
+    # Module paths are taken relative to this directory, so the sources under
+    # engine/ import as `engine.*`.
+    base_module = "",
+    deps = ["//entities:entities"],
+    visibility = ["PUBLIC"],
+)
+
+python_test(
+    name = "engine_test",
+    srcs = glob(["tests/*.py"]),
+    base_module = "engine_tests",
+    deps = [":engine"],
+)
