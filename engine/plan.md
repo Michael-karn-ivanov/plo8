@@ -21,7 +21,7 @@ engine/
     player.py          # Player, agent callback protocol
     pots.py            # Pot, side-pot construction, pot splitting
     dealer.py          # Dealer: dealing, betting rounds, showdown, button movement
-    environment.py     # Environment: table setup, start_round()
+    environment.py     # Environment: table setup, joining players, start_round()
     views.py           # read-only snapshots passed to agents (TableView, HandResult)
     remote.py          # adapter for agents running in separate processes
   tests/
@@ -30,6 +30,7 @@ engine/
     test_betting.py
     test_dealer.py
     test_environment.py
+    test_join.py
     test_remote.py
 ```
 
@@ -51,7 +52,7 @@ integer chips to avoid float rounding in pot splits:
 
 - `CHIPS_PER_BB = 100` (configurable on `Environment`); small blind = 50 chips, big blind = 100.
 - `Player.stack` (float, in BB) is a property over `Player._chips` (int).
-- All public amounts (`rebuy`, views, `LegalActions`) accept/return BB; conversion is
+- All public amounts (`rebuy`, `join`, views, `LegalActions`) accept/return BB; conversion is
   done in one place (`to_chips` / `to_bb` helpers) and amounts are rounded to whole chips.
 - Bet sizes are fixed by the limit structure (see Actions), so agents never pass a bet
   amount.
@@ -109,8 +110,13 @@ No changes to `entities` are needed beyond guaranteed pickling (see
 ## Player (`player.py`)
 
 State:
-- `name`, `seat`, `_chips` (stack), `hole_cards` (`Hand | None`, private),
-  `street_bet`, `total_bet` (this hand), `folded`, `all_in`, `has_acted`.
+- `name` (nick, see below), `seat`, `status` (`WAITING` | `SEATED`), `_chips` (stack),
+  `hole_cards` (`Hand | None`, private), `street_bet`, `total_bet` (this hand),
+  `folded`, `all_in`, `has_acted`.
+- `name` is set when the player is created / joins (`Player(name=None, agent=None)`);
+  if omitted the environment assigns `"Player<N>"`. Names must be unique at the table
+  (seated and waiting players); `name` is what views show for the player.
+- `seat` is `None` while the player is `WAITING` (see Environment → Joining).
 
 Agent-facing API (the "managing agent" calls these during its turn):
 - `fold()`, `check()`, `call()`, `raise_()` — each records the pending
@@ -129,7 +135,11 @@ an `Agent` protocol):
   `fold/check/call/raise_` on `player` before returning.
 - `on_hand_end(player, result: HandResult) -> None` — invoked after stacks are
   updated, whether or not there was a showdown; the agent may call `player.rebuy(...)`.
-- Optional `on_event(event)` for observing other players' actions/board cards.
+  Only called for players that were dealt into the hand (not for `WAITING` players).
+- Optional `on_seated(player, view: TableView)` — called when a waiting player is
+  actually seated (immediately on `join` between hands, or after the current hand).
+- Optional `on_event(event)` for observing other players' actions/board cards and
+  players joining (`PlayerJoined(name, seat)`).
 
 Default agent (no callbacks set): check if possible, else fold — useful in tests.
 
@@ -138,11 +148,12 @@ Default agent (no callbacks set): check if possible, else fold — useful in tes
 Snapshots handed to agents so they cannot mutate engine state or see others' cards:
 - `TableView`: street (`Street`), board (`Board`), pot total, side pots, current bet, bet unit and
   raises made on this street, button/SB/BB seats, per-seat
-  public info (name, stack, street_bet, total_bet, folded, all_in), action history for
-  the hand, the acting player's own `hole_cards`.
+  public info (name, stack, street_bet, total_bet, folded, all_in), names of players
+  waiting to be seated, action history for the hand, the acting player's own
+  `hole_cards`.
 - `HandResult`: final `Board`, shown hands (seat → `Hand`) if showdown, winners per pot
   (high / low shares with amounts), net chip change per seat, final stacks,
-  `showdown: bool`.
+  `showdown: bool`; per-seat entries also carry the player's name.
 
 ## Pots (`pots.py`)
 
@@ -160,7 +171,10 @@ Snapshots handed to agents so they cannot mutate engine state or see others' car
 
 ## Dealer (`dealer.py`)
 
-Holds the `Deck`, the `Board`, pots, button seat, and the list of seated players.
+Holds the `Deck`, the `Board`, pots, button seat, the list of seated players and an
+`in_hand` flag (true from the start of `play_hand()` until end-of-hand processing is
+done). Only `SEATED` players are known to the dealer; waiting players are kept by the
+`Environment`.
 
 Hand flow (`Dealer.play_hand()`):
 1. **Preflop**: post SB and BB (short stacks post all-in), deal 4 hole cards to each
@@ -190,19 +204,58 @@ Showdown:
   pots, split each pot as described above, credit stacks.
 
 End of hand:
-- Build `HandResult`, call `on_hand_end` for every seated player (rebuy window).
+- Build `HandResult`, call `on_hand_end` for every player dealt into the hand (rebuy window).
 - Move the button to the next seated player with chips (SB/BB shift accordingly).
   Players with zero chips who did not rebuy sit out of the next hand.
+- Clear `in_hand`; the environment then seats queued joiners (see below).
 
 ## Environment (`environment.py`)
 
-- `Environment(players, button=0, chips_per_bb=100, seed=None, max_buy_in=None)` —
-  owns the `Dealer` and the player list (seat = index).
+- `Environment(players=(), button=0, chips_per_bb=100, seed=None, max_buy_in=None,
+  max_seats=10)` — owns the `Dealer`, the seated player list and the join queue.
+  Seated players are kept in clockwise order; `Player.seat` is the index in that list.
+  Initial `players` are seated directly (each must have a positive stack; unnamed ones
+  get a default name).
 - `start_round()` — begins a new hand: resets the deck (shuffle), clears hole cards
   and per-hand player state, empties flop/turn/river and pots, has SB/BB players post
-  blinds, then lets the dealer run the hand. Returns the `HandResult`.
+  blinds, then lets the dealer run the hand. Returns the `HandResult`. After the hand,
+  processes the join queue.
 - `run(n_hands)` convenience loop; stops early if fewer than two players have chips.
-- Requires 2–10 players with chips to start a hand.
+- Requires 2–`max_seats` seated players with chips to start a hand.
+
+### Joining (`join`)
+
+`join(stack_bb, seat=None, name=None, agent=None) -> Player`:
+- `stack_bb` — buy-in in big blinds; must be > 0 and ≤ `max_buy_in` if set.
+- `name` — the player's nick; must be unique among seated and waiting players
+  (`ValueError` otherwise); default name assigned if omitted.
+- `seat` — position **relative to the button** (clockwise offset): `1` = first seat left
+  of the button (SB), `2` = BB, …, up to `n` = right of the button (button's seat itself
+  is not available; the button stays with its current player). If `None`, the player
+  joins **as big blind**: offset 2, or 1 when only one player is seated (heads-up, the
+  button posts SB and the other player BB). Offsets outside `1..n` raise `ValueError`.
+- Raises `TableFullError` if seated + waiting players would exceed `max_seats`.
+- Returns the new `Player` (with `status = WAITING`) so the caller can attach/keep a
+  handle to it.
+
+Seating:
+- **Between hands** (`dealer.in_hand` is false): the player is seated immediately —
+  inserted into the clockwise list at the requested offset from the current button,
+  seats are renumbered, `status = SEATED`, `on_seated` / `PlayerJoined` are fired. They
+  are dealt in on the next `start_round()`.
+- **During a hand**: the request is appended to a FIFO `pending_joins` queue; the
+  player does not take part in the current hand (not dealt, not in pots, not asked to
+  act, no `on_hand_end`). After the hand's end processing (stack updates, rebuy
+  callbacks, button move), the environment seats queued players in order, resolving
+  each offset relative to the **new** button position, so a default joiner posts the
+  big blind in the hand that follows. Each queued request is re-validated when seated
+  (offset clamped to the new `1..n` range).
+- Seat renumbering only happens between hands, so seat indices in a `TableView` /
+  `HandResult` are stable for the duration of a hand.
+- No missed-blind / dead-button rules: a newly seated player is dealt in the next hand
+  regardless of position, without posting extra blinds.
+- `join` and queue processing are guarded by a `threading.Lock`, so a host thread that
+  accepts new agent connections can call `join` while the dealer is running a hand.
 
 ## Multi-agent / separate processes (`remote.py`)
 
@@ -211,7 +264,12 @@ The engine itself is single-threaded and runs in one host process that owns the
 - `RemoteAgent(conn)` implements the `Agent` protocol: `on_turn` sends the
   (picklable) `TableView` + `LegalActions` over a `multiprocessing.Connection`, blocks
   for a reply message (`Action`), and applies it via `player.fold()/call()/...`;
-  `on_hand_end` sends the `HandResult` and receives an optional rebuy amount.
+  `on_hand_end` sends the `HandResult` and receives an optional rebuy amount;
+  `on_seated` notifies the agent process that it is now at the table.
+- Joining from another process: the agent process sends a `Join(name, stack_bb, seat)`
+  message on a new connection; a host-side listener thread calls
+  `env.join(..., agent=RemoteAgent(conn))` and replies with the result (accepted /
+  queued / error such as duplicate name or full table).
 - `agent_loop(conn, agent)` helper runs in the agent process, receiving messages and
   dispatching to a local agent object with the same callback interface.
 - Optional per-action timeout: no reply in time → check if legal, else fold.
@@ -232,7 +290,16 @@ The engine itself is single-threaded and runs in one host process that owns the
   4 bets and its removal heads-up, all-in for less than half a bet not reopening action
   while half or more does, heads-up blind/action order.
 - `test_dealer`: hand ends early when all but one fold, all-in run-out, chip
-  conservation (sum of stacks constant across hands apart from rebuys), button moves.
+  conservation (sum of stacks constant across hands apart from rebuys and joins),
+  button moves.
 - `test_environment`: `start_round` resets deck/hands/board and posts blinds; rebuy
-  callback is called after every hand and rebuy increases stack.
-- `test_remote`: a hand played with agents in child processes via `RemoteAgent`.
+  callback is called after every hand and rebuy increases stack; default and duplicate
+  names.
+- `test_join`: join between hands with no seat → player posts BB next hand (also with a
+  single seated player → heads-up BB); explicit offset places player at that position
+  relative to the button; join from inside an `on_turn` callback is queued — player is
+  not dealt, gets no `on_hand_end`, and is dealt in the next hand at the offset from the
+  moved button; multiple queued joins seated in FIFO order; invalid stack/offset,
+  duplicate name and full table are rejected.
+- `test_remote`: a hand played with agents in child processes via `RemoteAgent`; an
+  agent process joining mid-hand via a `Join` message.
