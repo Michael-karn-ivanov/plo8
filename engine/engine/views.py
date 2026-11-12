@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
 from entities import Board, Card, Hand, Street
+
+from .player import PlayerStatus
 
 __all__ = [
     "EventType",
@@ -30,14 +32,20 @@ class EventType(Enum):
     BOARD = "board"
     SHOW = "show"
     AWARD = "award"
+    # Table changes; `seat` and `name` identify the player.
+    PLAYER_JOINED = "player_joined"  # seated (between hands)
+    PLAYER_SAT_OUT = "player_sat_out"  # busted without rebuy, or did not act on a turn
+    PLAYER_RETURNED = "player_returned"  # back from sitting out (rebuy / sit_in)
+    PLAYER_LEFT = "player_left"  # removed from the table; `seat` is the seat he had
 
 
 @dataclass(frozen=True)
 class Event:
-    """Something public that happened in the hand.
+    """Something public that happened at the table.
 
     `amount` is what this event moved (chips put in, or won for AWARD);
-    `to` is the seat's total street bet after a blind/bet action.
+    `to` is the seat's total street bet after a blind/bet action;
+    `name` is set for the PLAYER_* table-change events.
     """
 
     type: EventType
@@ -47,6 +55,7 @@ class Event:
     to: float = 0.0
     all_in: bool = False
     cards: tuple[Card, ...] = ()
+    name: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -58,7 +67,13 @@ class SeatView:
     total_bet: float
     folded: bool
     all_in: bool
-    in_hand: bool
+    in_hand: bool  # dealt into the current (or last) hand
+    status: PlayerStatus = PlayerStatus.ACTIVE  # ACTIVE or SITTING_OUT
+    leaving: bool = False  # asked to leave; removed when the hand is over
+
+    @property
+    def sitting_out(self) -> bool:
+        return self.status is PlayerStatus.SITTING_OUT
 
 
 @dataclass(frozen=True)
@@ -81,11 +96,12 @@ class TableView:
     current_bet: float
     bet_unit: float
     raises: int  # bets made on this street (the big blind counts preflop)
-    button: int
+    button: Optional[int]
     sb_seat: Optional[int]
     bb_seat: Optional[int]
     seats: tuple[SeatView, ...]
     history: tuple[Event, ...]
+    waiting: tuple[str, ...] = ()  # names of players queued to be seated
 
     @property
     def me(self) -> SeatView:
@@ -109,6 +125,9 @@ class PotResult:
 
 @dataclass(frozen=True)
 class HandResult:
+    """End of a hand. Per-seat dicts cover every seated player, including the
+    sitting-out ones (`dealt_in` False, net change 0)."""
+
     hand_number: int
     button: int
     sb_seat: Optional[int]
@@ -120,6 +139,8 @@ class HandResult:
     net: dict[int, float]  # chip change per seat in this hand (BB)
     stacks: dict[int, float]  # stacks after the hand, before any rebuy (BB)
     history: tuple[Event, ...]
+    names: dict[int, str] = field(default_factory=dict)  # seat -> player name
+    dealt_in: dict[int, bool] = field(default_factory=dict)  # seat -> took part
 
     @property
     def winnings(self) -> dict[int, float]:

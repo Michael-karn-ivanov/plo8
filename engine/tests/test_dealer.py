@@ -2,19 +2,25 @@ import random
 import unittest
 
 from entities import Board, Card, Deck, Hand
-from engine import Environment, EventType, Player, Street
+from engine import Environment, EventType, Player, PlayerStatus, Street
 
 
 class Scripted:
-    """Plays codes f/k/c/r in order, then checks/calls (or raises if aggressive)."""
+    """Plays codes f/k/c/r in order, then checks/calls (or raises if aggressive).
 
-    def __init__(self, script="", aggressive=False):
+    Hand numbers in `idle_hands` are played by doing nothing on every turn.
+    """
+
+    def __init__(self, script="", aggressive=False, idle_hands=()):
         self.script = list(script)
         self.aggressive = aggressive
+        self.idle_hands = set(idle_hands)
         self.turns = 0
 
     def on_turn(self, player, view, legal):
         self.turns += 1
+        if view.hand_number in self.idle_hands:
+            return
         if self.script:
             code = self.script.pop(0)
         elif self.aggressive and legal.can_raise:
@@ -93,6 +99,8 @@ class EarlyEndTest(unittest.TestCase):
         self.assertTrue(result.pots[0].uncontested)
         self.assertEqual(result.pots[0].high, ((2, 1.5),))
         self.assertFalse(any(e.type is EventType.SHOW for e in result.history))
+        # Folding is a valid action: nobody sits out.
+        self.assertTrue(all(p.status is PlayerStatus.ACTIVE for p in players))
 
     def test_fold_on_flop(self):
         # Seat 1 bets the flop, everybody else folds: no showdown, no turn.
@@ -204,6 +212,28 @@ class ConservationTest(unittest.TestCase):
             self.assertTrue(all(p.chips >= 0 for p in players))
         self.assertGreater(showdowns, 0)
 
+    def test_chips_conserved_with_joins_and_leaves(self):
+        rng = random.Random(8)
+        players = [Player(f"p{i}", 10, RandomAgent(rng)) for i in range(4)]
+        env = Environment(players, seed=2)
+        everyone = list(players)
+        bought_in = sum(p.chips for p in players)
+        for hand in range(60):
+            if hand % 10 == 3 and len(env.players) > 2:
+                env.players[0].leave()
+            if hand % 10 == 7:
+                name = f"j{hand}"
+                env.join(10, name=name, agent=RandomAgent(rng))
+                everyone.append(next(p for p in env.players if p.name == name))
+                bought_in += 1000
+            if not env.can_start():
+                break
+            env.start_round()
+            rebuys = sum(p.rebuy_chips for p in everyone)
+            # Chips at the table plus chips taken away by leavers.
+            self.assertEqual(sum(p.chips for p in everyone), bought_in + rebuys)
+        self.assertTrue(any(p.status is PlayerStatus.LEFT for p in everyone))
+
 
 class ButtonTest(unittest.TestCase):
     def test_button_moves(self):
@@ -212,19 +242,29 @@ class ButtonTest(unittest.TestCase):
         self.assertEqual(buttons, [0, 1, 2, 0])
         self.assertEqual(env.button, 1)
 
-    def test_busted_player_sits_out_and_is_skipped(self):
-        env, players = make_env([100, 0, 100], [Scripted() for _ in range(3)])
+    def test_sitting_out_player_is_skipped(self):
+        # Seat 1 (the SB of hand 1) does not act and sits out from hand 2.
+        agents = [Scripted(), Scripted(idle_hands={1}), Scripted()]
+        env, players = make_env([100] * 3, agents)
+        env.start_round()
+        self.assertIs(players[1].status, PlayerStatus.SITTING_OUT)
+        self.assertEqual(env.button, 2)  # seat 1 skipped
         result = env.start_round()
-        self.assertEqual(result.button, 0)
-        self.assertEqual((result.sb_seat, result.bb_seat), (0, 2))  # heads-up
+        self.assertEqual(result.button, 2)
+        self.assertEqual((result.sb_seat, result.bb_seat), (2, 0))  # heads-up
         self.assertIsNone(players[1].hole_cards)
         self.assertFalse(players[1].in_hand)
-        self.assertEqual(env.button, 2)  # seat 1 skipped
+        self.assertEqual(env.button, 0)  # seat 1 skipped again
 
-    def test_button_on_empty_seat_moves_to_next_with_chips(self):
-        env, _ = make_env([0, 100, 100], [Scripted() for _ in range(3)], button=0)
+    def test_button_on_sitting_out_seat_moves_to_next_active(self):
+        # Hand 1: seat 1 holds nothing special; it sits out and the button skips it.
+        agents = [Scripted(), Scripted(idle_hands={1}), Scripted()]
+        env, players = make_env([100] * 3, agents, button=0)
+        env.start_round()
+        # Force the button onto the sitting-out seat (e.g. after table changes).
+        env.dealer.button = 1
         result = env.start_round()
-        self.assertEqual(result.button, 1)
+        self.assertEqual(result.button, 2)
 
 
 if __name__ == "__main__":

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import random
-from typing import Iterable, Optional
+import threading
+from typing import Callable, Iterable, Optional
 
 from entities import Board, Card, Deck, Hand, Street
 
 from .actions import Action, ActionType, IllegalActionError, LegalActions
 from .evaluator import HighRank, LowRank, best_omaha
-from .player import CHIPS_PER_BB, DefaultAgent, Player, fallback_action, to_bb
+from .player import CHIPS_PER_BB, DefaultAgent, Player, PlayerStatus, to_bb
 from .pots import build_pots, split_pot
 from .views import (
     Event,
@@ -21,7 +22,7 @@ from .views import (
     TableView,
 )
 
-__all__ = ["Dealer", "MAX_BETS_PER_STREET"]
+__all__ = ["Dealer", "MAX_BETS_PER_STREET", "NotEnoughPlayersError"]
 
 # One bet plus three raises per street (the big blind is the opening bet preflop).
 MAX_BETS_PER_STREET = 4
@@ -29,8 +30,26 @@ MAX_BETS_PER_STREET = 4
 _DEFAULT_AGENT = DefaultAgent()
 
 
+class NotEnoughPlayersError(RuntimeError):
+    """A hand needs at least two active players with chips."""
+
+
+def _callback(p: Player, name: str) -> Optional[Callable]:
+    callback = getattr(p.agent, name, None)
+    return callback if callable(callback) else None
+
+
 class Dealer:
-    """Runs hands of fixed-limit Omaha Hi-Lo 8-or-better. Internally all amounts are chips."""
+    """Runs hands of fixed-limit Omaha Hi-Lo 8-or-better. Internally all amounts are chips.
+
+    The dealer sees all seated players (active and sitting out) but deals in only
+    the active ones; the participants of a hand are fixed when it starts. `in_hand`
+    is true from the start of a hand until its end-of-hand processing (rebuy
+    callbacks, status updates, button move) is done; rebuys / sit-ins are allowed
+    inside that processing through `rebuy_window`. When the hand is over,
+    `after_hand` (if set) is called under `lock` — the environment uses it to
+    remove leavers and seat queued joiners.
+    """
 
     def __init__(
         self,
@@ -40,14 +59,17 @@ class Dealer:
         chips_per_bb: int = CHIPS_PER_BB,
         max_buy_in: Optional[float] = None,
         deck: Optional[Deck] = None,
+        lock: Optional[threading.RLock] = None,
     ) -> None:
         players = list(players)
         if len({id(p) for p in players}) != len(players):
             raise ValueError("the same player is seated twice")
         if isinstance(chips_per_bb, bool) or not isinstance(chips_per_bb, int) or chips_per_bb < 2:
             raise ValueError(f"chips_per_bb must be an int >= 2, got {chips_per_bb!r}")
-        if not 0 <= button < len(players):
+        if players and not 0 <= button < len(players):
             raise ValueError(f"button seat {button} is not at the table")
+        if not players and button != 0:
+            raise ValueError("there is no button at an empty table")
         if max_buy_in is not None and max_buy_in <= 0:
             raise ValueError(f"max_buy_in must be positive, got {max_buy_in!r}")
 
@@ -58,13 +80,18 @@ class Dealer:
         self.max_buy_in = max_buy_in
         self.deck = deck if deck is not None else Deck(rng)
         self.board = Board.empty()
-        self.button = button
+        self.button: Optional[int] = button if players else None
         self.sb_seat: Optional[int] = None
         self.bb_seat: Optional[int] = None
         self.in_hand = False
+        self.rebuy_window = False
         self.hand_number = 0
         self.history: list[Event] = []
         self.last_result: Optional[HandResult] = None
+        self.lock = lock if lock is not None else threading.RLock()
+        self.after_hand: Optional[Callable[[], None]] = None
+        # Names of players waiting to be seated (provided by the environment).
+        self.waiting_names: Callable[[], tuple[str, ...]] = tuple
 
         self._active: list[Player] = []
         self._current_bet = 0
@@ -84,19 +111,34 @@ class Dealer:
         """Players dealt into the current (or last) hand."""
         return list(self._active)
 
+    @property
+    def hand_players(self) -> list[Player]:
+        """Participants of the current (or last) hand (same as `active_players`)."""
+        return list(self._active)
+
+    @staticmethod
+    def _ready(p: Player) -> bool:
+        """Can be dealt into the next hand."""
+        return p.status is PlayerStatus.ACTIVE and p.chips > 0 and not p.leave_requested
+
+    def ready_players(self) -> list[Player]:
+        """Seated players who would be dealt into the next hand."""
+        return [p for p in self.players if self._ready(p)]
+
     def players_with_chips(self) -> list[Player]:
         return [p for p in self.players if p.chips > 0]
 
     def _order_after(self, seat: int) -> list[Player]:
-        """Active players in seat order, starting with the first one left of `seat`."""
+        """Hand participants in seat order, starting with the first one left of `seat`."""
         n = len(self.players)
         return sorted(self._active, key=lambda p: (p.seat - seat - 1) % n)
 
-    def _next_seat_with_chips(self, seat: int) -> Optional[int]:
+    def _next_seat(self, seat: int, pred: Callable[[Player], bool]) -> Optional[int]:
+        """First seat clockwise after `seat` whose player satisfies `pred`."""
         n = len(self.players)
         for k in range(1, n + 1):
             s = (seat + k) % n
-            if self.players[s].chips > 0:
+            if pred(self.players[s]):
                 return s
         return None
 
@@ -111,9 +153,13 @@ class Dealer:
 
     def _emit(self, event: Event) -> None:
         self.history.append(event)
-        for p in self.players:
-            callback = getattr(p.agent, "on_event", None)
-            if callable(callback):
+        self.notify(event)
+
+    def notify(self, event: Event) -> None:
+        """Send `event` to every seated player's agent without recording it."""
+        for p in list(self.players):
+            callback = _callback(p, "on_event")
+            if callback is not None:
                 callback(event)
 
     def _put(self, p: Player, chips: int) -> None:
@@ -123,6 +169,31 @@ class Dealer:
         p.total_chips += chips
         if p._chips == 0:
             p.all_in = True
+
+    # --- status changes ------------------------------------------------------
+
+    def _set_sitting_out(self, p: Player) -> None:
+        p.status = PlayerStatus.SITTING_OUT
+        callback = _callback(p, "on_sit_out")
+        if callback is not None:
+            callback(p)
+        self.notify(Event(EventType.PLAYER_SAT_OUT, Street.PREFLOP, seat=p.seat, name=p.name))
+
+    def _set_active(self, p: Player) -> None:
+        p.status = PlayerStatus.ACTIVE
+        callback = _callback(p, "on_return")
+        if callback is not None:
+            callback(p)
+        self.notify(Event(EventType.PLAYER_RETURNED, Street.PREFLOP, seat=p.seat, name=p.name))
+
+    def _request_return(self, p: Player) -> None:
+        """A sitting-out player rebought or called sit_in(). Inside the end-of-hand
+        window the status changes with the other status updates; between hands at
+        once."""
+        if self.in_hand:
+            p._return_requested = True
+        elif p.chips > 0:
+            self._set_active(p)
 
     # --- hand flow ---------------------------------------------------------
 
@@ -142,34 +213,42 @@ class Dealer:
 
     def start_hand(self) -> None:
         """Reset the deck, board, pots and per-hand player state."""
-        if self.in_hand:
-            raise RuntimeError("a hand is already in progress")
-        if len(self.players_with_chips()) < 2:
-            raise RuntimeError("at least two players with chips are needed to start a hand")
-        if self.players[self.button].chips <= 0:
-            nxt = self._next_seat_with_chips(self.button)
-            assert nxt is not None
-            self.button = nxt
+        with self.lock:
+            if self.in_hand:
+                raise RuntimeError("a hand is already in progress")
+            if len(self.ready_players()) < 2:
+                raise NotEnoughPlayersError(
+                    "at least two active players with chips are needed to start a hand"
+                )
+            if self.button is None or not self._ready(self.players[self.button]):
+                start = self.button if self.button is not None else len(self.players) - 1
+                self.button = self._next_seat(start, self._ready)
+                assert self.button is not None
 
-        self.deck.reset()
-        self.deck.shuffle()
-        self.board = Board.empty()
-        self.history = []
-        self._current_bet = 0
-        self._bets = 0
-        self._start_chips = {p.seat: p.chips for p in self.players}  # type: ignore[misc]
-        for p in self.players:
-            p._reset_for_hand(dealt=p.chips > 0)
-        self._active = [p for p in self.players if p.in_hand]
-        self.sb_seat = self.bb_seat = None
-        self.hand_number += 1
-        self.in_hand = True
+            self.deck.reset()
+            self.deck.shuffle()
+            self.board = Board.empty()
+            self.history = []
+            self._current_bet = 0
+            self._bets = 0
+            self._start_chips = {p.seat: p.chips for p in self.players}  # type: ignore[misc]
+            for p in self.players:
+                p._reset_for_hand(dealt=self._ready(p))
+            self._active = [p for p in self.players if p.in_hand]
+            self.sb_seat = self.bb_seat = None
+            self.hand_number += 1
+            self.in_hand = True
         self._emit(Event(EventType.HAND_START, Street.PREFLOP, seat=self.button))
 
     def post_blinds(self) -> None:
-        """Small and big blind are posted; short stacks post all-in."""
+        """Small and big blind are posted; short stacks post all-in.
+
+        SB/BB are the first and second participants clockwise from the button
+        (heads-up: the button is the small blind); sitting-out seats are skipped.
+        """
+        assert self.button is not None
         if len(self._active) == 2:
-            sb = self.players[self.button]  # heads-up: the button is the small blind
+            sb = self.players[self.button]
         else:
             sb = self._order_after(self.button)[0]
         bb = self._order_after(sb.seat)[0]  # type: ignore[arg-type]
@@ -195,8 +274,8 @@ class Dealer:
         )
 
     def deal_hole_cards(self) -> None:
-        """Deal 4 cards one at a time to each player, starting left of the button."""
-        order = self._order_after(self.button)
+        """Deal 4 cards one at a time to each participant, starting left of the button."""
+        order = self._order_after(self.button)  # type: ignore[arg-type]
         dealt: dict[int, list[Card]] = {p.seat: [] for p in order}  # type: ignore[misc]
         for _ in range(4):
             for p in order:
@@ -212,7 +291,7 @@ class Dealer:
                 return  # hand is over, remaining streets are skipped
             self._deal_board(street)
             self._start_street()
-            self._betting_round(self._order_after(self.button))
+            self._betting_round(self._order_after(self.button))  # type: ignore[arg-type]
 
     def _deal_board(self, street: Street) -> None:
         if street is Street.FLOP:
@@ -290,6 +369,15 @@ class Dealer:
         )
 
     def _take_turn(self, p: Player) -> None:
+        """Ask `p`'s agent for an action.
+
+        A player who asked to leave is folded without asking the agent (a leave()
+        from inside on_turn is also a fold). A turn that ends without a valid
+        action folds the hand, and the player sits out from the next hand.
+        """
+        if p.leave_requested:
+            self._apply(p, Action.fold())
+            return
         legal = self.legal_actions(p)
         view = self.table_view(p)
         agent = p.agent if p.agent is not None else _DEFAULT_AGENT
@@ -300,8 +388,11 @@ class Dealer:
             pass  # an uncaught illegal action counts as no action
         finally:
             action = p._end_turn()
-        if action is None or not legal.allows(action.type):
-            action = fallback_action(legal)
+        if p.leave_requested:
+            action = Action.fold()
+        elif action is None or not legal.allows(action.type):
+            p.missed_turn = True
+            action = Action.fold()
         self._apply(p, action)
 
     def _apply(self, p: Player, action: Action) -> None:
@@ -342,13 +433,14 @@ class Dealer:
     def table_view(self, p: Player) -> TableView:
         """Snapshot for `p`: public table state plus only p's own hole cards."""
         pots = build_pots(self._active) if self.in_hand else []
+        pot = sum(q.total_chips for q in self._active) if self.in_hand else 0
         return TableView(
             hand_number=self.hand_number,
             seat=p.seat,  # type: ignore[arg-type]
             hole_cards=p.hole_cards,
             street=self.board.street,
             board=self.board,
-            pot=self.to_bb(sum(q.total_chips for q in self._active)),
+            pot=self.to_bb(pot),
             side_pots=tuple(PotView(self.to_bb(pot.amount), pot.eligible) for pot in pots),
             current_bet=self.to_bb(self._current_bet),
             bet_unit=self.to_bb(self._bet_unit()),
@@ -359,23 +451,26 @@ class Dealer:
             seats=tuple(
                 SeatView(
                     seat=q.seat,  # type: ignore[arg-type]
-                    name=q.name,
+                    name=q.name,  # type: ignore[arg-type]
                     stack=q.stack,
                     street_bet=q.street_bet,
                     total_bet=q.total_bet,
                     folded=q.folded,
                     all_in=q.all_in,
                     in_hand=q.in_hand,
+                    status=q.status,
+                    leaving=q.leave_requested,
                 )
                 for q in self.players
             ),
             history=tuple(self.history),
+            waiting=tuple(self.waiting_names()),
         )
 
     # --- showdown and settlement --------------------------------------------
 
     def _settle(self) -> HandResult:
-        order = self._order_after(self.button)
+        order = self._order_after(self.button)  # type: ignore[arg-type]
         seat_order = [p.seat for p in order]
         live = [p for p in order if not p.folded]
         showdown = len(live) >= 2
@@ -422,7 +517,7 @@ class Dealer:
 
         return HandResult(
             hand_number=self.hand_number,
-            button=self.button,
+            button=self.button,  # type: ignore[arg-type]
             sb_seat=self.sb_seat,
             bb_seat=self.bb_seat,
             board=self.board,
@@ -435,20 +530,55 @@ class Dealer:
             },
             stacks={p.seat: p.stack for p in self.players},  # type: ignore[misc]
             history=tuple(self.history),
+            names={p.seat: p.name for p in self.players},  # type: ignore[misc]
+            dealt_in={p.seat: p.in_hand for p in self.players},  # type: ignore[misc]
         )
 
     def _end_hand(self, result: HandResult) -> None:
-        """Rebuy window for every seated player, then move the button."""
-        self.in_hand = False
+        """End-of-hand processing, in order:
+
+        1. `on_hand_end` for every seated player that is not leaving — participants
+           and sitting-out players (rebuy / sit-in / leave window). Players who
+           joined during the hand are not seated yet, so they get none.
+        2. Status updates: busted or non-acting active players sit out; sitting-out
+           players who rebought / sat in (and have chips) return.
+        3. The button moves to the next active, non-leaving player.
+        4. `in_hand` is cleared and the environment removes leavers and seats joiners.
+        """
         self.last_result = result
+        self.rebuy_window = True
         try:
-            for p in self.players:
+            for p in list(self.players):
+                if p.status is PlayerStatus.LEFT or p.leave_requested:
+                    continue
                 agent = p.agent if p.agent is not None else _DEFAULT_AGENT
                 agent.on_hand_end(p, result)
         finally:
-            nxt = self._next_seat_with_chips(self.button)
-            if nxt is not None:
-                self.button = nxt
+            self.rebuy_window = False
+            try:
+                self._update_statuses()
+                self._move_button()
+            finally:
+                self._finish_hand()
+
+    def _update_statuses(self) -> None:
+        for p in list(self.players):
+            if not p.leave_requested:
+                if p.status is PlayerStatus.ACTIVE:
+                    if p.chips <= 0 or p.missed_turn:
+                        self._set_sitting_out(p)
+                elif p.status is PlayerStatus.SITTING_OUT:
+                    if p._return_requested and p.chips > 0:
+                        self._set_active(p)
+            p._return_requested = False
+            p.missed_turn = False
+
+    def _move_button(self) -> None:
+        if self.button is None:
+            return
+        nxt = self._next_seat(self.button, self._ready)
+        if nxt is not None:
+            self.button = nxt
 
     def _abort_hand(self) -> None:
         """Undo a hand that failed midway (e.g. an agent raised): refund all bets."""
@@ -458,4 +588,15 @@ class Dealer:
             p.street_chips = 0
             p._legal = None
             p._pending = None
-        self.in_hand = False
+        for p in self.players:
+            p.missed_turn = False
+            p._return_requested = False
+        self.rebuy_window = False
+        self._finish_hand()
+
+    def _finish_hand(self) -> None:
+        """Leave the hand and let the environment remove leavers / seat joiners."""
+        with self.lock:
+            self.in_hand = False
+            if self.after_hand is not None:
+                self.after_hand()

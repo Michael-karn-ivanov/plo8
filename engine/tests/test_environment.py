@@ -1,6 +1,15 @@
 import unittest
 
-from engine import Environment, IllegalActionError, Player, Street
+from engine import (
+    DEFAULT_ACTION_TIMEOUT,
+    Environment,
+    IllegalActionError,
+    NotEnoughPlayersError,
+    Player,
+    PlayerStatus,
+    Street,
+    TableFullError,
+)
 
 
 class Passive:
@@ -11,6 +20,13 @@ class Passive:
             player.call()
 
     def on_hand_end(self, player, result):
+        pass
+
+
+class Idle(Passive):
+    """Does nothing on its turns (and so sits out after the hand)."""
+
+    def on_turn(self, player, view, legal):
         pass
 
 
@@ -99,18 +115,50 @@ class StartRoundTest(unittest.TestCase):
         self.assertEqual(snap["hole"], players[1].hole_cards)
         for p in players:
             self.assertEqual(len(p.hole_cards), 4)
+        self.assertEqual(first.dealt_in, {0: True, 1: True, 2: True})
 
-    def test_requires_two_to_ten_players(self):
-        with self.assertRaises(ValueError):
-            Environment([Player("a", 100)])
-        with self.assertRaises(ValueError):
+    def test_seat_limits(self):
+        # A table may start with fewer than two players (others join later), but a
+        # hand needs at least two.
+        env = Environment([Player("a", 100)])
+        self.assertFalse(env.can_start())
+        with self.assertRaises(NotEnoughPlayersError):
+            env.start_round()
+        self.assertTrue(issubclass(NotEnoughPlayersError, RuntimeError))
+        empty = Environment()
+        self.assertEqual(len(empty.players), 0)
+        self.assertIsNone(empty.button)
+        with self.assertRaises(NotEnoughPlayersError):
+            empty.start_round()
+        with self.assertRaises(TableFullError):
             Environment([Player(str(i), 100) for i in range(11)])
+        with self.assertRaises(TableFullError):
+            Environment([Player(str(i), 100) for i in range(4)], max_seats=3)
+        with self.assertRaises(ValueError):
+            Environment(max_seats=11)
+        with self.assertRaises(ValueError):
+            Environment(max_seats=1)
         Environment([Player(str(i), 100) for i in range(10)])
 
-    def test_needs_two_players_with_chips(self):
-        env = Environment([Player("a", 100), Player("b", 0)])
+    def test_initial_players_need_a_positive_stack(self):
+        with self.assertRaises(ValueError):
+            Environment([Player("a", 100), Player("b", 0)])
+
+    def test_initial_players_are_active(self):
+        players = [Player("a", 100), Player("b", 100)]
+        env = Environment(players)
+        self.assertTrue(all(p.status is PlayerStatus.ACTIVE for p in players))
+        self.assertEqual(env.active_players, players)
+
+    def test_needs_two_active_players(self):
+        # Seat 0 does not act in hand 1 and sits out: one active player is left.
+        players = [Player("a", 100, Idle()), Player("b", 100, Passive())]
+        env = Environment(players)
+        env.start_round()
+        self.assertIs(players[0].status, PlayerStatus.SITTING_OUT)
+        self.assertGreater(players[0].chips, 0)  # sitting-out players do not count
         self.assertFalse(env.can_start())
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(NotEnoughPlayersError):
             env.start_round()
         self.assertEqual(env.run(5), [])
 
@@ -121,6 +169,48 @@ class StartRoundTest(unittest.TestCase):
         self.assertEqual(p.chips, 1000)
         result = env.start_round()
         self.assertAlmostEqual(sum(result.stacks.values()), 200.0)
+
+    def test_action_timeout(self):
+        self.assertEqual(Environment().action_timeout, DEFAULT_ACTION_TIMEOUT)
+        self.assertEqual(DEFAULT_ACTION_TIMEOUT, 600.0)
+        self.assertEqual(Environment(action_timeout=2.5).action_timeout, 2.5)
+        for bad in (0, -1, "10", True):
+            with self.assertRaises(ValueError):
+                Environment(action_timeout=bad)
+
+
+class NameTest(unittest.TestCase):
+    def test_default_names(self):
+        players = [Player(None, 100), Player("x", 100), Player(stack=100)]
+        env = Environment(players)
+        self.assertEqual([p.name for p in env.players], ["Player1", "x", "Player2"])
+        result = env.start_round()
+        self.assertEqual(result.names, {0: "Player1", 1: "x", 2: "Player2"})
+
+    def test_default_name_skips_taken(self):
+        env = Environment([Player("Player1", 100), Player(None, 100)])
+        self.assertEqual(env.players[1].name, "Player2")
+
+    def test_duplicate_names_rejected(self):
+        with self.assertRaises(ValueError):
+            Environment([Player("a", 100), Player("a", 100)])
+
+    def test_invalid_name(self):
+        with self.assertRaises(ValueError):
+            Player("", 100)
+
+    def test_views_show_names(self):
+        seen = []
+
+        class Look(Passive):
+            def on_turn(self, player, view, legal):
+                seen.append(tuple(s.name for s in view.seats))
+                super().on_turn(player, view, legal)
+
+        env = Environment([Player("ann", 100, Look()), Player("bob", 100, Look())])
+        env.start_round()
+        self.assertTrue(seen)
+        self.assertTrue(all(names == ("ann", "bob") for names in seen))
 
 
 class RebuyTest(unittest.TestCase):
@@ -136,7 +226,7 @@ class RebuyTest(unittest.TestCase):
         total_rebuys = sum(p.rebuy_chips for p in players)
         self.assertEqual(sum(p.chips for p in players), 30000 + total_rebuys)
 
-    def test_rebuy_not_allowed_during_hand(self):
+    def test_rebuy_not_allowed_during_betting(self):
         agent = Rebuyer()
         env = Environment([Player("a", 100, agent), Player("b", 100, Passive())])
         env.start_round()
@@ -161,18 +251,15 @@ class RebuyTest(unittest.TestCase):
         p.rebuy(50)
         self.assertEqual(p.stack, 150.0)
 
-    def test_busted_player_rebuys_and_plays_again(self):
-        a = Player("a", 0, Passive())
-        b = Player("b", 100, Passive())
-        c = Player("c", 100, Passive())
-        env = Environment([a, b, c])
-        env.start_round()
-        self.assertFalse(a.in_hand)
-        self.assertIsNone(a.hole_cards)
-        a.rebuy(20)
-        env.start_round()
-        self.assertTrue(a.in_hand)
-        self.assertIsNotNone(a.hole_cards)
+    def test_left_player_cannot_rebuy(self):
+        p = Player("a", 100)
+        env = Environment([p, Player("b", 100), Player("c", 100)])
+        p.leave()
+        with self.assertRaises(IllegalActionError):
+            p.rebuy(10)
+        with self.assertRaises(IllegalActionError):
+            p.sit_in()
+        self.assertEqual(len(env.players), 2)
 
 
 class RunTest(unittest.TestCase):
@@ -184,6 +271,8 @@ class RunTest(unittest.TestCase):
         self.assertLess(len(results), 500)
         self.assertFalse(env.can_start())
         self.assertEqual(len([p for p in players if p.chips > 0]), 1)
+        busted = [p for p in players if p.chips == 0][0]
+        self.assertIs(busted.status, PlayerStatus.SITTING_OUT)
         self.assertEqual(sum(p.chips for p in players), 1000)
 
 

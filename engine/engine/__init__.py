@@ -3,12 +3,40 @@
 from entities import Board, Card, Deck, Hand, Rank, Street, Suit
 
 from .actions import Action, ActionType, IllegalActionError, LegalActions
-from .dealer import MAX_BETS_PER_STREET, Dealer
-from .environment import MAX_PLAYERS, MIN_PLAYERS, Environment
+from .dealer import MAX_BETS_PER_STREET, Dealer, NotEnoughPlayersError
+from .environment import (
+    DEFAULT_ACTION_TIMEOUT,
+    MAX_PLAYERS,
+    MIN_PLAYERS,
+    Environment,
+    TableFullError,
+)
 from .evaluator import best_omaha, rank_high, rank_low
-from .player import CHIPS_PER_BB, Agent, DefaultAgent, Player, fallback_action, to_bb, to_chips
+from .player import (
+    CHIPS_PER_BB,
+    Agent,
+    DefaultAgent,
+    Player,
+    PlayerStatus,
+    fallback_action,
+    to_bb,
+    to_chips,
+)
 from .pots import Pot, PotSplit, build_pots, split_pot
-from .remote import RemoteAgent, RemotePlayer, agent_loop, start_agent_process
+from .remote import (
+    HandEndReply,
+    Join,
+    JoinListener,
+    JoinReply,
+    Leave,
+    RemoteAgent,
+    RemotePlayer,
+    agent_loop,
+    connect_and_join,
+    handle_join,
+    join_table,
+    start_agent_process,
+)
 from .views import Event, EventType, HandResult, PotResult, PotView, SeatView, TableView
 
 __all__ = [
@@ -29,11 +57,15 @@ __all__ = [
     "DefaultAgent",
     "fallback_action",
     "Player",
+    "PlayerStatus",
     "Dealer",
     "Environment",
+    "TableFullError",
+    "NotEnoughPlayersError",
     "MAX_BETS_PER_STREET",
     "MIN_PLAYERS",
     "MAX_PLAYERS",
+    "DEFAULT_ACTION_TIMEOUT",
     "CHIPS_PER_BB",
     "to_chips",
     "to_bb",
@@ -53,6 +85,14 @@ __all__ = [
     "PotResult",
     "RemoteAgent",
     "RemotePlayer",
+    "Join",
+    "JoinReply",
+    "Leave",
+    "HandEndReply",
+    "JoinListener",
     "agent_loop",
+    "handle_join",
+    "join_table",
+    "connect_and_join",
     "start_agent_process",
 ]

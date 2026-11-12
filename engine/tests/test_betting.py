@@ -1,7 +1,7 @@
 import unittest
 from collections import Counter
 
-from engine import Environment, EventType, Player, Street
+from engine import Environment, EventType, Player, PlayerStatus, Street
 
 
 class Scripted:
@@ -187,7 +187,7 @@ class HeadsUpOrderTest(unittest.TestCase):
 
 
 class IllegalActionTest(unittest.TestCase):
-    def test_illegal_action_rejected_and_falls_back(self):
+    def test_illegal_action_rejected_and_retry_allowed(self):
         errors = []
 
         class CheckFacingBet:
@@ -196,7 +196,7 @@ class IllegalActionTest(unittest.TestCase):
                     player.check()  # illegal: facing the big blind
                 except Exception as e:  # noqa: BLE001
                     errors.append(e)
-                player.call()
+                player.call()  # a retry within the same turn is fine
                 try:
                     player.call()  # only one action per turn
                 except Exception as e:  # noqa: BLE001
@@ -206,7 +206,7 @@ class IllegalActionTest(unittest.TestCase):
                 pass
 
         agents = [CheckFacingBet(), Scripted(), Scripted()]
-        env, _ = make_env([100] * 3, agents)
+        env, players = make_env([100] * 3, agents)
         result = env.start_round()
         self.assertGreaterEqual(len(errors), 2)
         self.assertEqual(type(errors[0]).__name__, "IllegalActionError")
@@ -217,8 +217,9 @@ class IllegalActionTest(unittest.TestCase):
             if e.seat == 0 and e.street is Street.PREFLOP and e.type in player_actions
         ]
         self.assertEqual(calls[0].type, EventType.CALL)
+        self.assertIs(players[0].status, PlayerStatus.ACTIVE)  # it did act
 
-    def test_no_action_checks_or_folds(self):
+    def test_no_action_folds_even_when_check_is_possible(self):
         class DoNothing:
             def on_turn(self, player, view, legal):
                 pass
@@ -226,11 +227,31 @@ class IllegalActionTest(unittest.TestCase):
             def on_hand_end(self, player, result):
                 pass
 
-        env, players = make_env([100] * 3, [DoNothing(), DoNothing(), DoNothing()])
+        # Everyone limps; the big blind could check but does nothing -> fold.
+        agents = [Scripted(), Scripted(), DoNothing()]
+        env, players = make_env([100] * 3, agents)
         result = env.start_round()
-        # Seat 0 and the SB fold to the big blind.
-        self.assertFalse(result.showdown)
-        self.assertEqual(result.net, {0: 0.0, 1: -0.5, 2: 0.5})
+        bb_actions = [
+            e for e in result.history if e.seat == 2 and e.type in (EventType.FOLD, EventType.CHECK)
+        ]
+        self.assertEqual(bb_actions[0].type, EventType.FOLD)
+        self.assertEqual(result.net[2], -1.0)  # the blind stays in the pot
+        self.assertIs(players[2].status, PlayerStatus.SITTING_OUT)
+
+    def test_uncaught_illegal_action_counts_as_no_action(self):
+        class CheckOnly:
+            def on_turn(self, player, view, legal):
+                player.check()  # raises facing the big blind; not caught
+
+            def on_hand_end(self, player, result):
+                pass
+
+        env, players = make_env([100] * 3, [CheckOnly(), Scripted(), Scripted()])
+        result = env.start_round()
+        seat0 = [e for e in result.history if e.seat == 0 and e.type is EventType.FOLD]
+        self.assertEqual(len(seat0), 1)
+        self.assertIs(players[0].status, PlayerStatus.SITTING_OUT)
+        self.assertEqual(players[0].stack, 100.0)
 
 
 if __name__ == "__main__":
