@@ -101,5 +101,27 @@ class SplitPotTest(unittest.TestCase):
         self.assertEqual(split.low, {})
 
 
+class SharesTest(unittest.TestCase):
+    def test_scoop_is_two_shares(self):
+        split = split_pot(Pot(400, (0, 1)), {0: (STRONG, NUT_LOW), 1: (MEDIUM, OK_LOW)}, [1, 0])
+        self.assertEqual(split.shares, ((0, "high", 200), (0, "low", 200)))
+
+    def test_quartered_pot_shares_in_odd_chip_order(self):
+        pot = Pot(401, (0, 1, 2))
+        hands = {0: (STRONG, NUT_LOW), 1: (MEDIUM, NUT_LOW), 2: (WEAK, None)}
+        split = split_pot(pot, hands, [1, 2, 0])
+        self.assertEqual(split.shares, ((0, "high", 201), (1, "low", 100), (0, "low", 100)))
+        self.assertEqual(sum(a for _, _, a in split.shares), 401)
+
+    def test_no_low_single_high_share(self):
+        split = split_pot(Pot(400, (0, 1)), {0: (STRONG, None), 1: (MEDIUM, None)}, [1, 0])
+        self.assertEqual(split.shares, ((0, "high", 400),))
+
+    def test_zero_chip_shares_left_out(self):
+        # One chip: the high half takes it, the low half is empty.
+        split = split_pot(Pot(1, (0, 1)), {0: (STRONG, None), 1: (MEDIUM, NUT_LOW)}, [1, 0])
+        self.assertEqual(split.shares, ((0, "high", 1),))
+
+
 if __name__ == "__main__":
     unittest.main()

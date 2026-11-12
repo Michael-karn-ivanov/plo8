@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+import functools
 import random
 import threading
 from typing import Callable, Iterable, Optional
@@ -10,17 +12,23 @@ from entities import Board, Card, Deck, Hand, Street
 
 from .actions import Action, ActionType, IllegalActionError, LegalActions
 from .evaluator import HighRank, LowRank, best_omaha
-from .player import CHIPS_PER_BB, DefaultAgent, Player, PlayerStatus, to_bb
-from .pots import build_pots, split_pot
-from .views import (
-    Event,
-    EventType,
-    HandResult,
-    PotResult,
-    PotView,
-    SeatView,
-    TableView,
+from .events import (
+    FOLD_LEAVE,
+    FOLD_TIMEOUT,
+    BetReturned,
+    BlindPosted,
+    BoardDealt,
+    HandShown,
+    HandStarted,
+    PlayerActed,
+    PlayerReturned,
+    PlayerSatOut,
+    PotAwarded,
+    TableEvent,
 )
+from .player import CHIPS_PER_BB, DefaultAgent, Player, PlayerStatus, call_safely, to_bb
+from .pots import build_pots, split_pot
+from .views import HandResult, PotResult, PotView, SeatView, TableView
 
 __all__ = ["Dealer", "MAX_BETS_PER_STREET", "NotEnoughPlayersError"]
 
@@ -39,6 +47,10 @@ def _callback(p: Player, name: str) -> Optional[Callable]:
     return callback if callable(callback) else None
 
 
+def _run_now(fn: Callable[[], None]) -> None:
+    fn()
+
+
 class Dealer:
     """Runs hands of fixed-limit Omaha Hi-Lo 8-or-better. Internally all amounts are chips.
 
@@ -49,6 +61,11 @@ class Dealer:
     inside that processing through `rebuy_window`. When the hand is over,
     `after_hand` (if set) is called under `lock` — the environment uses it to
     remove leavers and seat queued joiners.
+
+    Public events go through `broadcast(event)` and other agent notifications
+    through `schedule(fn)`; both are replaced by the environment (which owns the
+    `seq` counter and delivers outside its lock). `flush()` delivers anything
+    queued while the lock was held. The defaults deliver at once.
     """
 
     def __init__(
@@ -86,12 +103,17 @@ class Dealer:
         self.in_hand = False
         self.rebuy_window = False
         self.hand_number = 0
-        self.history: list[Event] = []
+        self.history: list[TableEvent] = []  # public events of the current hand
         self.last_result: Optional[HandResult] = None
         self.lock = lock if lock is not None else threading.RLock()
         self.after_hand: Optional[Callable[[], None]] = None
         # Names of players waiting to be seated (provided by the environment).
         self.waiting_names: Callable[[], tuple[str, ...]] = tuple
+        # Event / notification delivery (replaced by the environment).
+        self.broadcast: Callable[[TableEvent], None] = self._broadcast_now
+        self.schedule: Callable[[Callable[[], None]], None] = _run_now
+        self.flush: Callable[[], None] = lambda: None
+        self._seq = 0
 
         self._active: list[Player] = []
         self._current_bet = 0
@@ -151,17 +173,6 @@ class Dealer:
             return self.big_blind
         return 2 * self.big_blind
 
-    def _emit(self, event: Event) -> None:
-        self.history.append(event)
-        self.notify(event)
-
-    def notify(self, event: Event) -> None:
-        """Send `event` to every seated player's agent without recording it."""
-        for p in list(self.players):
-            callback = _callback(p, "on_event")
-            if callback is not None:
-                callback(event)
-
     def _put(self, p: Player, chips: int) -> None:
         """Move chips from a player's stack into his bets."""
         p._chips -= chips
@@ -170,21 +181,59 @@ class Dealer:
         if p._chips == 0:
             p.all_in = True
 
+    # --- events and notifications --------------------------------------------
+
+    def recipients(self) -> list[Player]:
+        """Players who receive public events: everyone seated (active or sitting
+        out, including those about to leave)."""
+        return [p for p in self.players if p.seated]
+
+    def stamp(self, event: TableEvent, seq: int) -> TableEvent:
+        """Set `seq` / `hand_no` on `event` and record it in the hand's history."""
+        hand_no = self.hand_number if self.in_hand else None
+        event = dataclasses.replace(event, hand_no=hand_no, seq=seq)
+        if self.in_hand:
+            self.history.append(event)
+        return event
+
+    @staticmethod
+    def deliver(event: TableEvent, recipients: Iterable[Player]) -> None:
+        """Call `on_event(player, event)` for each recipient, in seat order."""
+        for p in recipients:
+            if p.status is PlayerStatus.LEFT:
+                continue
+            callback = _callback(p, "on_event")
+            if callback is not None:
+                call_safely(callback, p, event)
+
+    def _broadcast_now(self, event: TableEvent) -> None:
+        """Default broadcast for a dealer used without an environment."""
+        with self.lock:
+            self._seq += 1
+            event = self.stamp(event, self._seq)
+            recipients = self.recipients()
+        self.deliver(event, recipients)
+
+    def _emit(self, event: TableEvent) -> None:
+        self.broadcast(event)
+
+    def _notify(self, p: Player, name: str, *args: object) -> None:
+        """Schedule an optional notification callback `name(p, *args)`."""
+        callback = _callback(p, name)
+        if callback is not None:
+            self.schedule(functools.partial(call_safely, callback, p, *args))
+
     # --- status changes ------------------------------------------------------
 
     def _set_sitting_out(self, p: Player) -> None:
         p.status = PlayerStatus.SITTING_OUT
-        callback = _callback(p, "on_sit_out")
-        if callback is not None:
-            callback(p)
-        self.notify(Event(EventType.PLAYER_SAT_OUT, Street.PREFLOP, seat=p.seat, name=p.name))
+        self._notify(p, "on_sit_out")
+        self._emit(PlayerSatOut(p.seat, p.name, p.stack))  # type: ignore[arg-type]
 
     def _set_active(self, p: Player) -> None:
         p.status = PlayerStatus.ACTIVE
-        callback = _callback(p, "on_return")
-        if callback is not None:
-            callback(p)
-        self.notify(Event(EventType.PLAYER_RETURNED, Street.PREFLOP, seat=p.seat, name=p.name))
+        self._notify(p, "on_return")
+        self._emit(PlayerReturned(p.seat, p.name, p.stack))  # type: ignore[arg-type]
 
     def _request_return(self, p: Player) -> None:
         """A sitting-out player rebought or called sit_in(). Inside the end-of-hand
@@ -201,6 +250,7 @@ class Dealer:
         """Play one complete hand and return its result."""
         self.start_hand()
         try:
+            self._emit(self._hand_started())
             self.post_blinds()
             self.deal_hole_cards()
             self._play_streets()
@@ -212,7 +262,8 @@ class Dealer:
         return result
 
     def start_hand(self) -> None:
-        """Reset the deck, board, pots and per-hand player state."""
+        """Reset the deck, board, pots, the event history and per-hand player
+        state; fix the participants, the button and the blind seats."""
         with self.lock:
             if self.in_hand:
                 raise RuntimeError("a hand is already in progress")
@@ -235,46 +286,58 @@ class Dealer:
             for p in self.players:
                 p._reset_for_hand(dealt=self._ready(p))
             self._active = [p for p in self.players if p.in_hand]
-            self.sb_seat = self.bb_seat = None
+            sb, bb = self._blind_players()
+            self.sb_seat, self.bb_seat = sb.seat, bb.seat
             self.hand_number += 1
             self.in_hand = True
-        self._emit(Event(EventType.HAND_START, Street.PREFLOP, seat=self.button))
 
-    def post_blinds(self) -> None:
-        """Small and big blind are posted; short stacks post all-in.
-
-        SB/BB are the first and second participants clockwise from the button
-        (heads-up: the button is the small blind); sitting-out seats are skipped.
-        """
+    def _blind_players(self) -> tuple[Player, Player]:
+        """SB/BB are the first and second participants clockwise from the button
+        (heads-up: the button is the small blind); sitting-out seats are skipped."""
         assert self.button is not None
         if len(self._active) == 2:
             sb = self.players[self.button]
         else:
             sb = self._order_after(self.button)[0]
         bb = self._order_after(sb.seat)[0]  # type: ignore[arg-type]
-        self.sb_seat, self.bb_seat = sb.seat, bb.seat
-        self._post(sb, self.small_blind, EventType.POST_SMALL_BLIND)
-        self._post(bb, self.big_blind, EventType.POST_BIG_BLIND)
+        return sb, bb
+
+    def _hand_started(self) -> HandStarted:
+        return HandStarted(
+            button=self.button,  # type: ignore[arg-type]
+            sb_seat=self.sb_seat,  # type: ignore[arg-type]
+            bb_seat=self.bb_seat,  # type: ignore[arg-type]
+            participants=tuple((p.seat, p.name, p.stack) for p in self._active),  # type: ignore[misc]
+        )
+
+    def post_blinds(self) -> None:
+        """Small and big blind are posted; short stacks post all-in."""
+        if self.sb_seat is None or self.bb_seat is None:
+            sb, bb = self._blind_players()
+            self.sb_seat, self.bb_seat = sb.seat, bb.seat
+        self._post(self.players[self.sb_seat], self.small_blind, "SB")
+        self._post(self.players[self.bb_seat], self.big_blind, "BB")
         # Callers must match the full big blind even if the BB is all-in for less.
         self._current_bet = self.big_blind
         self._bets = 1
 
-    def _post(self, p: Player, amount: int, event_type: EventType) -> None:
+    def _post(self, p: Player, amount: int, blind: str) -> None:
         chips = min(amount, p.chips)
         self._put(p, chips)
         self._emit(
-            Event(
-                event_type,
-                Street.PREFLOP,
-                seat=p.seat,
-                amount=self.to_bb(chips),
-                to=self.to_bb(p.street_chips),
-                all_in=p.all_in,
+            BlindPosted(
+                p.seat,  # type: ignore[arg-type]
+                p.name,  # type: ignore[arg-type]
+                blind,
+                self.to_bb(chips),
+                p.all_in,
+                p.stack,
             )
         )
 
     def deal_hole_cards(self) -> None:
-        """Deal 4 cards one at a time to each participant, starting left of the button."""
+        """Deal 4 cards one at a time to each participant, starting left of the
+        button; then tell each participant (same order) its own hand."""
         order = self._order_after(self.button)  # type: ignore[arg-type]
         dealt: dict[int, list[Card]] = {p.seat: [] for p in order}  # type: ignore[misc]
         for _ in range(4):
@@ -282,6 +345,8 @@ class Dealer:
                 dealt[p.seat].append(self.deck.deal_one())  # type: ignore[index]
         for p in order:
             p.hole_cards = Hand(dealt[p.seat])  # type: ignore[index]
+        for p in order:
+            self._notify(p, "on_hole_cards", p.hole_cards, self.table_view(p))
 
     def _play_streets(self) -> None:
         # Preflop action starts left of the big blind (heads-up: the button/SB).
@@ -303,7 +368,7 @@ class Dealer:
         else:
             cards = (self.deck.deal_one(),)
             self.board = self.board.with_river(cards[0])
-        self._emit(Event(EventType.BOARD, street, cards=cards))
+        self._emit(BoardDealt(street, cards, self.board))
 
     def _start_street(self) -> None:
         for p in self._active:
@@ -376,7 +441,7 @@ class Dealer:
         action folds the hand, and the player sits out from the next hand.
         """
         if p.leave_requested:
-            self._apply(p, Action.fold())
+            self._apply(p, Action.fold(), FOLD_LEAVE)
             return
         legal = self.legal_actions(p)
         view = self.table_view(p)
@@ -388,14 +453,15 @@ class Dealer:
             pass  # an uncaught illegal action counts as no action
         finally:
             action = p._end_turn()
+        reason = None
         if p.leave_requested:
-            action = Action.fold()
+            action, reason = Action.fold(), FOLD_LEAVE
         elif action is None or not legal.allows(action.type):
             p.missed_turn = True
-            action = Action.fold()
-        self._apply(p, action)
+            action, reason = Action.fold(), FOLD_TIMEOUT
+        self._apply(p, action, reason)
 
-    def _apply(self, p: Player, action: Action) -> None:
+    def _apply(self, p: Player, action: Action, reason: Optional[str] = None) -> None:
         t = action.type
         put = 0
         if t is ActionType.FOLD:
@@ -418,13 +484,16 @@ class Dealer:
             self._current_bet = target
         p.has_acted = True
         self._emit(
-            Event(
-                EventType[t.name],
+            PlayerActed(
+                p.seat,  # type: ignore[arg-type]
+                p.name,  # type: ignore[arg-type]
                 self.board.street,
-                seat=p.seat,
-                amount=self.to_bb(put),
-                to=self.to_bb(p.street_chips),
-                all_in=p.all_in,
+                t,
+                self.to_bb(put),
+                self.to_bb(p.street_chips),
+                p.all_in,
+                p.stack,
+                reason,
             )
         )
 
@@ -469,7 +538,37 @@ class Dealer:
 
     # --- showdown and settlement --------------------------------------------
 
+    def _return_uncalled(self) -> dict[int, int]:
+        """Give the uncalled part of the biggest bet back to its (non-folded)
+        owner, emitting `BetReturned`. Returns {seat: chips}."""
+        by_size = sorted(self._active, key=lambda p: p.total_chips, reverse=True)
+        if not by_size:
+            return {}
+        top = by_size[0]
+        second = by_size[1].total_chips if len(by_size) > 1 else 0
+        excess = top.total_chips - second
+        if excess <= 0 or top.folded:
+            return {}
+        top.total_chips -= excess
+        top.street_chips = max(0, top.street_chips - excess)
+        top._chips += excess
+        self._emit(
+            BetReturned(
+                top.seat,  # type: ignore[arg-type]
+                top.name,  # type: ignore[arg-type]
+                self.to_bb(excess),
+                top.stack,
+            )
+        )
+        return {top.seat: excess}  # type: ignore[dict-item]
+
     def _settle(self) -> HandResult:
+        """Showdown (if two or more players are left), uncalled bet, pots.
+
+        Hands are shown in order starting left of the button (`HandShown`),
+        then the uncalled bet is returned (`BetReturned`) and each pot is
+        credited share by share (`PotAwarded`).
+        """
         order = self._order_after(self.button)  # type: ignore[arg-type]
         seat_order = [p.seat for p in order]
         live = [p for p in order if not p.folded]
@@ -482,21 +581,35 @@ class Dealer:
                 cards = p.show_cards()
                 shown[p.seat] = cards  # type: ignore[index]
                 ranks[p.seat] = best_omaha(cards, self.board)  # type: ignore[index]
-                self._emit(
-                    Event(EventType.SHOW, self.board.street, seat=p.seat, cards=tuple(cards))
-                )
+                self._emit(HandShown(p.seat, p.name, cards, p.stack))  # type: ignore[arg-type]
 
-        won = {p.seat: 0 for p in self._active}
+        returned = self._return_uncalled()
+
         pot_results = []
-        for pot in build_pots(self._active):
+        for index, pot in enumerate(build_pots(self._active)):
             if pot.uncontested:
                 high = {pot.eligible[0]: pot.amount}
                 low: dict[int, int] = {}
+                shares: tuple[tuple[int, str, int], ...] = ((pot.eligible[0], "whole", pot.amount),)
             else:
-                high, low = split_pot(pot, ranks, seat_order)  # type: ignore[arg-type]
-            for shares in (high, low):
-                for seat, amount in shares.items():
-                    won[seat] += amount
+                split = split_pot(pot, ranks, seat_order)  # type: ignore[arg-type]
+                high, low = split.high, split.low
+                shares = split.shares
+            for seat, share, amount in shares:
+                if amount <= 0:
+                    continue
+                winner = self.players[seat]
+                winner._chips += amount
+                self._emit(
+                    PotAwarded(
+                        seat,
+                        winner.name,  # type: ignore[arg-type]
+                        index,
+                        share,
+                        self.to_bb(amount),
+                        winner.stack,
+                    )
+                )
             pot_results.append(
                 PotResult(
                     amount=self.to_bb(pot.amount),
@@ -506,14 +619,6 @@ class Dealer:
                     uncontested=pot.uncontested,
                 )
             )
-
-        for seat in seat_order:
-            amount = won[seat]
-            if amount:
-                self.players[seat]._chips += amount  # type: ignore[index]
-                self._emit(
-                    Event(EventType.AWARD, self.board.street, seat=seat, amount=self.to_bb(amount))
-                )
 
         return HandResult(
             hand_number=self.hand_number,
@@ -532,6 +637,7 @@ class Dealer:
             history=tuple(self.history),
             names={p.seat: p.name for p in self.players},  # type: ignore[misc]
             dealt_in={p.seat: p.in_hand for p in self.players},  # type: ignore[misc]
+            returned={s: self.to_bb(c) for s, c in returned.items()},
         )
 
     def _end_hand(self, result: HandResult) -> None:
@@ -600,3 +706,4 @@ class Dealer:
             self.in_hand = False
             if self.after_hand is not None:
                 self.after_hand()
+        self.flush()

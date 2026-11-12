@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol
 
 from entities import Hand
 
 from .actions import Action, ActionType, IllegalActionError, LegalActions
+from .events import PlayerRebought
 
 if TYPE_CHECKING:  # pragma: no cover
     from .dealer import Dealer
     from .environment import Environment
-    from .views import Event, HandResult, TableView
+    from .events import TableEvent
+    from .views import HandResult, TableView
 
 __all__ = [
     "CHIPS_PER_BB",
@@ -22,11 +25,14 @@ __all__ = [
     "Agent",
     "DefaultAgent",
     "fallback_action",
+    "call_safely",
     "Player",
     "PlayerStatus",
 ]
 
 CHIPS_PER_BB = 100
+
+_log = logging.getLogger("engine.callbacks")
 
 
 def to_chips(amount_bb: float, chips_per_bb: int = CHIPS_PER_BB) -> int:
@@ -41,6 +47,16 @@ def to_bb(chips: int, chips_per_bb: int = CHIPS_PER_BB) -> float:
     return chips / chips_per_bb
 
 
+def call_safely(callback: Callable[..., Any], *args: Any) -> None:
+    """Invoke a notification callback (`on_hole_cards`, `on_event`, `on_seated`,
+    `on_sit_out`, `on_return`, `on_left`); exceptions are logged, not raised, so
+    a faulty observer cannot break the hand for the others."""
+    try:
+        callback(*args)
+    except Exception:  # noqa: BLE001
+        _log.exception("agent callback %s raised", getattr(callback, "__name__", callback))
+
+
 class PlayerStatus(Enum):
     WAITING = "waiting"  # joined, queued for a seat until the current hand is over
     ACTIVE = "active"  # seated with chips; dealt into the next hand
@@ -51,8 +67,11 @@ class PlayerStatus(Enum):
 class Agent(Protocol):
     """Callbacks an agent implements.
 
-    Optional: `on_seated(player, view)`, `on_sit_out(player)`, `on_return(player)`,
-    `on_left(player, final_stack_bb)` and `on_event(event)`.
+    Optional (looked up with getattr, skipped when missing):
+    `on_hole_cards(player, hand, view)`, `on_event(player, event)`,
+    `on_seated(player, view)`, `on_sit_out(player)`, `on_return(player)` and
+    `on_left(player, final_stack_bb)`. Exceptions raised by these are logged
+    and ignored.
     """
 
     def on_turn(self, player: "Player", view: "TableView", legal: LegalActions) -> None:
@@ -64,13 +83,22 @@ class Agent(Protocol):
         """Rebuy window: the agent may call player.rebuy(...), sit_in() or leave()."""
 
 
+class _OptionalCallbacks(Protocol):  # pragma: no cover - documentation only
+    def on_hole_cards(self, player: "Player", hand: Hand, view: "TableView") -> None:
+        """Own hole cards, once per hand, after the blinds and before any turn."""
+
+    def on_event(self, player: "Player", event: "TableEvent") -> None:
+        """Every public table event (must not act on the player)."""
+
+
 def fallback_action(legal: LegalActions) -> Action:
     """The default agent's play: check if possible, else fold."""
     return Action.check() if legal.can_check else Action.fold()
 
 
 class DefaultAgent:
-    """Used when a player has no agent: check if possible, else fold; never rebuys."""
+    """Used when a player has no agent: check if possible, else fold; never
+    rebuys; ignores hole-card and event notifications."""
 
     def on_turn(self, player: "Player", view: "TableView", legal: LegalActions) -> None:
         player.act(fallback_action(legal))
@@ -192,6 +220,12 @@ class Player:
         dealer = self._dealer
         return dealer.lock if dealer is not None else contextlib.nullcontext()
 
+    def _flush(self) -> None:
+        """Deliver notifications queued while the table lock was held."""
+        dealer = self._dealer
+        if dealer is not None:
+            dealer.flush()
+
     def _check_can_manage_seat(self, what: str) -> None:
         """rebuy()/sit_in() are only for seated players, outside betting."""
         if self.status is PlayerStatus.WAITING:
@@ -205,7 +239,7 @@ class Player:
             raise IllegalActionError(f"cannot {what} during a hand")
 
     def rebuy(self, amount_bb: float) -> None:
-        """Add `amount_bb` big blinds to the stack.
+        """Add `amount_bb` big blinds to the stack (broadcast as `PlayerRebought`).
 
         Allowed inside `on_hand_end` or between hands. A sitting-out player who
         rebuys becomes active and is dealt into the next hand.
@@ -225,8 +259,18 @@ class Player:
                 )
             self._chips += chips
             self.rebuy_chips += chips
-            if self.status is PlayerStatus.SITTING_OUT and dealer is not None:
-                dealer._request_return(self)
+            if dealer is not None:
+                dealer._emit(
+                    PlayerRebought(
+                        self.seat,  # type: ignore[arg-type]
+                        self.name,  # type: ignore[arg-type]
+                        to_bb(chips, self._chips_per_bb),
+                        self.stack,
+                    )
+                )
+                if self.status is PlayerStatus.SITTING_OUT:
+                    dealer._request_return(self)
+        self._flush()
 
     def sit_in(self) -> None:
         """Return to play after sitting out (the player must have chips; a busted
@@ -240,6 +284,7 @@ class Player:
                 raise IllegalActionError(f"{self.name} has no chips: rebuy to return")
             if self._dealer is not None:
                 self._dealer._request_return(self)
+        self._flush()
 
     def leave(self) -> None:
         """Leave the table, emptying the seat (see `Environment.leave`). Idempotent."""

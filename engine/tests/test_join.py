@@ -3,9 +3,9 @@ import unittest
 
 from engine import (
     Environment,
-    EventType,
     IllegalActionError,
     Player,
+    PlayerJoined,
     PlayerStatus,
     TableFullError,
 )
@@ -20,10 +20,11 @@ class Passive:
         self.turns = 0
         self.turn_hands = []
         self.hole_cards = {}
+        self.dealt = {}  # hand_number -> hand given by on_hole_cards
         self.hand_ends = []
         self.seated = []
         self.events = []
-        self.log = []  # ("seated" | "turn", hand_number)
+        self.log = []  # ("seated" | "hole" | "turn", hand_number)
         self.player = None
 
     def on_turn(self, player, view, legal):
@@ -38,6 +39,10 @@ class Passive:
         else:
             player.call()
 
+    def on_hole_cards(self, player, hand, view):
+        self.dealt[view.hand_number] = hand
+        self.log.append(("hole", view.hand_number))
+
     def on_hand_end(self, player, result):
         self.hand_ends.append(result.hand_number)
 
@@ -46,7 +51,7 @@ class Passive:
         self.seated.append((player.name, view.seat, view))
         self.log.append(("seated", view.hand_number))
 
-    def on_event(self, event):
+    def on_event(self, player, event):
         self.events.append(event)
 
 
@@ -104,10 +109,10 @@ class JoinBetweenHandsTest(unittest.TestCase):
         self.assertIs(agent.player, new)
         self.assertIs(new.status, PlayerStatus.ACTIVE)
         result = env.start_round()
-        # on_seated first, then a turn in the next hand, with 4 cards dealt.
-        self.assertEqual(agent.log[0], ("seated", 0))
-        self.assertIn(("turn", 1), agent.log)
+        # on_seated first, then its hole cards and a turn in the next hand.
+        self.assertEqual(agent.log[:3], [("seated", 0), ("hole", 1), ("turn", 1)])
         self.assertEqual(len(agent.hole_cards[1]), 4)
+        self.assertEqual(agent.dealt[1], new.hole_cards)
         self.assertTrue(result.dealt_in[new.seat])
 
     def test_default_seat_is_big_blind(self):
@@ -229,12 +234,20 @@ class JoinBetweenHandsTest(unittest.TestCase):
         result = env.start_round()
         self.assertEqual(result.sb_seat, by_name(env, "new").seat)
 
-    def test_join_event_sent_to_others(self):
+    def test_join_event_sent_to_everyone_including_joiner(self):
         env, _, agents = make_env(2)
-        env.join(20, name="new")
-        joined = [e for e in agents[0].events if e.type is EventType.PLAYER_JOINED]
-        self.assertEqual(len(joined), 1)
-        self.assertEqual((joined[0].name, joined[0].seat), ("new", by_name(env, "new").seat))
+        joiner = Passive()
+        env.join(20, name="new", agent=joiner)
+        new = by_name(env, "new")
+        for agent in agents + [joiner]:
+            joined = [e for e in agent.events if isinstance(e, PlayerJoined)]
+            self.assertEqual(len(joined), 1)
+            self.assertEqual(
+                (joined[0].name, joined[0].seat, joined[0].stack_bb), ("new", new.seat, 20.0)
+            )
+            self.assertIsNone(joined[0].hand_no)  # between hands
+        # The joiner was told about its seat before the event.
+        self.assertEqual(len(joiner.seated), 1)
 
     def test_seated_view(self):
         env, _, _ = make_env(3)
@@ -264,9 +277,11 @@ class JoinDuringHandTest(unittest.TestCase):
         first = env.start_round()
         late = joiner.joined[0]
         self.assertEqual(joiner.returns, [None])
-        # Not part of hand 1.
+        # Not part of hand 1: no cards, no turns, no events, no on_hand_end.
         self.assertEqual(late_agent.turns, 0)
+        self.assertEqual(late_agent.dealt, {})
         self.assertEqual(late_agent.hand_ends, [])
+        self.assertFalse(any(e.hand_no == 1 for e in late_agent.events))
         self.assertIsInstance(joiner.errors[0], IllegalActionError)
         self.assertEqual(late.rebuy_chips, 0)
         self.assertEqual(set(first.stacks), {0, 1, 2})
@@ -283,16 +298,20 @@ class JoinDuringHandTest(unittest.TestCase):
         self.assertIsNone(late.hole_cards)
         self.assertEqual(len(late_agent.seated), 1)
         self.assertEqual(late.stack, 50.0)
+        # Its first event is its own PlayerJoined.
+        self.assertIsInstance(late_agent.events[0], PlayerJoined)
+        self.assertEqual(late_agent.events[0].name, "late")
 
         second = env.start_round()
         self.assertEqual(second.bb_seat, late.seat)
         self.assertEqual(second.names[late.seat], "late")
         self.assertIsNotNone(late.hole_cards)
         self.assertGreater(late_agent.turns, 0)
-        # on_seated (after hand 1), then turns in hand 2 with 4 cards.
-        self.assertEqual(late_agent.log[0], ("seated", 1))
+        # on_seated (after hand 1), then hole cards and turns in hand 2 with 4 cards.
+        self.assertEqual(late_agent.log[:3], [("seated", 1), ("hole", 2), ("turn", 2)])
         self.assertEqual(set(late_agent.turn_hands), {2})
         self.assertEqual(len(late_agent.hole_cards[2]), 4)
+        self.assertEqual(late_agent.dealt[2], late.hole_cards)
         self.assertEqual(late_agent.hand_ends, [2])
         self.assertEqual(sum(p.chips for p in env.players), 30000 + 5000)
 

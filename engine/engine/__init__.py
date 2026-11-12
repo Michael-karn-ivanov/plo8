@@ -12,6 +12,23 @@ from .environment import (
     TableFullError,
 )
 from .evaluator import best_omaha, rank_high, rank_low
+from .events import (
+    FOLD_LEAVE,
+    FOLD_TIMEOUT,
+    BetReturned,
+    BlindPosted,
+    BoardDealt,
+    HandShown,
+    HandStarted,
+    PlayerActed,
+    PlayerJoined,
+    PlayerLeft,
+    PlayerRebought,
+    PlayerReturned,
+    PlayerSatOut,
+    PotAwarded,
+    TableEvent,
+)
 from .player import (
     CHIPS_PER_BB,
     Agent,
@@ -37,7 +54,7 @@ from .remote import (
     join_table,
     start_agent_process,
 )
-from .views import Event, EventType, HandResult, PotResult, PotView, SeatView, TableView
+from .views import HandResult, PotResult, PotView, SeatView, TableView
 
 __all__ = [
     # entities re-exports
@@ -76,13 +93,29 @@ __all__ = [
     "PotSplit",
     "build_pots",
     "split_pot",
-    "Event",
-    "EventType",
+    # events
+    "TableEvent",
+    "HandStarted",
+    "BlindPosted",
+    "PlayerActed",
+    "BoardDealt",
+    "HandShown",
+    "BetReturned",
+    "PotAwarded",
+    "PlayerJoined",
+    "PlayerSatOut",
+    "PlayerReturned",
+    "PlayerRebought",
+    "PlayerLeft",
+    "FOLD_LEAVE",
+    "FOLD_TIMEOUT",
+    # views
     "TableView",
     "SeatView",
     "PotView",
     "HandResult",
     "PotResult",
+    # remote agents
     "RemoteAgent",
     "RemotePlayer",
     "Join",

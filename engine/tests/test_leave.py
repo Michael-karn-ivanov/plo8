@@ -3,10 +3,12 @@ import unittest
 
 from entities import Board, Deck, Hand
 from engine import (
+    ActionType,
     Environment,
-    EventType,
     IllegalActionError,
     Player,
+    PlayerActed,
+    PlayerLeft,
     PlayerStatus,
     TableFullError,
 )
@@ -46,7 +48,7 @@ class Bot:
     def on_left(self, player, final_stack_bb):
         self.left.append(final_stack_bb)
 
-    def on_event(self, event):
+    def on_event(self, player, event):
         self.events.append(event)
 
 
@@ -84,9 +86,12 @@ def make_env(n, agents=None, button=0, **kwargs):
     return Environment(players, button=button, seed=1, **kwargs), players, agents
 
 
+def acted(result, seat):
+    return [e for e in result.history if isinstance(e, PlayerActed) and e.seat == seat]
+
+
 def player_actions(result, seat):
-    kinds = (EventType.FOLD, EventType.CHECK, EventType.CALL, EventType.RAISE)
-    return [e.type for e in result.history if e.seat == seat and e.type in kinds]
+    return [e.action for e in acted(result, seat)]
 
 
 class LeaveBetweenHandsTest(unittest.TestCase):
@@ -100,12 +105,15 @@ class LeaveBetweenHandsTest(unittest.TestCase):
         self.assertEqual([p.seat for p in env.players], [0, 1, 2])
         self.assertEqual(env.button, 0)
         self.assertEqual(agents[2].left, [100.0])
-        left = [e for e in agents[0].events if e.type is EventType.PLAYER_LEFT]
-        self.assertEqual([(e.name, e.seat) for e in left], [("p2", 2)])
-        self.assertEqual([e for e in agents[2].events if e.type is EventType.PLAYER_LEFT], [])
+        # PlayerLeft reaches the remaining players, not the leaver.
+        for agent in (agents[0], agents[1], agents[3]):
+            left = [e for e in agent.events if isinstance(e, PlayerLeft)]
+            self.assertEqual([(e.name, e.seat, e.stack_bb) for e in left], [("p2", 2, 100.0)])
+        self.assertEqual([e for e in agents[2].events if isinstance(e, PlayerLeft)], [])
         result = env.start_round()
         self.assertEqual(set(result.names.values()), {"p0", "p1", "p3"})
         self.assertEqual(agents[2].hand_ends, [])
+        self.assertEqual(agents[2].events, [])  # nothing after leaving
 
     def test_leave_before_button_keeps_button_player(self):
         env, players, _ = make_env(4, button=2)
@@ -156,6 +164,8 @@ class LeaveBetweenHandsTest(unittest.TestCase):
         players[1].leave()
         env.leave(players[1])
         self.assertEqual(agents[1].left, [100.0])  # notified once
+        left = [e for e in agents[0].events if isinstance(e, PlayerLeft)]
+        self.assertEqual(len(left), 1)  # broadcast once
         env.join(50, name="p1")
         new = [p for p in env.players if p.name == "p1"][0]
         self.assertIsNot(new, players[1])
@@ -190,11 +200,17 @@ class LeaveDuringHandTest(unittest.TestCase):
         env, players, _ = make_env(3, agents=agents)
         p0 = players[0]
         result = env.start_round()
-        self.assertEqual(player_actions(result, 0), [EventType.FOLD])
+        self.assertEqual(player_actions(result, 0), [ActionType.FOLD])
+        self.assertEqual(acted(result, 0)[0].reason, "leave")
         self.assertIsInstance(seen["error"], IllegalActionError)
         # Still seated (and shown as leaving) for the rest of the hand.
         self.assertTrue(seen["view"].seats[0].leaving)
         self.assertIn(0, result.names)
+        # The leaver keeps receiving the hand's events until removed.
+        self.assertEqual(
+            [e.seq for e in agents[0].events if e.hand_no == 1],
+            [e.seq for e in agents[1].events if e.hand_no == 1],
+        )
         # Removed after the hand; no on_hand_end; the button skipped him.
         self.assertIs(p0.status, PlayerStatus.LEFT)
         self.assertEqual([p.name for p in env.players], ["p1", "p2"])
@@ -221,11 +237,15 @@ class LeaveDuringHandTest(unittest.TestCase):
         self.assertIs(status["during"], PlayerStatus.ACTIVE)
         self.assertTrue(status["leaving"])
         self.assertEqual(agents[2].turns, 0)
-        self.assertEqual(player_actions(result, 2), [EventType.FOLD])
+        self.assertEqual(player_actions(result, 2), [ActionType.FOLD])
+        self.assertEqual(acted(result, 2)[0].reason, "leave")
         self.assertEqual(result.net[2], -1.0)  # the posted blind stays in the pot
         self.assertIs(players[2].status, PlayerStatus.LEFT)
         self.assertEqual(agents[2].left, [99.0])
         self.assertEqual(len(env.players), 2)
+        # PlayerLeft (after the hand) uses the seat he had during the hand.
+        left = [e for e in agents[0].events if isinstance(e, PlayerLeft)]
+        self.assertEqual([(e.name, e.seat, e.stack_bb, e.hand_no) for e in left], [("p2", 2, 99.0, None)])
 
     def test_all_in_leaver_is_paid_before_removal(self):
         # p2 is all-in on the big blind with the best hand (AcAs3d4d scoops), and
@@ -318,6 +338,9 @@ class LeaveDuringHandTest(unittest.TestCase):
         self.assertEqual(holder["waiting_after"], [])
         self.assertIs(holder["w"].status, PlayerStatus.LEFT)
         self.assertEqual(holder["agent"].left, [10.0])
+        self.assertEqual(holder["agent"].events, [])  # never seated: no events
+        # Nobody was told: the waiting player never had a seat.
+        self.assertFalse(any(isinstance(e, PlayerLeft) for e in agents[1].events))
         self.assertEqual(len(env.players), 2)
         env.join(10, name="w")  # the name is free again
 

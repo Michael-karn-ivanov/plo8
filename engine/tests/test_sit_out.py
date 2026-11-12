@@ -3,11 +3,15 @@ import unittest
 
 from entities import Board, Deck, Hand
 from engine import (
+    ActionType,
+    BlindPosted,
     Environment,
-    EventType,
     IllegalActionError,
     NotEnoughPlayersError,
     Player,
+    PlayerActed,
+    PlayerReturned,
+    PlayerSatOut,
     PlayerStatus,
 )
 
@@ -52,7 +56,7 @@ class Bot:
     def on_return(self, player):
         self.returned += 1
 
-    def on_event(self, event):
+    def on_event(self, player, event):
         self.events.append(event)
 
 
@@ -97,7 +101,7 @@ def bust_env(agent2):
 
 
 def events_of(agent, event_type):
-    return [e for e in agent.events if e.type is event_type]
+    return [e for e in agent.events if isinstance(e, event_type)]
 
 
 class BustedTest(unittest.TestCase):
@@ -109,7 +113,7 @@ class BustedTest(unittest.TestCase):
         self.assertEqual(first.dealt_in, {0: True, 1: True, 2: True})
         self.assertIs(p2.status, PlayerStatus.SITTING_OUT)
         self.assertEqual(agents[2].sat_out, 1)
-        sat = events_of(agents[0], EventType.PLAYER_SAT_OUT)
+        sat = events_of(agents[0], PlayerSatOut)
         self.assertEqual([(e.name, e.seat) for e in sat], [("p2", 2)])
         self.assertEqual(env.button, 1)
         self.assertEqual(env.active_players, players[:2])
@@ -122,7 +126,7 @@ class BustedTest(unittest.TestCase):
         self.assertEqual(second.button, 1)
         self.assertNotIn(2, (second.sb_seat, second.bb_seat))
         self.assertIsNone(p2.hole_cards)
-        self.assertFalse(any(e.seat == 2 for e in second.history))
+        self.assertFalse(any(getattr(e, "seat", None) == 2 for e in second.history))
         self.assertTrue(all(2 not in pot.eligible for pot in second.pots))
         self.assertNotIn(2, agents[2].turns)
         view = [v for v in agents[0].views if v.hand_number == 2][0]
@@ -134,6 +138,12 @@ class BustedTest(unittest.TestCase):
         self.assertEqual(third.button, 0)  # the button skipped seat 2
         self.assertEqual(agents[2].hand_ends, [(1, True), (2, False), (3, False)])
         self.assertEqual(agents[2].sat_out, 1)  # notified once
+        # While sitting out it still receives the public events of later hands.
+        self.assertTrue(any(e.hand_no == 3 for e in agents[2].events))
+        self.assertEqual(
+            [e.seq for e in agents[2].events if e.hand_no == 3],
+            [e.seq for e in agents[0].events if e.hand_no == 3],
+        )
         self.assertEqual(sum(p.chips for p in players), 20100)
 
     def test_rebuy_in_hand_end_returns_player(self):
@@ -145,18 +155,14 @@ class BustedTest(unittest.TestCase):
         self.assertIs(p2.status, PlayerStatus.ACTIVE)
         self.assertEqual(p2.stack, 50.0)
         self.assertEqual(agents[2].returned, 1)
-        back = events_of(agents[0], EventType.PLAYER_RETURNED)
+        back = events_of(agents[0], PlayerReturned)
         self.assertEqual([(e.name, e.seat) for e in back], [("p2", 2)])
 
         third = env.start_round()
         self.assertTrue(third.dealt_in[2])
         self.assertIsNotNone(p2.hole_cards)
         self.assertIn(3, agents[2].turns)
-        posts = [
-            e.seat
-            for e in third.history
-            if e.type in (EventType.POST_SMALL_BLIND, EventType.POST_BIG_BLIND)
-        ]
+        posts = [e.seat for e in third.history if isinstance(e, BlindPosted)]
         self.assertEqual(posts, [third.sb_seat, third.bb_seat])  # no extra blinds
         self.assertEqual(agents[2].hand_ends, [(1, True), (2, False), (3, True)])
 
@@ -179,7 +185,7 @@ class BustedTest(unittest.TestCase):
         self.assertIs(p2.status, PlayerStatus.ACTIVE)
         self.assertEqual(p2.stack, 100.0)
         self.assertEqual(agents[2].sat_out, 0)
-        self.assertEqual(events_of(agents[0], EventType.PLAYER_SAT_OUT), [])
+        self.assertEqual(events_of(agents[0], PlayerSatOut), [])
         result = env.start_round()
         self.assertTrue(result.dealt_in[2])
 
@@ -222,8 +228,13 @@ class NoActionTest(unittest.TestCase):
 
         # Hand 1: the big blind could check, but does nothing -> folded.
         first = env.start_round()
-        folds = [e for e in first.history if e.seat == 2 and e.type is EventType.FOLD]
+        folds = [
+            e
+            for e in first.history
+            if isinstance(e, PlayerActed) and e.seat == 2 and e.action is ActionType.FOLD
+        ]
         self.assertEqual(len(folds), 1)
+        self.assertEqual(folds[0].reason, "timeout")
         self.assertEqual(first.net[2], -1.0)
         self.assertIs(p2.status, PlayerStatus.SITTING_OUT)
         self.assertEqual(p2.stack, 99.0)  # keeps its chips

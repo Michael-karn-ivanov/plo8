@@ -10,7 +10,8 @@ from engine import (
     Action,
     ActionType,
     Environment,
-    EventType,
+    PlayerActed,
+    PlayerJoined,
     HandEndReply,
     Join,
     JoinListener,
@@ -24,12 +25,19 @@ from engine import (
     start_agent_process,
 )
 
-PLAYER_ACTIONS = (EventType.FOLD, EventType.CHECK, EventType.CALL, EventType.RAISE)
+
+
+def acted(history, seat):
+    """Action types applied for `seat`, in order."""
+    return [e.action for e in history if isinstance(e, PlayerActed) and e.seat == seat]
 
 
 class PassiveLocal:
     def __init__(self):
         self.hole_cards = {}
+        self.hole_notified = {}  # hand number -> hand from on_hole_cards
+        self.log = []  # ("hole" | "turn", hand number), in arrival order
+        self.event_seqs = []
         self.events = 0
         self.results = 0
         self.seated = []
@@ -37,6 +45,7 @@ class PassiveLocal:
 
     def on_turn(self, player, view, legal):
         self.hole_cards[view.hand_number] = view.hole_cards
+        self.log.append(("turn", view.hand_number))
         if legal.can_check:
             player.check()
         else:
@@ -45,8 +54,13 @@ class PassiveLocal:
     def on_hand_end(self, player, result):
         self.results += 1
 
-    def on_event(self, event):
+    def on_hole_cards(self, player, hand, view):
+        self.hole_notified[view.hand_number] = hand
+        self.log.append(("hole", view.hand_number))
+
+    def on_event(self, player, event):
         self.events += 1
+        self.event_seqs.append(event.seq)
 
     def on_seated(self, player, view):
         self.seated.append((player.seat, player.name, view.seat))
@@ -122,9 +136,9 @@ class LeaveOnJoinEventLocal(PassiveLocal):
         super().on_hand_end(player, result)
         self.player = player
 
-    def on_event(self, event):
-        super().on_event(event)
-        if event.type is EventType.PLAYER_JOINED and self.player is not None:
+    def on_event(self, player, event):
+        super().on_event(player, event)
+        if isinstance(event, PlayerJoined) and self.player is not None:
             self.player.leave()
 
     def on_left(self, player, final_stack_bb):
@@ -201,7 +215,7 @@ class ThreadedRemoteTest(unittest.TestCase):
         self.assertEqual(len(results), 3)
         for result in results:
             self.assertTrue(
-                any(e.type is EventType.RAISE and e.seat == 1 for e in result.history)
+                ActionType.RAISE in acted(result.history, 1)
             )
         self.assertEqual(players[2].rebuy_chips, 3 * 1000)
         self.assertEqual(
@@ -212,6 +226,14 @@ class ThreadedRemoteTest(unittest.TestCase):
             self.assertEqual(agent.hole_cards[3], players[seat].hole_cards)
             self.assertEqual(agent.results, 3)
             self.assertGreater(agent.events, 0)
+            # Own hole cards arrive before the first turn of every hand.
+            self.assertEqual(agent.hole_notified[3], players[seat].hole_cards)
+            for hand_no in (1, 2, 3):
+                entries = [e for e in agent.log if e[1] == hand_no]
+                self.assertEqual(entries[0], ("hole", hand_no))
+            # Everybody sees the same, strictly increasing, event stream.
+            self.assertEqual(agent.event_seqs, local[0].event_seqs)
+            self.assertEqual(agent.event_seqs, sorted(set(agent.event_seqs)))
         self.assertTrue(all(p.status is PlayerStatus.ACTIVE for p in players))
 
     def test_timeout_folds_sits_out_and_late_reply_is_discarded(self):
@@ -245,8 +267,7 @@ class ThreadedRemoteTest(unittest.TestCase):
         finally:
             remote.close()
             t.join(5)
-        seat0 = [e.type for e in result.history if e.seat == 0 and e.type in PLAYER_ACTIONS]
-        self.assertEqual(seat0, [EventType.FOLD])  # no reply in time -> folded
+        self.assertEqual(acted(result.history, 0), [ActionType.FOLD])  # no reply in time -> folded
         self.assertEqual(result.net[0], 0.0)
         self.assertIs(status_after_first, PlayerStatus.SITTING_OUT)
         self.assertGreater(players[0].chips, 0)
@@ -254,7 +275,7 @@ class ThreadedRemoteTest(unittest.TestCase):
         self.assertFalse(second.dealt_in[0])
         self.assertGreaterEqual(remote.discarded, 1)
         self.assertFalse(
-            any(e.seat == 0 and e.type in PLAYER_ACTIONS for e in second.history)
+            acted(second.history, 0)
         )
 
     def test_sitting_out_remote_agent_rebuys_from_hand_end(self):
@@ -288,8 +309,7 @@ class ThreadedRemoteTest(unittest.TestCase):
         result = env.start_round()
         t.join(5)
         self.assertFalse(t.is_alive())  # agent_loop returned after "left"
-        seat0 = [e.type for e in result.history if e.seat == 0 and e.type in PLAYER_ACTIONS]
-        self.assertEqual(seat0, [EventType.FOLD])
+        self.assertEqual(acted(result.history, 0), [ActionType.FOLD])
         self.assertIs(players[0].status, PlayerStatus.LEFT)
         self.assertEqual(local.left, [(100.0, PlayerStatus.LEFT)])
         self.assertEqual([p.name for p in env.players], ["b", "c"])
@@ -496,7 +516,7 @@ class ProcessRemoteTest(unittest.TestCase):
         self.assertEqual(len(results), 2)
         for result in results:
             self.assertTrue(
-                any(e.type is EventType.RAISE and e.seat == 1 for e in result.history)
+                ActionType.RAISE in acted(result.history, 1)
             )
         self.assertEqual(players[2].rebuy_chips, 2 * 1000)
         self.assertEqual(

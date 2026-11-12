@@ -2,7 +2,18 @@ import random
 import unittest
 
 from entities import Board, Card, Deck, Hand
-from engine import Environment, EventType, Player, PlayerStatus, Street
+from engine import (
+    ActionType,
+    BetReturned,
+    BlindPosted,
+    Environment,
+    HandShown,
+    Player,
+    PlayerActed,
+    PlayerStatus,
+    PotAwarded,
+    Street,
+)
 
 
 class Scripted:
@@ -95,10 +106,12 @@ class EarlyEndTest(unittest.TestCase):
         self.assertEqual(agents[2].turns, 0)
         self.assertEqual(result.net, {0: 0.0, 1: -0.5, 2: 0.5})
         self.assertEqual([p.stack for p in players], [100.0, 99.5, 100.5])
+        # The uncalled half of the big blind is returned; the rest is won.
+        self.assertEqual(result.returned, {2: 0.5})
         self.assertEqual(len(result.pots), 1)
         self.assertTrue(result.pots[0].uncontested)
-        self.assertEqual(result.pots[0].high, ((2, 1.5),))
-        self.assertFalse(any(e.type is EventType.SHOW for e in result.history))
+        self.assertEqual(result.pots[0].high, ((2, 1.0),))
+        self.assertFalse(any(isinstance(e, HandShown) for e in result.history))
         # Folding is a valid action: nobody sits out.
         self.assertTrue(all(p.status is PlayerStatus.ACTIVE for p in players))
 
@@ -110,6 +123,10 @@ class EarlyEndTest(unittest.TestCase):
         self.assertFalse(result.showdown)
         self.assertEqual(result.board.street, Street.FLOP)
         self.assertEqual(result.net, {0: -1.0, 1: 2.0, 2: -1.0})
+        returned = [e for e in result.history if isinstance(e, BetReturned)]
+        self.assertEqual([(e.seat, e.amount_bb) for e in returned], [(1, 1.0)])
+        awards = [e for e in result.history if isinstance(e, PotAwarded)]
+        self.assertEqual([(e.seat, e.share, e.amount_bb) for e in awards], [(1, "whole", 3.0)])
 
 
 class AllInTest(unittest.TestCase):
@@ -139,12 +156,17 @@ class AllInTest(unittest.TestCase):
         agents = [Scripted(), Scripted(), Scripted()]
         env, players = make_env([100, 100, 0.3], agents)
         result = env.start_round()
-        posts = [e for e in result.history if e.type is EventType.POST_BIG_BLIND]
-        self.assertEqual(posts[0].amount, 0.3)
+        posts = [e for e in result.history if isinstance(e, BlindPosted) and e.blind == "BB"]
+        self.assertEqual(posts[0].amount_bb, 0.3)
         self.assertTrue(posts[0].all_in)
+        self.assertEqual(posts[0].stack_bb, 0.0)
         # Callers still had to match the full big blind.
-        calls = [e for e in result.history if e.type is EventType.CALL and e.seat == 0]
-        self.assertEqual(calls[0].amount, 1.0)
+        calls = [
+            e
+            for e in result.history
+            if isinstance(e, PlayerActed) and e.action is ActionType.CALL and e.seat == 0
+        ]
+        self.assertEqual(calls[0].amount_bb, 1.0)
         self.assertEqual(sum(p.chips for p in players), 20030)
 
 
@@ -165,6 +187,7 @@ class ShowdownTest(unittest.TestCase):
         self.assertEqual(pot.high, ((1, 1.0),))  # trip queens
         self.assertEqual(pot.low, ((0, 1.0),))  # 7-5-4-2-A
         self.assertEqual(result.net, {0: 0.0, 1: 0.0})
+        self.assertEqual(result.returned, {})
 
     def test_scoop_with_stacked_deck(self):
         deck = stacked(["Ah2dQcJc", "KsKdTcTs"], "3h4h5h 9s 9d")

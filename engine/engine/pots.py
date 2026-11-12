@@ -30,6 +30,15 @@ class PotSplit(NamedTuple):
     high: dict[int, int]
     low: dict[int, int]
 
+    @property
+    def shares(self) -> tuple[tuple[int, str, int], ...]:
+        """Individual shares as (seat, "high" | "low", chips): the high winners
+        first, then the low winners, each in odd-chip order (left of the button
+        first). Zero-chip shares are left out. The dealer credits them one by one."""
+        return tuple((s, "high", a) for s, a in self.high.items() if a > 0) + tuple(
+            (s, "low", a) for s, a in self.low.items() if a > 0
+        )
+
 
 def build_pots(players: Iterable[_Contributor]) -> list[Pot]:
     """Build the main pot and side pots from each player's total contribution.
@@ -87,6 +96,7 @@ def split_pot(
     If any eligible player has a qualifying low, half goes to the best high and
     half to the best low (the odd chip from halving goes to the high half);
     otherwise the best high takes the whole pot. Ties split each half.
+    `PotSplit.shares` lists the individual shares.
     """
     position = {seat: i for i, seat in enumerate(order)}
     contenders = sorted(

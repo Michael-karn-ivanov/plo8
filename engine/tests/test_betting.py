@@ -1,7 +1,7 @@
 import unittest
 from collections import Counter
 
-from engine import Environment, EventType, Player, PlayerStatus, Street
+from engine import ActionType, Environment, Player, PlayerActed, PlayerStatus, Street
 
 
 class Scripted:
@@ -41,8 +41,12 @@ def make_env(stacks, agents, button=0, seed=1):
     return Environment(players, button=button, seed=seed), players
 
 
+def actions(result):
+    return [e for e in result.history if isinstance(e, PlayerActed)]
+
+
 def raise_counts(result):
-    return Counter(e.street for e in result.history if e.type is EventType.RAISE)
+    return Counter(e.street for e in actions(result) if e.action is ActionType.RAISE)
 
 
 class BetSizeTest(unittest.TestCase):
@@ -80,12 +84,13 @@ class BetSizeTest(unittest.TestCase):
         env, players = make_env([100] * 3, agents)
         result = env.start_round()
         turn_raises = [
-            e for e in result.history if e.type is EventType.RAISE and e.street is Street.TURN
+            e for e in actions(result) if e.action is ActionType.RAISE and e.street is Street.TURN
         ]
         self.assertEqual(len(turn_raises), 1)
         self.assertEqual(turn_raises[0].seat, 1)
-        self.assertEqual(turn_raises[0].amount, 2.0)
-        self.assertEqual(turn_raises[0].to, 2.0)
+        self.assertEqual(turn_raises[0].amount_bb, 2.0)
+        self.assertEqual(turn_raises[0].to_bb, 2.0)
+        self.assertEqual(turn_raises[0].stack_bb, 97.0)  # 100 - 1 preflop - 2 on the turn
         self.assertEqual(sum(p.amount for p in result.pots), 9.0)  # 3 x (1 + 2)
 
 
@@ -210,13 +215,9 @@ class IllegalActionTest(unittest.TestCase):
         result = env.start_round()
         self.assertGreaterEqual(len(errors), 2)
         self.assertEqual(type(errors[0]).__name__, "IllegalActionError")
-        player_actions = {EventType.FOLD, EventType.CHECK, EventType.CALL, EventType.RAISE}
-        calls = [
-            e
-            for e in result.history
-            if e.seat == 0 and e.street is Street.PREFLOP and e.type in player_actions
-        ]
-        self.assertEqual(calls[0].type, EventType.CALL)
+        calls = [e for e in actions(result) if e.seat == 0 and e.street is Street.PREFLOP]
+        self.assertIs(calls[0].action, ActionType.CALL)
+        self.assertIsNone(calls[0].reason)
         self.assertIs(players[0].status, PlayerStatus.ACTIVE)  # it did act
 
     def test_no_action_folds_even_when_check_is_possible(self):
@@ -231,10 +232,9 @@ class IllegalActionTest(unittest.TestCase):
         agents = [Scripted(), Scripted(), DoNothing()]
         env, players = make_env([100] * 3, agents)
         result = env.start_round()
-        bb_actions = [
-            e for e in result.history if e.seat == 2 and e.type in (EventType.FOLD, EventType.CHECK)
-        ]
-        self.assertEqual(bb_actions[0].type, EventType.FOLD)
+        bb_actions = [e for e in actions(result) if e.seat == 2]
+        self.assertIs(bb_actions[0].action, ActionType.FOLD)
+        self.assertEqual(bb_actions[0].reason, "timeout")
         self.assertEqual(result.net[2], -1.0)  # the blind stays in the pot
         self.assertIs(players[2].status, PlayerStatus.SITTING_OUT)
 
@@ -248,8 +248,9 @@ class IllegalActionTest(unittest.TestCase):
 
         env, players = make_env([100] * 3, [CheckOnly(), Scripted(), Scripted()])
         result = env.start_round()
-        seat0 = [e for e in result.history if e.seat == 0 and e.type is EventType.FOLD]
+        seat0 = [e for e in actions(result) if e.seat == 0 and e.action is ActionType.FOLD]
         self.assertEqual(len(seat0), 1)
+        self.assertEqual(seat0[0].reason, "timeout")
         self.assertIs(players[0].status, PlayerStatus.SITTING_OUT)
         self.assertEqual(players[0].stack, 100.0)
 

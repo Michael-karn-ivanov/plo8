@@ -7,10 +7,11 @@ over a `multiprocessing` connection.
 Protocol (all messages are picklable):
   host -> agent: ("turn", seq, TableView, LegalActions)
                  ("hand_end", seq, seat, HandResult)   # also sent while sitting out
-                 ("seated", TableView)                 # notification, no reply
-                 ("sat_out",) / ("returned",)          # status notifications
+                 ("hole_cards", Hand, TableView)       # one-way: own cards, before any turn
+                 ("event", TableEvent)                 # one-way: every public table event
+                 ("seated", TableView)                 # one-way notification
+                 ("sat_out",) / ("returned",)          # one-way status notifications
                  ("left", final_stack_bb)              # removed; "close" follows
-                 ("event", Event)                      # notification, no reply
                  ("joined", JoinReply)                 # answer to a Join request
                  ("close",)
   agent -> host: Join(name, stack_bb, seat)            # first message on a join connection
@@ -18,8 +19,11 @@ Protocol (all messages are picklable):
                  ("hand_end", seq, HandEndReply)
                  Leave()                               # unsolicited, outside a turn
 
-Replies carry the request's sequence number, so a late reply to a request that
-already timed out is discarded instead of being taken as the next answer.
+Replies carry the request's sequence number (the turn id), so a late reply to a
+request that already timed out is discarded instead of being taken as the next
+answer. One-way messages are sent in order on the same connection and never
+wait for a reply, so a slow observer does not delay the hand, and the agent
+process sees its hole cards and all preceding events before the turn request.
 
 On the host, each `RemoteAgent` owns a reader thread for its connection: it
 queues replies for the dealer and turns an unsolicited `Leave` (or a connection
@@ -36,6 +40,7 @@ error). If accepted, the same connection is then used for play.
 
 from __future__ import annotations
 
+import logging
 import multiprocessing
 import queue
 import threading
@@ -47,8 +52,9 @@ from typing import Any, Iterable, Optional
 from entities import Hand
 
 from .actions import Action, ActionType, IllegalActionError, LegalActions
+from .events import TableEvent
 from .player import Player, PlayerStatus
-from .views import Event, HandResult, TableView
+from .views import HandResult, TableView
 
 __all__ = [
     "RemoteAgent",
@@ -64,6 +70,8 @@ __all__ = [
     "connect_and_join",
     "start_agent_process",
 ]
+
+_log = logging.getLogger("engine.remote")
 
 
 @dataclass(frozen=True)
@@ -244,6 +252,14 @@ class RemoteAgent:
         if answer.leave:
             player.leave()
 
+    def on_hole_cards(self, player: Player, hand: Hand, view: TableView) -> None:
+        if self.player is None:
+            self.bind(player)
+        self._send(("hole_cards", hand, view))
+
+    def on_event(self, player: Player, event: TableEvent) -> None:
+        self._send(("event", event))
+
     def on_seated(self, player: Player, view: TableView) -> None:
         if self.player is None:
             self.bind(player)
@@ -258,9 +274,6 @@ class RemoteAgent:
     def on_left(self, player: Player, final_stack_bb: float) -> None:
         self._send(("left", final_stack_bb))
         self.close()
-
-    def on_event(self, event: Event) -> None:
-        self._send(("event", event))
 
     def close(self) -> None:
         if not self.closed:
@@ -303,6 +316,17 @@ class RemotePlayer:
         self.stack = me.stack
         self.status = me.status
         self.hole_cards = view.hole_cards
+
+    def _update_from_event(self, event: TableEvent) -> None:
+        """Keep `stack` current from public events about this player."""
+        if self.name is None or getattr(event, "name", None) != self.name:
+            return
+        stack = getattr(event, "stack_bb", None)
+        if stack is not None:
+            self.stack = stack
+        seat = getattr(event, "seat", None)
+        if seat is not None and event.hand_no is None:
+            self.seat = seat  # table events between hands use the current numbering
 
     def fold(self) -> None:
         self._record(ActionType.FOLD)
@@ -369,13 +393,22 @@ def _call(agent: Any, name: str, *args: Any) -> None:
         callback(*args)
 
 
+def _notify(agent: Any, name: str, *args: Any) -> None:
+    """Like `_call`, for one-way notifications: an exception in the agent is
+    logged instead of ending the loop."""
+    try:
+        _call(agent, name, *args)
+    except Exception:  # noqa: BLE001
+        _log.exception("agent callback %s raised", name)
+
+
 def agent_loop(conn: Any, agent: Any, _initial: Iterable[Any] = ()) -> None:
     """Run in the agent process: dispatch host messages to a local agent.
 
     `agent` has the same callbacks as an in-process agent (`on_turn`,
-    `on_hand_end`, optional `on_seated`, `on_sit_out`, `on_return`, `on_left`
-    and `on_event`) and receives a `RemotePlayer`. Returns when the host sends
-    "close" / "left" or the connection is closed.
+    `on_hand_end`, optional `on_hole_cards`, `on_event`, `on_seated`,
+    `on_sit_out`, `on_return`, `on_left`) and receives a `RemotePlayer`.
+    Returns when the host sends "close" / "left" or the connection is closed.
     """
     player = RemotePlayer(conn)
     initial = list(_initial)
@@ -389,7 +422,14 @@ def agent_loop(conn: Any, agent: Any, _initial: Iterable[Any] = ()) -> None:
             if kind == "close":
                 return
             if kind == "event":
-                _call(agent, "on_event", msg[1])
+                event = msg[1]
+                player._update_from_event(event)
+                _notify(agent, "on_event", player, event)
+            elif kind == "hole_cards":
+                _, hand, view = msg
+                player._update_from_view(view)
+                player.hole_cards = hand
+                _notify(agent, "on_hole_cards", player, hand, view)
             elif kind == "seated":
                 view = msg[1]
                 player._update_from_view(view)
@@ -477,6 +517,10 @@ def handle_join(env: Any, conn: Any, timeout: Optional[float] = None) -> Optiona
         remote._send(
             ("joined", JoinReply(True, queued=queued, name=player.name, seat=player.seat))
         )
+    # Deliver what seating queued under the lock (on_seated, PlayerJoined).
+    flush = getattr(env, "_flush", None)
+    if callable(flush):
+        flush()
     return player
 
 

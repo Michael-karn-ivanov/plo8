@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import functools
 import random
 import threading
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
-from entities import Deck, Street
+from entities import Deck
 
 from .dealer import Dealer, NotEnoughPlayersError
-from .player import CHIPS_PER_BB, Player, PlayerStatus, to_chips
-from .views import Event, EventType, HandResult
+from .events import PlayerJoined, PlayerLeft, TableEvent
+from .player import CHIPS_PER_BB, Player, PlayerStatus, call_safely, to_chips
+from .views import HandResult
 
 __all__ = [
     "Environment",
@@ -46,7 +48,13 @@ def _bind_agent(player: Player) -> None:
 
 
 class Environment:
-    """Seated players (clockwise; seat = index), a dealer, the button and a join queue."""
+    """Seated players (clockwise; seat = index), a dealer, the button and a join queue.
+
+    The environment owns event broadcasting: every public event gets the next
+    `seq` of the table and is delivered to all seated players in seat order.
+    Agent notifications (events, `on_seated`, `on_left`, ...) are queued under
+    the table lock and delivered outside it, in order, by `_flush()`.
+    """
 
     def __init__(
         self,
@@ -91,6 +99,11 @@ class Environment:
         self.action_timeout = action_timeout
         self.pending_joins: deque[_JoinRequest] = deque()
         self._lock = threading.RLock()
+        # Notifications waiting to be delivered (outside the lock), and the lock
+        # that makes a single thread deliver them at a time, in order.
+        self._outbox: deque[Callable[[], None]] = deque()
+        self._deliver_lock = threading.RLock()
+        self._seq = 0
         self.rng = random.Random(seed)
         self.dealer = Dealer(
             players,
@@ -103,6 +116,9 @@ class Environment:
         )
         self.dealer.after_hand = self._after_hand
         self.dealer.waiting_names = self._waiting_names
+        self.dealer.broadcast = self._broadcast
+        self.dealer.schedule = self._schedule
+        self.dealer.flush = self._flush
         for p in players:
             p._env = self
             _bind_agent(p)
@@ -158,16 +174,51 @@ class Environment:
             if p.status is PlayerStatus.ACTIVE and not p.leave_requested
         ]
 
+    # --- events --------------------------------------------------------------
+
+    def _broadcast(self, event: TableEvent) -> None:
+        """Stamp `event` with the next `seq` (and the hand number), record it in
+        the hand's history and deliver it to every seated player."""
+        with self._lock:
+            self._seq += 1
+            event = self.dealer.stamp(event, self._seq)
+            recipients = self.dealer.recipients()
+            self._outbox.append(functools.partial(Dealer.deliver, event, recipients))
+        self._flush()
+
+    def _schedule(self, fn: Callable[[], None]) -> None:
+        """Queue an agent notification behind the events already queued."""
+        with self._lock:
+            self._outbox.append(fn)
+        self._flush()
+
+    def _flush(self) -> None:
+        """Deliver queued notifications, in order, outside the table lock.
+
+        A no-op while this thread holds the lock: whoever releases it flushes
+        (join / leave / rebuy / the end of a hand do).
+        """
+        if self._lock._is_owned():  # type: ignore[attr-defined]
+            return
+        with self._deliver_lock:
+            while True:
+                with self._lock:
+                    if not self._outbox:
+                        return
+                    fn = self._outbox.popleft()
+                fn()
+
     # --- hands ---------------------------------------------------------------
 
     def start_round(self) -> HandResult:
         """Start and play a new hand.
 
-        The deck is reset and shuffled, hole cards and per-hand player state are
-        cleared, the board and pots are emptied, the SB and BB players post the
-        blinds, and the dealer runs the hand with the active players. Afterwards
-        players who asked to leave are removed and queued joiners are seated.
-        Raises NotEnoughPlayersError with fewer than two active players.
+        The deck is reset and shuffled, hole cards, per-hand player state and the
+        hand's event history are cleared, the board and pots are emptied, the SB
+        and BB players post the blinds, and the dealer runs the hand with the
+        active players. Afterwards players who asked to leave are removed and
+        queued joiners are seated. Raises NotEnoughPlayersError with fewer than
+        two active players.
         """
         return self.dealer.play_hand()
 
@@ -243,7 +294,8 @@ class Environment:
                 self.pending_joins.append(_JoinRequest(player, seat))
             else:
                 self._seat(player, seat)
-            return player
+        self._flush()
+        return player
 
     def _after_hand(self) -> None:
         """Called by the dealer after a hand: remove leavers, then seat queued
@@ -257,7 +309,8 @@ class Environment:
                     self._seat(req.player, req.offset)
 
     def _seat(self, player: Player, offset: Optional[int]) -> None:
-        """Insert `player` at `offset` clockwise from the button and renumber seats."""
+        """Insert `player` at `offset` clockwise from the button and renumber seats.
+        Called under the lock; `on_seated` and `PlayerJoined` are queued."""
         dealer = self.dealer
         players = dealer.players
         n = len(players)
@@ -302,10 +355,10 @@ class Environment:
 
         callback = getattr(player.agent, "on_seated", None)
         if callable(callback):
-            callback(player, dealer.table_view(player))
-        dealer.notify(
-            Event(EventType.PLAYER_JOINED, Street.PREFLOP, seat=player.seat, name=player.name)
-        )
+            view = dealer.table_view(player)
+            self._schedule(functools.partial(call_safely, callback, player, view))
+        # Delivered to the joiner too (after on_seated).
+        self._broadcast(PlayerJoined(player.seat, player.name, player.stack))  # type: ignore[arg-type]
 
     # --- leaving -------------------------------------------------------------
 
@@ -317,7 +370,8 @@ class Environment:
         player). During a hand the removal is deferred to its end: a participant
         still in the hand is folded at his next turn (an all-in one stays in and is
         paid normally). On removal `on_left(player, final_stack_bb)` is called and
-        PLAYER_LEFT is broadcast. Leaving twice is a no-op. Thread-safe.
+        `PlayerLeft` is broadcast to the remaining players. Leaving twice is a
+        no-op. Thread-safe.
         """
         with self._lock:
             if player.status is PlayerStatus.LEFT:
@@ -331,14 +385,14 @@ class Environment:
                     raise ValueError(f"{player.name} is not waiting at this table")
                 player.status = PlayerStatus.LEFT
                 player.seat = None
-                _notify_left(player)
-                return
-            if not any(p is player for p in self.dealer.players):
+                self._schedule_left(player)
+            elif not any(p is player for p in self.dealer.players):
                 raise ValueError(f"{player.name} is not seated at this table")
-            if self.dealer.in_hand:
+            elif self.dealer.in_hand:
                 player.leave_requested = True
             else:
                 self._remove(player)
+        self._flush()
 
     def _remove(self, player: Player) -> None:
         """Take `player` out of the seat list, renumber seats and fix the button."""
@@ -376,14 +430,14 @@ class Environment:
         player.seat = None
         player.leave_requested = False
         player.in_hand = False
-        _notify_left(player)
-        dealer.notify(Event(EventType.PLAYER_LEFT, Street.PREFLOP, seat=idx, name=player.name))
+        self._schedule_left(player)
+        # Only the remaining seated players get it.
+        self._broadcast(PlayerLeft(idx, player.name, player.stack))  # type: ignore[arg-type]
 
-
-def _notify_left(player: Player) -> None:
-    callback = getattr(player.agent, "on_left", None)
-    if callable(callback):
-        callback(player, player.stack)
+    def _schedule_left(self, player: Player) -> None:
+        callback = getattr(player.agent, "on_left", None)
+        if callable(callback):
+            self._schedule(functools.partial(call_safely, callback, player, player.stack))
 
 
 def _default_name(taken: Iterable[Optional[str]]) -> str:
