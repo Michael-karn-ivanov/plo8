@@ -24,3 +24,6 @@ Library is designed this way that there will be several agents - like separate p
 They will share environment and dealer and will "play" at the table: i.e. each player can see their hand and each player will be responsible for its own actions.
 I.e. there should be some callback in Player, that will get called within rounds during betting for an active player and its managing agent will take action through Player (call, fold, etc).
 After the end of round (no matter whether it was showdown or not) - players stacks are updated - (if they won - if they lost - their bets are deducted from stack during the round) - and there is another callback, so that each managing agent can make decision whether to rebuy or not.
+
+Also, environment has a method for a new player to join the game. They select a seat (index from button, if not passed - they join as big blind) and stack (amount of blinds) they join with. Also let's all the players may have name (nick), which they set when join. 
+If player while round is in progress, they don't participate in game but are waiting in the queue for round to complete and get cards dealt starting new round.

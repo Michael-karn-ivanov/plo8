@@ -1,0 +1,2 @@
+This is a python binary, that implements local server, hosting single Omaha Hi-Lo game.
+It should start the game once launched, but no active actions happen until 2 or more clients (players) are connected - then 
