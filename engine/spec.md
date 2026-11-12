@@ -1,4 +1,4 @@
-Python library, providing class Engine.
+Python library, providing Omaha Hi-Lo game engine.
 It exports several classes:
 1. Player
     * player has his stack in front of him - amount of big blinds
