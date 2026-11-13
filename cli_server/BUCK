@@ -1,0 +1,48 @@
+# cli_server: a localhost TCP server hosting one fixed-limit Omaha Hi-Lo 8-or-better
+# table, played by clients in other processes over a JSON-lines protocol.
+
+# The wire format on its own, so future clients can share it without depending on
+# the server.
+python_library(
+    name = "protocol",
+    srcs = [
+        "cli_server/__init__.py",
+        "cli_server/protocol.py",
+    ],
+    # Module paths are taken relative to this directory, so the sources under
+    # cli_server/ import as `cli_server.*`.
+    base_module = "",
+    deps = [
+        "//engine:engine",
+        "//entities:entities",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+python_library(
+    name = "cli_server_lib",
+    srcs = [
+        "cli_server/main.py",
+        "cli_server/server.py",
+        "cli_server/session.py",
+    ],
+    base_module = "",
+    deps = [
+        ":protocol",
+        "//engine:engine",
+    ],
+)
+
+# buck2 run //cli_server:cli_server -- --port 8008
+python_binary(
+    name = "cli_server",
+    main_module = "cli_server.main",
+    deps = [":cli_server_lib"],
+)
+
+python_test(
+    name = "cli_server_test",
+    srcs = glob(["tests/*.py"]),
+    base_module = "cli_server_tests",
+    deps = [":cli_server_lib"],
+)

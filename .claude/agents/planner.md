@@ -12,5 +12,6 @@ Look at changes in spec.md in the current diff.
 Look at plan.md, located in the same directory as spec.md (if it does not exist - create it).
 Suggest changes in plan.md so that it will cover implementation of newer version of spec.
 Do not make it in form of log (i.e. saying that we gonna change this to that) - instead plan.md should describe implementation of the most recent spec.md.
+If you missing some capabilities from other components in ./plo8 - suggest corresponding changes into its specs (do not commit).
 
 Do not commit or amend changes - let me preview those and make corrections if needed.
