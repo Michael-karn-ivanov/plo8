@@ -7,7 +7,7 @@ If the game is not started and is about to start (after 2nd client joined) - ser
 Interaction between this server and (future) clients happen over TCP in both directions.
 We assume server and all clients processes run on the same host (localhost).
 When server starts, it takes following arguments:
-    * optional argument "port number" on which it listens for incoming clients - default is 5000
+    * optional argument "port number" on which it listens for incoming clients - default is 8008
     * optional graceful period at the start of the game for all clients to join - default is 15 seconds
     * optional time to act for client - default is 180 seconds
     * optional time between hands - for players to see showdown - default - 3 seconds
