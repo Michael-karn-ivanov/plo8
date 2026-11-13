@@ -108,6 +108,18 @@ LEGAL = LegalActions(
     can_check=False, call_amount=0.5, can_raise=True, raise_to=2.0, bet_unit=1.0, raises_left=3
 )
 
+SETTINGS = p.TableSettings(
+    small_blind_bb=0.5,
+    big_blind_bb=1.0,
+    small_bet_bb=1.0,
+    big_bet_bb=2.0,
+    max_seats=10,
+    max_buy_in_bb=100.0,
+    action_timeout=180.0,
+    grace_period=15.0,
+    hand_pause=3.0,
+)
+
 
 def sample_view(hole="AsKd7h2c"):
     return TableView(
@@ -340,8 +352,8 @@ class EngineTypesTest(unittest.TestCase):
 
 
 class MessagesTest(unittest.TestCase):
-    def round_trip(self, msg):
-        encoded = p.encode_server_message(msg, "A")
+    def round_trip(self, msg, **kwargs):
+        encoded = p.encode_server_message(msg, "A", **kwargs)
         self.assertEqual(encoded["to"], "A")
         self.assertEqual(encoded["type"], msg[0])
         decoded = p.decode_server_message(p.decode_line(p.encode_line(encoded)))
@@ -359,6 +371,7 @@ class MessagesTest(unittest.TestCase):
             self.round_trip(("event", event))
         turn = self.round_trip(("turn", 7, view, LEGAL))
         self.assertEqual(turn["seq"], 7)
+        self.assertIsNone(turn["timeout"])  # no limit given
         hand_end = self.round_trip(("hand_end", 8, 0, sample_result()))
         self.assertEqual((hand_end["seq"], hand_end["seat"]), (8, 0))
         self.round_trip(("sat_out",))
@@ -368,6 +381,14 @@ class MessagesTest(unittest.TestCase):
         self.round_trip(("close",))
         covered = {"seated", "hole_cards", "event", "turn", "hand_end", "sat_out", "returned", "left", "close"}
         self.assertEqual(covered, set(p.SERVER_MESSAGE_TYPES))
+
+    def test_turn_carries_the_timeout(self):
+        turn = self.round_trip(("turn", 7, sample_view(), LEGAL), turn_timeout=180)
+        self.assertEqual(turn["timeout"], 180.0)
+        self.assertIsInstance(turn["timeout"], float)
+        # only turns carry it
+        seated = p.encode_server_message(("seated", sample_view()), "A", turn_timeout=180)
+        self.assertNotIn("timeout", seated)
 
     def test_joined_is_not_a_callback_message(self):
         with self.assertRaises(ProtocolError):
@@ -384,13 +405,124 @@ class MessagesTest(unittest.TestCase):
             encoded = p.encode_join_response(reply)
             self.assertEqual(encoded["type"], "response")
             self.assertEqual(encoded["ok"], reply.accepted)
+            self.assertNotIn("table", encoded)
             self.assertEqual(p.decode_join_response(through_json(encoded)), reply)
+            self.assertIsNone(p.decode_join_settings(through_json(encoded)))
+
+    def test_join_response_with_table_settings(self):
+        reply = JoinReply(True, queued=False, name="A", seat=0)
+        encoded = through_json(p.encode_join_response(reply, SETTINGS))
+        self.assertEqual(encoded["table"], p.encode_settings(SETTINGS))
+        self.assertEqual(p.decode_join_response(encoded), reply)
+        self.assertEqual(p.decode_join_settings(encoded), SETTINGS)
+        # a rejected join has no table, even if one is given
+        rejected = p.encode_join_response(JoinReply(False, name="A", error="full"), SETTINGS)
+        self.assertNotIn("table", rejected)
 
     def test_responses(self):
         self.assertEqual(p.ok_response(), {"type": "response", "ok": True})
         self.assertEqual(
             p.error_response("bad"), {"type": "response", "ok": False, "error": "bad"}
         )
+
+
+class TableSettingsTest(unittest.TestCase):
+    def test_wire_format(self):
+        self.assertEqual(
+            p.encode_settings(SETTINGS),
+            {
+                "small_blind_bb": 0.5,
+                "big_blind_bb": 1.0,
+                "small_bet_bb": 1.0,
+                "big_bet_bb": 2.0,
+                "max_seats": 10,
+                "max_buy_in_bb": 100.0,
+                "action_timeout": 180.0,
+                "grace_period": 15.0,
+                "hand_pause": 3.0,
+            },
+        )
+
+    def test_round_trip_with_and_without_max_buy_in(self):
+        no_cap = dataclasses.replace(SETTINGS, max_buy_in_bb=None, action_timeout=None)
+        for settings in (SETTINGS, no_cap):
+            with self.subTest(settings=settings):
+                self.assertEqual(p.decode_settings(through_json(p.encode_settings(settings))), settings)
+        self.assertIsNone(p.encode_settings(no_cap)["max_buy_in_bb"])
+
+    def test_ints_are_sent_as_floats(self):
+        settings = dataclasses.replace(SETTINGS, max_buy_in_bb=100, grace_period=15, hand_pause=0)
+        encoded = p.encode_settings(settings)
+        self.assertIsInstance(encoded["max_buy_in_bb"], float)
+        self.assertIsInstance(encoded["hand_pause"], float)
+
+    def test_bad_settings(self):
+        good = p.encode_settings(SETTINGS)
+        for bad in (
+            "table",
+            {k: v for k, v in good.items() if k != "big_blind_bb"},
+            {**good, "max_seats": "ten"},
+            {**good, "small_blind_bb": None},
+            {**good, "action_timeout": "soon"},
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ProtocolError):
+                    p.decode_settings(bad)
+
+
+class InfoMessagesTest(unittest.TestCase):
+    def test_acting(self):
+        acting = p.Acting(hand_number=3, seat=2, name="C", timeout=180)
+        encoded = through_json(p.encode_acting(acting, "A"))
+        self.assertEqual(
+            encoded,
+            {"type": "acting", "to": "A", "hand_number": 3, "seat": 2, "name": "C", "timeout": 180.0},
+        )
+        self.assertEqual(p.decode_acting(encoded), acting)
+        no_limit = p.Acting(3, 2, "C", None)
+        self.assertEqual(p.decode_acting(through_json(p.encode_acting(no_limit, "A"))), no_limit)
+
+    def test_lobby(self):
+        for status in (
+            p.LobbyStatus("waiting", 1, 2, None),
+            p.LobbyStatus("starting", 3, 2, 14.5),
+            p.LobbyStatus("next_hand", 2, 2, 3.0),
+        ):
+            with self.subTest(status=status):
+                encoded = through_json(p.encode_lobby(status, "A"))
+                self.assertEqual(encoded["type"], "lobby")
+                self.assertEqual(encoded["to"], "A")
+                self.assertEqual(p.decode_lobby(encoded), status)
+        waiting = p.encode_lobby(p.LobbyStatus("waiting", 1, 2, None), "A")
+        self.assertIsNone(waiting["starts_in"])
+        self.assertEqual(set(p.LOBBY_STATES), {"waiting", "starting", "next_hand"})
+
+    def test_bad_info_messages(self):
+        with self.assertRaises(ProtocolError):
+            p.encode_lobby(p.LobbyStatus("playing", 2, 2, None), "A")
+        for bad in (
+            {"type": "lobby", "state": "playing", "active": 1, "needed": 2, "starts_in": None},
+            {"type": "lobby", "state": "waiting", "active": 1, "needed": 2},
+            {"type": "lobby", "state": "waiting", "active": "1", "needed": 2, "starts_in": None},
+            {"type": "acting", "state": "waiting", "active": 1, "needed": 2, "starts_in": None},
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ProtocolError):
+                    p.decode_lobby(bad)
+        for bad in (
+            {"type": "acting", "hand_number": 1, "seat": 0, "name": "A"},
+            {"type": "acting", "hand_number": 1, "seat": "0", "name": "A", "timeout": 1.0},
+            {"type": "lobby", "hand_number": 1, "seat": 0, "name": "A", "timeout": 1.0},
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ProtocolError):
+                    p.decode_acting(bad)
+
+    def test_info_messages_are_not_engine_messages(self):
+        self.assertEqual(set(p.INFO_MESSAGE_TYPES), {"acting", "lobby"})
+        self.assertFalse(set(p.INFO_MESSAGE_TYPES) & set(p.SERVER_MESSAGE_TYPES))
+        with self.assertRaises(ProtocolError):
+            p.decode_server_message(p.encode_lobby(p.LobbyStatus("waiting", 1, 2, None), "A"))
 
 
 class RequestsTest(unittest.TestCase):

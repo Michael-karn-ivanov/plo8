@@ -7,12 +7,17 @@ disconnects. The session does the rest:
 - `send` (called on the dealer thread) turns an engine message tuple into a JSON
   line and puts it on an outbound queue. A writer thread writes it to the client's
   callback port, so a slow client never blocks the dealer.
+- `notify` queues a server-generated message (`acting`, `lobby`) the same way.
 - Replies do not arrive on the callback channel. The server's request handlers
   check them against the pending `turn` / `hand_end` and put them into `inbox`,
   which `recv` reads.
 - When the callback channel breaks (a write fails, or the client closes it),
   `recv` raises EOFError. `RemoteAgent` takes that as a disconnect and makes the
   player leave.
+- Two hooks let the server react to what the engine sends: `on_turn(session,
+  view)` after a `turn` is queued (turn announcements), and `on_status(session,
+  kind)` after `seated` / `sat_out` / `returned` / `left` (lobby wake-ups). They run
+  on the sending thread and must only queue messages / poke the lobby.
 """
 
 from __future__ import annotations
@@ -32,16 +37,23 @@ from engine import (
     Leave,
     Player,
     PlayerActed,
+    TableView,
 )
 
 from .protocol import encode_line, encode_server_message
 
-__all__ = ["ClientSession", "SessionError"]
+__all__ = ["ClientSession", "SessionError", "STATUS_KINDS"]
 
 _log = logging.getLogger("cli_server.session")
 
 _EOF = object()  # inbox sentinel: the channel is gone
 _STOP = object()  # writer sentinel: flush, then close the socket
+
+# Engine messages that change the number of active players or end the session.
+STATUS_KINDS = ("seated", "sat_out", "returned", "left")
+
+TurnHook = Callable[["ClientSession", TableView], None]
+StatusHook = Callable[["ClientSession", str], None]
 
 
 class SessionError(Exception):
@@ -57,9 +69,13 @@ class ClientSession:
         name: str,
         sock: socket.socket,
         on_close: Optional[Callable[["ClientSession"], None]] = None,
+        action_timeout: Optional[float] = None,
+        on_turn: Optional[TurnHook] = None,
+        on_status: Optional[StatusHook] = None,
     ) -> None:
         self.name = name
         self.player: Optional[Player] = None  # set by the server once joined
+        self.action_timeout = action_timeout  # the `timeout` sent with each `turn`
         self.inbox: "queue.Queue[Any]" = queue.Queue()
         self.pending_turn: Optional[tuple[int, LegalActions]] = None
         self.pending_hand_end: Optional[int] = None
@@ -68,6 +84,8 @@ class ClientSession:
         self.broken = False  # the callback channel failed (not closed by us)
         self._sock = sock
         self._on_close = on_close
+        self._on_turn = on_turn
+        self._on_status = on_status
         self._out: "queue.Queue[Any]" = queue.Queue()
         self._lock = threading.Lock()
         self._started = False
@@ -88,6 +106,9 @@ class ClientSession:
         host: str = "127.0.0.1",
         timeout: float = 5.0,
         on_close: Optional[Callable[["ClientSession"], None]] = None,
+        action_timeout: Optional[float] = None,
+        on_turn: Optional[TurnHook] = None,
+        on_status: Optional[StatusHook] = None,
     ) -> "ClientSession":
         """Open the callback connection to `host:port` (raises OSError on failure).
         The session is not started yet: register it first, then call `start()`."""
@@ -97,7 +118,14 @@ class ClientSession:
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError:
             pass
-        return cls(name, sock, on_close)
+        return cls(
+            name,
+            sock,
+            on_close,
+            action_timeout=action_timeout,
+            on_turn=on_turn,
+            on_status=on_status,
+        )
 
     def start(self) -> "ClientSession":
         """Start the writer and the disconnect monitor."""
@@ -117,8 +145,8 @@ class ClientSession:
         """Forward an engine message to the client without blocking.
 
         ("joined", JoinReply) is kept in `join_reply` (it becomes the response
-        to the `join` request) rather than forwarded. Raises OSError once the
-        channel is closed or broken.
+        to the `join` request) rather than forwarded, and calls no hook. Raises
+        OSError once the channel is closed or broken.
         """
         if not isinstance(msg, tuple) or not msg:
             raise ValueError(f"not an engine message: {msg!r}")
@@ -129,7 +157,9 @@ class ClientSession:
         with self._lock:
             if self.closed:
                 raise OSError(f"the callback channel of {self.name} is closed")
-            data = encode_line(encode_server_message(msg, self.name))
+            data = encode_line(
+                encode_server_message(msg, self.name, turn_timeout=self.action_timeout)
+            )
             if kind == "turn":
                 self.pending_turn = (msg[1], msg[3])
             elif kind == "hand_end":
@@ -143,6 +173,10 @@ class ClientSession:
         if kind == "close":
             # Unregister now, so the name is free by the time the client reads "close".
             self._release()
+        elif kind == "turn":
+            self._call_hook(self._on_turn, msg[2])
+        elif kind in STATUS_KINDS:
+            self._call_hook(self._on_status, kind)
 
     def recv(self) -> Any:
         """Next reply for the RemoteAgent. Raises EOFError once the channel is gone."""
@@ -162,6 +196,23 @@ class ClientSession:
             started = self._started
         if not started:
             self._finish(broken=False)
+
+    # --- server-generated messages ---------------------------------------------
+
+    def notify(self, msg: dict) -> bool:
+        """Queue a server-generated message (`acting`, `lobby`), adding `"to"`.
+        Never blocks and never raises: a closed or broken session drops it.
+        Returns whether the message was queued."""
+        try:
+            data = encode_line({**msg, "to": self.name})
+        except Exception:  # noqa: BLE001
+            _log.exception("cannot encode notification %r", msg)
+            return False
+        with self._lock:
+            if self.closed:
+                return False
+            self._out.put(data)
+        return True
 
     # --- requests from the client (server port) -------------------------------
 
@@ -212,6 +263,14 @@ class ClientSession:
     def abort(self) -> None:
         """Close the callback connection at once, dropping anything not yet written."""
         self._finish(broken=False)
+
+    def _call_hook(self, hook: Optional[Callable[..., None]], arg: Any) -> None:
+        if hook is None:
+            return
+        try:
+            hook(self, arg)
+        except Exception:  # noqa: BLE001 - a hook must never break the dealer
+            _log.exception("session hook failed for %s", self.name)
 
     def _track_event(self, event: Any) -> None:
         """Clear pending requests the dealer has moved past (timed out), so a late

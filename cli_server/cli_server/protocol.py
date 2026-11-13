@@ -6,11 +6,19 @@ Two kinds of TCP connection:
 - client -> server (the server's listening port): requests (`join`, `action`,
   `hand_end`, `rebuy`, `sit_in`, `leave`), each answered by exactly one
   `{"type": "response", "ok": ...}` line. Every request carries the player `name`.
+  An accepted `join` response also carries `table`, the table settings.
 - server -> client (the client's callback port, given in `join`): one-way
   notifications and requests mirroring the engine's `RemoteAgent` messages
   (`seated`, `hole_cards`, `event`, `turn`, `hand_end`, `sat_out`, `returned`,
-  `left`, `close`), each with `"to": <player name>`. Answers to `turn` /
-  `hand_end` go back as requests on the server port.
+  `left`, `close`), plus the server's own informational messages (`acting`,
+  `lobby`), each with `"to": <player name>`. Answers to `turn` / `hand_end` go
+  back as requests on the server port.
+
+Clients must ignore message types and fields they do not know: the
+informational messages and the `table` field are optional for them.
+
+Timers (`timeout`, `starts_in`) are relative seconds, counted from the moment the
+message arrives, because the client's clock is not the server's.
 
 This module also encodes / decodes the engine types (cards, board, events, views,
 results) so that a Python client can rebuild the engine dataclasses.
@@ -20,7 +28,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import MISSING, fields
+from dataclasses import MISSING, dataclass, fields
 from typing import Any, BinaryIO, Callable, Optional, Union
 
 from entities import Board, Card, Hand, Street
@@ -88,6 +96,18 @@ __all__ = [
     "decode_table_view",
     "encode_hand_result",
     "decode_hand_result",
+    # table settings and informational messages
+    "TableSettings",
+    "encode_settings",
+    "decode_settings",
+    "Acting",
+    "encode_acting",
+    "decode_acting",
+    "LOBBY_STATES",
+    "LobbyStatus",
+    "encode_lobby",
+    "decode_lobby",
+    "INFO_MESSAGE_TYPES",
     # server -> client
     "SERVER_MESSAGE_TYPES",
     "encode_server_message",
@@ -105,6 +125,7 @@ __all__ = [
     "error_response",
     "encode_join_response",
     "decode_join_response",
+    "decode_join_settings",
 ]
 
 MAX_LINE_BYTES = 1 << 20  # longest accepted message line (1 MiB)
@@ -207,6 +228,22 @@ def _pairs(x: Any, what: str) -> tuple[tuple[Any, Any], ...]:
             raise ProtocolError(f"{what} entries must be [seat, amount], got {item!r}")
         out.append((item[0], item[1]))
     return tuple(out)
+
+
+def _float(x: Any, what: str) -> float:
+    if not _is_number(x):
+        raise ProtocolError(f"{what!r} must be a number, got {x!r}")
+    return float(x)
+
+
+def _opt_float(x: Any, what: str) -> Optional[float]:
+    return None if x is None else _float(x, what)
+
+
+def _int(x: Any, what: str) -> int:
+    if not _is_int(x):
+        raise ProtocolError(f"{what!r} must be an int, got {x!r}")
+    return x
 
 
 # --- cards, hands, board ----------------------------------------------------------
@@ -628,6 +665,147 @@ def decode_hand_result(d: Any) -> HandResult:
     )
 
 
+# --- table settings ------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TableSettings:
+    """The table's fixed settings, sent as `table` in an accepted join response.
+    Amounts in BB, times in seconds. `max_buy_in_bb` / `action_timeout` are None
+    when there is no limit."""
+
+    small_blind_bb: float
+    big_blind_bb: float
+    small_bet_bb: float  # preflop and flop
+    big_bet_bb: float  # turn and river
+    max_seats: int
+    max_buy_in_bb: Optional[float]
+    action_timeout: Optional[float]
+    grace_period: float
+    hand_pause: float
+
+
+_SETTINGS_FIELDS = tuple(f.name for f in fields(TableSettings))
+
+
+def encode_settings(settings: TableSettings) -> dict:
+    def num(x: Optional[float]) -> Optional[float]:
+        return None if x is None else float(x)
+
+    return {
+        "small_blind_bb": float(settings.small_blind_bb),
+        "big_blind_bb": float(settings.big_blind_bb),
+        "small_bet_bb": float(settings.small_bet_bb),
+        "big_bet_bb": float(settings.big_bet_bb),
+        "max_seats": settings.max_seats,
+        "max_buy_in_bb": num(settings.max_buy_in_bb),
+        "action_timeout": num(settings.action_timeout),
+        "grace_period": float(settings.grace_period),
+        "hand_pause": float(settings.hand_pause),
+    }
+
+
+def decode_settings(d: Any) -> TableSettings:
+    _require(d, _SETTINGS_FIELDS, "table settings")
+    return TableSettings(
+        small_blind_bb=_float(d["small_blind_bb"], "small_blind_bb"),
+        big_blind_bb=_float(d["big_blind_bb"], "big_blind_bb"),
+        small_bet_bb=_float(d["small_bet_bb"], "small_bet_bb"),
+        big_bet_bb=_float(d["big_bet_bb"], "big_bet_bb"),
+        max_seats=_int(d["max_seats"], "max_seats"),
+        max_buy_in_bb=_opt_float(d["max_buy_in_bb"], "max_buy_in_bb"),
+        action_timeout=_opt_float(d["action_timeout"], "action_timeout"),
+        grace_period=_float(d["grace_period"], "grace_period"),
+        hand_pause=_float(d["hand_pause"], "hand_pause"),
+    )
+
+
+# --- informational server -> client messages -------------------------------------------
+
+INFO_MESSAGE_TYPES = ("acting", "lobby")
+
+
+@dataclass(frozen=True)
+class Acting:
+    """`acting`: another seated player has been asked to act and has `timeout`
+    seconds (from now; None = no limit) to answer."""
+
+    hand_number: int
+    seat: int
+    name: str
+    timeout: Optional[float]
+
+
+def encode_acting(acting: Acting, to: str) -> dict:
+    return {
+        "type": "acting",
+        "to": to,
+        "hand_number": acting.hand_number,
+        "seat": acting.seat,
+        "name": acting.name,
+        "timeout": None if acting.timeout is None else float(acting.timeout),
+    }
+
+
+def decode_acting(d: Any) -> Acting:
+    _require(d, ("hand_number", "seat", "name", "timeout"), "acting")
+    if d.get("type") != "acting":
+        raise ProtocolError(f"not an 'acting' message: {d.get('type')!r}")
+    name = d["name"]
+    if not isinstance(name, str):
+        raise ProtocolError(f"'name' must be a string, got {name!r}")
+    return Acting(
+        hand_number=_int(d["hand_number"], "hand_number"),
+        seat=_int(d["seat"], "seat"),
+        name=name,
+        timeout=_opt_float(d["timeout"], "timeout"),
+    )
+
+
+# "waiting": not enough players; "starting": the grace period is ticking;
+# "next_hand": the pause between hands.
+LOBBY_STATES = ("waiting", "starting", "next_hand")
+
+
+@dataclass(frozen=True)
+class LobbyStatus:
+    """`lobby`: no hand is running. `starts_in` = seconds until the next hand
+    starts (from now), None while waiting for players."""
+
+    state: str
+    active: int
+    needed: int
+    starts_in: Optional[float]
+
+
+def encode_lobby(status: LobbyStatus, to: str) -> dict:
+    if status.state not in LOBBY_STATES:
+        raise ProtocolError(f"unknown lobby state {status.state!r}")
+    return {
+        "type": "lobby",
+        "to": to,
+        "state": status.state,
+        "active": status.active,
+        "needed": status.needed,
+        "starts_in": None if status.starts_in is None else float(status.starts_in),
+    }
+
+
+def decode_lobby(d: Any) -> LobbyStatus:
+    _require(d, ("state", "active", "needed", "starts_in"), "lobby")
+    if d.get("type") != "lobby":
+        raise ProtocolError(f"not a 'lobby' message: {d.get('type')!r}")
+    state = d["state"]
+    if state not in LOBBY_STATES:
+        raise ProtocolError(f"unknown lobby state {state!r}")
+    return LobbyStatus(
+        state=state,
+        active=_int(d["active"], "active"),
+        needed=_int(d["needed"], "needed"),
+        starts_in=_opt_float(d["starts_in"], "starts_in"),
+    )
+
+
 # --- server -> client messages --------------------------------------------------------
 
 SERVER_MESSAGE_TYPES = (
@@ -643,11 +821,12 @@ SERVER_MESSAGE_TYPES = (
 )
 
 
-def encode_server_message(msg: tuple, to: str) -> dict:
+def encode_server_message(msg: tuple, to: str, turn_timeout: Optional[float] = None) -> dict:
     """Engine `RemoteAgent` message tuple -> callback-channel JSON object.
 
-    ("joined", JoinReply) is not a callback message (it is the `join` response)
-    and is rejected here.
+    `turn_timeout` is the `timeout` field of a `turn` (seconds the player has to
+    answer; None = no limit). ("joined", JoinReply) is not a callback message (it
+    is the `join` response) and is rejected here.
     """
     if not isinstance(msg, tuple) or not msg:
         raise ProtocolError(f"not an engine message: {msg!r}")
@@ -669,6 +848,7 @@ def encode_server_message(msg: tuple, to: str) -> dict:
         out["seq"] = seq
         out["view"] = encode_table_view(view)
         out["legal"] = encode_legal(legal)
+        out["timeout"] = None if turn_timeout is None else float(turn_timeout)
     elif kind == "hand_end":
         _, seq, seat, result = msg
         out["seq"] = seq
@@ -686,7 +866,9 @@ def encode_server_message(msg: tuple, to: str) -> dict:
 
 
 def decode_server_message(d: Any) -> tuple:
-    """Callback-channel JSON object -> the engine `RemoteAgent` message tuple."""
+    """Callback-channel JSON object -> the engine `RemoteAgent` message tuple.
+    Informational messages (`acting`, `lobby`) have no engine tuple: use
+    `decode_acting` / `decode_lobby` for them."""
     if not isinstance(d, dict):
         raise ProtocolError(f"a message must be an object, got {d!r}")
     kind = d.get("type")
@@ -834,9 +1016,10 @@ def error_response(error: str) -> dict:
     return {"type": "response", "ok": False, "error": error}
 
 
-def encode_join_response(reply: JoinReply) -> dict:
-    """The response to a `join` request, built from the engine's `JoinReply`."""
-    out = {
+def encode_join_response(reply: JoinReply, table: Optional[TableSettings] = None) -> dict:
+    """The response to a `join` request, built from the engine's `JoinReply`.
+    An accepted join also carries `table` (the table settings) when given."""
+    out: dict[str, Any] = {
         "type": "response",
         "ok": reply.accepted,
         "accepted": reply.accepted,
@@ -846,6 +1029,8 @@ def encode_join_response(reply: JoinReply) -> dict:
     }
     if not reply.accepted:
         out["error"] = reply.error or "join rejected"
+    elif table is not None:
+        out["table"] = encode_settings(table)
     return out
 
 
@@ -860,3 +1045,12 @@ def decode_join_response(d: Any) -> JoinReply:
         seat=d.get("seat"),
         error=None if accepted else d.get("error"),
     )
+
+
+def decode_join_settings(d: Any) -> Optional[TableSettings]:
+    """The `table` of a join response; None if it has none (rejected join, or an
+    older server)."""
+    if not isinstance(d, dict):
+        raise ProtocolError(f"a response must be an object, got {d!r}")
+    table = d.get("table")
+    return None if table is None else decode_settings(table)

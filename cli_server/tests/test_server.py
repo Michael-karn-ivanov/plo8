@@ -5,8 +5,8 @@ import unittest
 
 from engine import PlayerStatus
 
-from cli_server.protocol import action_request, decode_hand_result, rebuy_request
-from cli_server.server import LOBBY, GameServer
+from cli_server.protocol import action_request, decode_hand_result, decode_join_settings, rebuy_request
+from cli_server.server import LOBBY, STOPPED, GameServer
 
 try:
     from cli_server_tests.tests.fake_client import FakeClient, is_event, is_type, unused_port, wait_until
@@ -23,6 +23,19 @@ def hole_cards_of(hand_number):
 
 def hand_end_of(hand_number):
     return lambda m: m["type"] == "hand_end" and m["result"]["hand_number"] == hand_number
+
+
+def is_lobby(state=None, **fields):
+    def pred(m):
+        if m.get("type") != "lobby" or (state is not None and m["state"] != state):
+            return False
+        return all(m.get(k) == v for k, v in fields.items())
+
+    return pred
+
+
+def index_of(msgs, pred, start=0):
+    return next(i for i in range(start, len(msgs)) if pred(msgs[i]))
 
 
 def any_turn(clients, timeout=10.0):
@@ -54,11 +67,27 @@ def retry_ok(fn, timeout=5.0):
     return last
 
 
+class TimedServer(GameServer):
+    """Also records when each hand is over (all hand_end replies in)."""
+
+    def __init__(self, *args, **kwargs):
+        self.hand_end_times = []
+        super().__init__(*args, **kwargs)
+
+    def _play_hand(self):
+        played = super()._play_hand()
+        if played:
+            self.hand_end_times.append(time.monotonic())
+        return played
+
+
 class ServerTestCase(unittest.TestCase):
-    def start_server(self, grace=GRACE, action_timeout=5.0, **env):
+    def start_server(self, grace=GRACE, action_timeout=5.0, hand_pause=0.0, **env):
         kwargs = {"seed": SEED, "action_timeout": action_timeout}
         kwargs.update(env)
-        server = GameServer(port=0, grace_period=grace, env_kwargs=kwargs).start()
+        server = TimedServer(
+            port=0, grace_period=grace, hand_pause=hand_pause, env_kwargs=kwargs
+        ).start()
         self.addCleanup(server.shutdown)
         return server
 
@@ -128,6 +157,7 @@ class LobbyTest(ServerTestCase):
         self.assertTrue(r["ok"], r)
         self.assertTrue(r["queued"])
         self.assertIsNone(r["seat"])
+        self.assertIn("table", r)
         time.sleep(0.3)
         self.assertEqual(d.snapshot(), [])  # nothing about the hand in progress
         self.assertEqual(server.env.dealer.hand_number, 1)
@@ -140,9 +170,238 @@ class LobbyTest(ServerTestCase):
         self.assertEqual(msgs[0]["type"], "seated")
         self.assertFalse(any(m["type"] == "event" and m["event"]["hand_no"] == 1 for m in msgs))
         self.assertFalse(any(hand_end_of(1)(m) for m in msgs))
+        # no turn announcements while waiting for a seat
+        self.assertFalse(any(m["type"] == "acting" and m["hand_number"] == 1 for m in msgs))
         started = d.wait_for(is_event("hand_started", hand_no=2))
         self.assertIn("D", [p[1] for p in started["event"]["participants"]])
         a.wait_for(is_event("player_joined", name="D"))
+
+
+class TableSettingsTest(ServerTestCase):
+    def test_join_response_carries_table_settings(self):
+        server = self.start_server(action_timeout=7.0, hand_pause=0.25, max_seats=6, max_buy_in=50.0)
+        a = self.client(server, "A")
+        r = a.join(40)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(
+            r["table"],
+            {
+                "small_blind_bb": 0.5,
+                "big_blind_bb": 1.0,
+                "small_bet_bb": 1.0,
+                "big_bet_bb": 2.0,
+                "max_seats": 6,
+                "max_buy_in_bb": 50.0,
+                "action_timeout": 7.0,
+                "grace_period": GRACE,
+                "hand_pause": 0.25,
+            },
+        )
+        self.assertEqual(decode_join_settings(r), server.settings)
+
+        x = self.client(server, "X")
+        r = x.join(80)  # above the max buy-in: rejected by the engine
+        self.assertFalse(r["ok"])
+        self.assertNotIn("table", r)
+        r = self.client(server, "A").join(40)  # name taken
+        self.assertFalse(r["ok"])
+        self.assertNotIn("table", r)
+
+    def test_no_max_buy_in(self):
+        server = self.start_server()
+        r = self.client(server, "A").join(40)
+        self.assertIsNone(r["table"]["max_buy_in_bb"])
+        self.assertEqual(r["table"]["max_seats"], 10)
+
+
+class LobbyStatusTest(ServerTestCase):
+    def test_waiting_starting_and_no_lobby_during_a_hand(self):
+        grace = 1.0
+        server = self.start_server(grace=grace, action_timeout=10.0)
+        a = self.client(server, "A")
+        self.assertTrue(a.join(40)["ok"])
+        m = a.wait_for(is_lobby("waiting"))
+        self.assertEqual((m["active"], m["needed"], m["starts_in"]), (1, 2, None))
+        self.assertEqual(m["to"], "A")
+
+        # A wake-up that changes nothing (a rejected join) does not re-send it.
+        x = self.client(server, "X")
+        self.assertFalse(x.join(-5)["ok"])
+        time.sleep(0.3)
+        self.assertEqual(len(a.of_type("lobby")), 1)
+        self.assertEqual(x.of_type("lobby"), [])
+
+        b = self.client(server, "B")
+        self.assertTrue(b.join(40)["ok"])
+        for c in (a, b):
+            m = c.wait_for(is_lobby("starting"))
+            self.assertEqual((m["active"], m["needed"]), (2, 2))
+            self.assertGreater(m["starts_in"], grace - 0.5)
+            self.assertLessEqual(m["starts_in"], grace)
+        self.assertEqual(b.of_type("lobby")[0]["state"], "starting")  # its first status
+
+        time.sleep(0.3)
+        c = self.client(server, "C")
+        self.assertTrue(c.join(40)["ok"])
+        a.wait_for(is_lobby("starting", active=3))
+        c.wait_for(is_lobby("starting", active=3))
+        time.sleep(0.05)
+        last = [m for m in a.of_type("lobby") if m["active"] == 3][-1]
+        self.assertGreater(last["starts_in"], grace - 0.25)  # the grace period restarted
+
+        # The first hand starts; nobody answers the first turn, so it keeps running.
+        any_turn([a, b, c])
+        time.sleep(0.3)
+        for client in (a, b, c):
+            msgs = client.snapshot()
+            started = index_of(msgs, is_event("hand_started", hand_no=1))
+            self.assertFalse([m for m in msgs[started:] if m["type"] == "lobby"])
+
+    def test_leave_to_one_player_sends_waiting(self):
+        server = self.start_server(grace=5.0)
+        a = self.client(server, "A")
+        b = self.client(server, "B")
+        self.assertTrue(a.join(40)["ok"])
+        self.assertTrue(b.join(40)["ok"])
+        a.wait_for(is_lobby("starting"))
+        start = len(a.snapshot())
+        self.assertTrue(b.leave()["ok"])
+        m = a.wait_for(is_lobby("waiting"), start=start)
+        self.assertEqual((m["active"], m["starts_in"]), (1, None))
+        self.assertEqual(server.env.dealer.hand_number, 0)
+
+
+class ActingTest(ServerTestCase):
+    def test_every_turn_is_announced_to_the_others(self):
+        server = self.start_server()
+        clients = [self.client(server, n, auto=True) for n in "ABC"]
+        for c in clients:
+            self.assertTrue(c.join(40)["ok"])
+        for c in clients:
+            c.wait_for(hand_end_of(1))
+
+        for c in clients:
+            msgs = c.snapshot()
+            end = index_of(msgs, hand_end_of(1))
+            bb = index_of(msgs, is_event("blind_posted", hand_no=1, blind="BB"))
+            sequence = []  # ("ask" | "acted", name, seat, index)
+            for i, m in enumerate(msgs[: end + 1]):
+                if m["type"] == "acting":
+                    self.assertNotEqual(m["name"], c.name)  # the actor gets `turn` instead
+                    self.assertEqual((m["hand_number"], m["timeout"]), (1, 5.0))
+                    sequence.append(("ask", m["name"], m["seat"], i))
+                elif m["type"] == "turn":
+                    self.assertEqual(m["timeout"], 5.0)
+                    sequence.append(("ask", c.name, m["view"]["seat"], i))
+                elif is_event("player_acted", hand_no=1)(m):
+                    e = m["event"]
+                    sequence.append(("acted", e["name"], e["seat"], i))
+            self.assertTrue(sequence)
+            self.assertGreater(sequence[0][3], bb)  # after the events that preceded it
+            # Each turn is announced once, after the previous action and before
+            # the actor's own action.
+            self.assertEqual(len(sequence) % 2, 0, sequence)
+            asks, acts = sequence[0::2], sequence[1::2]
+            self.assertTrue(all(s[0] == "ask" for s in asks), sequence)
+            self.assertTrue(all(s[0] == "acted" for s in acts), sequence)
+            self.assertEqual([s[1:3] for s in asks], [s[1:3] for s in acts])
+
+    def test_sitting_out_players_are_told_too(self):
+        server = self.start_server(action_timeout=0.5)
+        a = self.client(server, "A")  # never answers: times out and sits out
+        b = self.client(server, "B", auto=True)
+        c = self.client(server, "C", auto=True)
+        for client in (a, b, c):
+            self.assertTrue(client.join(40)["ok"])
+        a.wait_type("sat_out")
+        m = a.wait_for(lambda m: m["type"] == "acting" and m["hand_number"] == 2, timeout=15)
+        self.assertIn(m["name"], ("B", "C"))
+        self.assertIs(self.engine_player(server, "A").status, PlayerStatus.SITTING_OUT)
+        self.assertFalse([m for m in a.of_type("turn") if m["view"]["hand_number"] == 2])
+
+
+class PauseTest(ServerTestCase):
+    def test_pause_between_hands(self):
+        pause = 0.3
+        server = self.start_server(hand_pause=pause)
+        a = self.client(server, "A", auto=True)
+        b = self.client(server, "B", auto=True)
+        self.assertTrue(a.join(40)["ok"])
+        self.assertTrue(b.join(40)["ok"])
+        for c in (a, b):
+            c.wait_for(hole_cards_of(2))
+        self.assertGreaterEqual(server.hand_start_times[1] - server.hand_end_times[0], pause)
+        for c in (a, b):
+            msgs = c.snapshot()
+            end = index_of(msgs, hand_end_of(1))
+            started = index_of(msgs, is_event("hand_started", hand_no=2))
+            lobby = [m for m in msgs[end:started] if m["type"] == "lobby"]
+            self.assertEqual(len(lobby), 1, lobby)  # announced once
+            self.assertEqual((lobby[0]["state"], lobby[0]["active"]), ("next_hand", 2))
+            self.assertGreater(lobby[0]["starts_in"], 0)
+            self.assertLessEqual(lobby[0]["starts_in"], pause)
+
+    def test_join_during_the_pause_is_seated_at_once(self):
+        server = self.start_server(hand_pause=1.5)
+        a = self.client(server, "A", auto=True)
+        b = self.client(server, "B", auto=True)
+        self.assertTrue(a.join(40)["ok"])
+        self.assertTrue(b.join(40)["ok"])
+        a.wait_for(is_lobby("next_hand"))
+        self.assertEqual(server.env.dealer.hand_number, 1)
+
+        c = self.client(server, "C", auto=True)
+        r = c.join(40)
+        self.assertTrue(r["ok"], r)
+        self.assertFalse(r["queued"])
+        self.assertIsNotNone(r["seat"])
+        c.wait_for(is_lobby("next_hand"))  # gets the status at once
+        a.wait_for(is_lobby("next_hand", active=3))  # re-sent: one more player
+        started = c.wait_for(is_event("hand_started", hand_no=2))
+        self.assertIn("C", [p[1] for p in started["event"]["participants"]])
+        c.wait_for(hole_cards_of(2))
+
+    def test_leaving_during_the_pause_goes_back_to_the_lobby(self):
+        server = self.start_server(hand_pause=1.0)
+        a = self.client(server, "A", auto=True)
+        b = self.client(server, "B", auto=True)
+        self.assertTrue(a.join(40)["ok"])
+        self.assertTrue(b.join(40)["ok"])
+        a.wait_for(is_lobby("next_hand"))
+        start = len(a.snapshot())
+        self.assertTrue(b.leave()["ok"])
+        m = a.wait_for(is_lobby("waiting"), start=start)
+        self.assertEqual(m["active"], 1)
+        wait_until(lambda: server.state == LOBBY, message="back in the lobby")
+        time.sleep(1.2)
+        self.assertEqual(server.env.dealer.hand_number, 1)
+
+
+class StopTest(ServerTestCase):
+    def stop_and_time(self, server):
+        t0 = time.monotonic()
+        server.stop()
+        server._game_thread.join(5)
+        self.assertFalse(server._game_thread.is_alive())
+        self.assertEqual(server.state, STOPPED)
+        return time.monotonic() - t0
+
+    def test_stop_ends_a_lobby_wait_at_once(self):
+        server = self.start_server()
+        a = self.client(server, "A")
+        self.assertTrue(a.join(40)["ok"])
+        a.wait_for(is_lobby("waiting"))  # waits with no timeout
+        self.assertLess(self.stop_and_time(server), 1.0)
+
+    def test_stop_ends_a_pause_at_once(self):
+        server = self.start_server(hand_pause=60)
+        a = self.client(server, "A", auto=True)
+        b = self.client(server, "B", auto=True)
+        self.assertTrue(a.join(40)["ok"])
+        self.assertTrue(b.join(40)["ok"])
+        a.wait_for(is_lobby("next_hand"))
+        self.assertLess(self.stop_and_time(server), 1.0)
+        self.assertEqual(server.env.dealer.hand_number, 1)
 
 
 class HandMessagesTest(ServerTestCase):
@@ -237,6 +496,9 @@ class RequestsTest(ServerTestCase):
         actor, turn = any_turn([a, b])
         other = b if actor is a else a
         seq, legal = turn["seq"], turn["legal"]
+        self.assertEqual(turn["timeout"], 10.0)
+        acting = other.wait_for(is_type("acting"))
+        self.assertEqual((acting["name"], acting["seat"]), (actor.name, turn["view"]["seat"]))
 
         r = actor.act(seq + 100, "fold")
         self.assertFalse(r["ok"])
@@ -291,6 +553,7 @@ class RequestsTest(ServerTestCase):
                 r = x.request(bad)
                 self.assertFalse(r["ok"])
                 self.assertEqual(r["type"], "response")
+                self.assertNotIn("table", r)
 
         r = x.join(-5)  # rejected by the engine
         self.assertFalse(r["ok"])
@@ -392,6 +655,10 @@ class LeavingTest(ServerTestCase):
         other.wait_type("close")
         self.assertFalse(other.of_type("hand_end"))
         actor.wait_for(is_event("player_left", name=other.name))
+        # The leaver was folded without being asked: no turn announcement for it.
+        self.assertFalse(
+            [m for m in actor.of_type("acting") if m["name"] == other.name and m["hand_number"] == 1]
+        )
 
         back = self.client(server, other.name, auto=True)
         self.assertTrue(back.join(40)["ok"])  # the name can be used again
@@ -408,15 +675,24 @@ class LeavingTest(ServerTestCase):
             timeout=30,
             message="a busted player",
         )
+        other = b if busted is a else a
         wait_until(lambda: server.state == LOBBY and not server.env.dealer.in_hand)
         hands = server.env.dealer.hand_number
         time.sleep(2 * GRACE)
         self.assertEqual(server.env.dealer.hand_number, hands)  # one active player left
+        for c in (a, b):  # back in the lobby: waiting for a second active player
+            last_end = index_of(c.snapshot(), hand_end_of(hands))
+            m = c.wait_for(is_lobby("waiting"), start=last_end)
+            self.assertEqual(m["active"], 1)
 
+        starts = {c.name: len(c.snapshot()) for c in (a, b)}
         t0 = time.monotonic()
         r = retry_ok(lambda: busted.rebuy(1.0))
         self.assertTrue(r["ok"])
         busted.wait_type("returned")
+        for c in (busted, other):
+            m = c.wait_for(is_lobby("starting", active=2), start=starts[c.name])
+            self.assertLessEqual(m["starts_in"], GRACE)
         busted.wait_for(hole_cards_of(hands + 1))
         self.assertGreaterEqual(server.hand_start_times[-1], t0 + GRACE)
 

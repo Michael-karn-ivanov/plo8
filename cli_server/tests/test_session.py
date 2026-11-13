@@ -97,13 +97,13 @@ class Peer:
 
 
 class SessionTestCase(unittest.TestCase):
-    def make_session(self, name="A", start=True):
+    def make_session(self, name="A", start=True, **kwargs):
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.bind((HOST, 0))
         listener.listen(1)
         self.released = []
         session = ClientSession.connect(
-            name, listener.getsockname()[1], on_close=self.released.append
+            name, listener.getsockname()[1], on_close=self.released.append, **kwargs
         )
         conn, _ = listener.accept()
         listener.close()
@@ -152,6 +152,15 @@ class MessageMappingTest(SessionTestCase):
             self.assertEqual(line["to"], "A")
             self.assertEqual(decode_server_message(line), msg)
 
+    def test_turn_carries_the_action_timeout(self):
+        session, peer = self.make_session(action_timeout=7)
+        session.send(("turn", 1, view(), LEGAL))
+        self.assertEqual(peer.read()["timeout"], 7.0)
+
+        other, other_peer = self.make_session("B")  # no limit configured
+        other.send(("turn", 1, view(), LEGAL))
+        self.assertIsNone(other_peer.read()["timeout"])
+
     def test_joined_is_captured_not_forwarded(self):
         session, peer = self.make_session()
         reply = JoinReply(True, queued=False, name="A", seat=0)
@@ -164,6 +173,89 @@ class MessageMappingTest(SessionTestCase):
         session, _ = self.make_session()
         session.feed("hello")
         self.assertEqual(self.recv_in_thread(session), ("ok", "hello"))
+
+
+class HooksTest(SessionTestCase):
+    def make_hooked(self, **kwargs):
+        self.calls = []
+        return self.make_session(
+            on_turn=lambda s, v: self.calls.append(("turn", s, v)),
+            on_status=lambda s, kind: self.calls.append(("status", s, kind)),
+            **kwargs,
+        )
+
+    def test_turn_hook_runs_after_the_turn_is_queued(self):
+        seen = []
+
+        def on_turn(session, v):
+            # The turn is already pending and on its way to the client.
+            seen.append((session.pending_turn, peer.read()["type"], v))
+
+        session, peer = self.make_session(on_turn=on_turn)
+        v = view()
+        session.send(("turn", 4, v, LEGAL))
+        self.assertEqual(seen, [((4, LEGAL), "turn", v)])
+
+    def test_status_hooks(self):
+        session, peer = self.make_hooked()
+        session.send(("joined", JoinReply(True, name="A", seat=0)))  # no hook
+        session.send(("seated", view()))
+        session.send(("event", acted("B")))
+        session.send(("hole_cards", Hand.parse("AsKd7h2c"), view()))
+        session.send(("hand_end", 2, 0, result()))
+        session.send(("sat_out",))
+        session.send(("returned",))
+        session.send(("turn", 3, view(), LEGAL))
+        session.send(("left", 39.5))
+        session.send(("close",))
+        kinds = [c[2] if c[0] == "status" else "turn" for c in self.calls]
+        self.assertEqual(kinds, ["seated", "sat_out", "returned", "turn", "left"])
+        self.assertTrue(all(c[1] is session for c in self.calls))
+
+    def test_no_hook_when_the_send_fails(self):
+        session, peer = self.make_hooked()
+        session.close()
+        self.assertTrue(session.wait_closed(5))
+        with self.assertRaises(OSError):
+            session.send(("seated", view()))
+        with self.assertRaises(OSError):
+            session.send(("turn", 1, view(), LEGAL))
+        self.assertEqual(self.calls, [])
+
+    def test_a_failing_hook_does_not_break_send(self):
+        def boom(*args):
+            raise RuntimeError("hook failed")
+
+        session, peer = self.make_session(on_turn=boom, on_status=boom)
+        session.send(("turn", 1, view(), LEGAL))
+        session.send(("sat_out",))
+        self.assertEqual([peer.read()["type"] for _ in range(2)], ["turn", "sat_out"])
+
+
+class NotifyTest(SessionTestCase):
+    def test_notify_adds_to_and_keeps_order(self):
+        session, peer = self.make_session()
+        session.send(("event", acted("B")))
+        self.assertTrue(session.notify({"type": "acting", "seat": 1, "name": "B", "to": "someone else"}))
+        session.send(("sat_out",))
+        lines = [peer.read() for _ in range(3)]
+        self.assertEqual([m["type"] for m in lines], ["event", "acting", "sat_out"])
+        self.assertEqual(lines[1], {"type": "acting", "seat": 1, "name": "B", "to": "A"})
+
+    def test_notify_never_raises(self):
+        session, peer = self.make_session()
+        peer.close()
+        self.assertTrue(session.wait_closed(5))
+        self.assertTrue(session.broken)
+        self.assertFalse(session.notify({"type": "lobby", "state": "waiting"}))
+        self.assertFalse(session.notify({"no": "type"}))  # malformed: dropped, not raised
+
+    def test_notify_after_close_is_dropped(self):
+        session, peer = self.make_session()
+        session.send(("close",))
+        self.assertFalse(session.notify({"type": "lobby"}))
+        self.assertEqual(peer.read()["type"], "close")
+        self.assertIsNone(peer.read())
 
 
 class RepliesTest(SessionTestCase):
@@ -236,13 +328,15 @@ class ChannelTest(SessionTestCase):
         def flood():
             for _ in range(2000):  # far more than the socket buffers hold
                 session.send(big)
+                session.notify({"type": "lobby", "state": "waiting"})
             done.set()
 
         t = threading.Thread(target=flood, daemon=True)
         t.start()
-        self.assertTrue(done.wait(30), "send() blocked on a client that does not read")
+        self.assertTrue(done.wait(30), "send() / notify() blocked on a client that does not read")
         # The client can still read in order afterwards.
         self.assertEqual(peer.read()["type"], "seated")
+        self.assertEqual(peer.read()["type"], "lobby")
 
     def test_broken_callback_socket_ends_recv(self):
         session, peer = self.make_session()

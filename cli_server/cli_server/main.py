@@ -1,7 +1,8 @@
 """cli_server entry point: command line, logging, signal handling.
 
     cli_server [--port PORT] [--grace-period SECONDS] [--action-timeout SECONDS]
-               [--max-seats N] [--max-buy-in BB] [--seed N] [--log-level LEVEL]
+               [--hand-pause SECONDS] [--max-seats N] [--max-buy-in BB] [--seed N]
+               [--log-level LEVEL]
 """
 
 from __future__ import annotations
@@ -13,16 +14,25 @@ import signal
 import sys
 from typing import Any, Optional, Sequence
 
-from engine import DEFAULT_ACTION_TIMEOUT, MAX_PLAYERS, MIN_PLAYERS
+from engine import MAX_PLAYERS, MIN_PLAYERS
 
-from cli_server.server import HOST, GameServer
+from cli_server.server import DEFAULT_GRACE_PERIOD, DEFAULT_HAND_PAUSE, HOST, GameServer
 
-__all__ = ["DEFAULT_PORT", "DEFAULT_GRACE_PERIOD", "build_parser", "parse_args", "env_kwargs", "main"]
+__all__ = [
+    "DEFAULT_PORT",
+    "DEFAULT_GRACE_PERIOD",
+    "DEFAULT_ACTION_TIMEOUT",
+    "DEFAULT_HAND_PAUSE",
+    "build_parser",
+    "parse_args",
+    "env_kwargs",
+    "main",
+]
 
 _log = logging.getLogger("cli_server")
 
 DEFAULT_PORT = 8008
-DEFAULT_GRACE_PERIOD = 15.0
+DEFAULT_ACTION_TIMEOUT = 180.0  # spec: time to act for a client (overrides the engine's 600 s)
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
@@ -103,6 +113,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="time a client has to answer a turn or hand_end (default %(default)s)",
     )
     parser.add_argument(
+        "--hand-pause",
+        type=_non_negative,
+        default=DEFAULT_HAND_PAUSE,
+        metavar="SECONDS",
+        help="pause between hands so players can see the showdown; 0 disables it "
+        "(default %(default)s)",
+    )
+    parser.add_argument(
         "--max-seats",
         type=_seats,
         default=MAX_PLAYERS,
@@ -154,21 +172,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     try:
         server = GameServer(
-            port=args.port, grace_period=args.grace_period, env_kwargs=env_kwargs(args)
+            port=args.port,
+            grace_period=args.grace_period,
+            hand_pause=args.hand_pause,
+            env_kwargs=env_kwargs(args),
         )
     except OSError as e:
         _log.error("cannot listen on %s:%d: %s", HOST, args.port, e)
         return 1
+    s = server.settings
     _log.info(
-        "listening on %s:%d (grace period %gs, action timeout %gs)",
+        "listening on %s:%d; blinds %g/%g BB, bets %g/%g BB, %d seats, max buy-in %s, "
+        "action timeout %gs, grace period %gs, pause between hands %gs",
         HOST,
         server.port,
-        args.grace_period,
+        s.small_blind_bb,
+        s.big_blind_bb,
+        s.small_bet_bb,
+        s.big_bet_bb,
+        s.max_seats,
+        "none" if s.max_buy_in_bb is None else f"{s.max_buy_in_bb:g} BB",
         args.action_timeout,
+        args.grace_period,
+        args.hand_pause,
     )
 
     # SIGINT / SIGTERM raise KeyboardInterrupt in the main thread, which runs the
-    # game loop: a running hand is aborted there (the engine refunds the bets).
+    # game loop: a running hand is aborted there (the engine refunds the bets),
+    # and a lobby wait or a pause between hands ends at once.
     previous = {}
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:

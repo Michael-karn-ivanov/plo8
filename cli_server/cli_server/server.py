@@ -4,6 +4,15 @@ The server holds no poker rules: seating, the waiting queue, blinds, betting,
 showdown, the rebuy window, sitting out, leaving and the action timeout are the
 engine's `Environment` / `Dealer`. Remote play goes through the engine's
 `RemoteAgent` and `handle_join`, with a `ClientSession` as the connection.
+
+On top of the engine the server sends the table settings with every accepted
+join, announces each turn to the other seated players (`acting`), keeps clients
+informed about the lobby (`lobby`) and pauses between hands.
+
+Concurrency: the main thread never holds the lobby condition while calling into
+the engine, and session hooks (which may run while the engine's table lock is
+held) never call into the engine; they only queue messages and poke the lobby.
+So the table lock and the lobby condition are never taken in opposite orders.
 """
 
 from __future__ import annotations
@@ -14,9 +23,10 @@ import socket
 import socketserver
 import threading
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, NamedTuple, Optional
 
 from engine import (
+    MIN_PLAYERS,
     Environment,
     HandEndReply,
     HandResult,
@@ -24,15 +34,22 @@ from engine import (
     Join,
     NotEnoughPlayersError,
     Player,
+    PlayerStatus,
     RemoteAgent,
+    TableView,
     handle_join,
 )
 
 from .protocol import (
+    Acting,
     LineTooLongError,
+    LobbyStatus,
     ProtocolError,
+    TableSettings,
     decode_action,
+    encode_acting,
     encode_join_response,
+    encode_lobby,
     error_response,
     ok_response,
     read_message,
@@ -41,19 +58,40 @@ from .protocol import (
 )
 from .session import ClientSession, SessionError
 
-__all__ = ["GameServer", "HOST", "LOBBY", "PLAYING", "STOPPED", "describe_result"]
+__all__ = [
+    "GameServer",
+    "HOST",
+    "LOBBY",
+    "PLAYING",
+    "STOPPED",
+    "DEFAULT_GRACE_PERIOD",
+    "DEFAULT_HAND_PAUSE",
+    "describe_result",
+]
 
 _log = logging.getLogger("cli_server")
 
 HOST = "127.0.0.1"  # server and clients share a host
 CONNECT_TIMEOUT = 5.0  # seconds to reach a client's callback port
 HISTORY_LIMIT = 1000  # hand results / start times kept for inspection
+DEFAULT_GRACE_PERIOD = 15.0
+DEFAULT_HAND_PAUSE = 3.0
 
 LOBBY = "lobby"  # no hand is running; waiting for players / the grace period
-PLAYING = "playing"  # hands follow each other
+PLAYING = "playing"  # hands follow each other (including the pauses between them)
 STOPPED = "stopped"
 
 _RESERVED = object()  # registry placeholder while a join is in progress
+_SEATED = (PlayerStatus.ACTIVE, PlayerStatus.SITTING_OUT)
+
+
+class _Lobby(NamedTuple):
+    """Lobby status as the main thread sees it: `deadline` is a monotonic time."""
+
+    state: str  # "waiting" / "starting" / "next_hand"
+    active: int
+    needed: int
+    deadline: Optional[float]
 
 
 class _RequestServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -111,43 +149,74 @@ class GameServer:
     """Hosts one table on `127.0.0.1:port`.
 
     `env_kwargs` are passed to `Environment` (`action_timeout`, `max_seats`,
-    `max_buy_in`, `seed`). Use `serve_forever()` to run the game loop in the
-    calling thread (the binary does this, so SIGINT aborts a running hand), or
-    `start()` to run it in a background thread (tests). `shutdown()` stops it.
+    `max_buy_in`, `seed`). `grace_period` is the wait after the last arrival
+    before the first hand; `hand_pause` the wait between hands (0 = none). Use
+    `serve_forever()` to run the game loop in the calling thread (the binary does
+    this, so SIGINT aborts a running hand), or `start()` to run it in a
+    background thread (tests). `shutdown()` stops it.
     """
 
     def __init__(
         self,
         port: int = 8008,
-        grace_period: float = 15.0,
+        grace_period: float = DEFAULT_GRACE_PERIOD,
+        hand_pause: float = DEFAULT_HAND_PAUSE,
         env_kwargs: Optional[dict[str, Any]] = None,
         host: str = HOST,
         connect_timeout: float = CONNECT_TIMEOUT,
     ) -> None:
         if grace_period < 0:
             raise ValueError(f"grace_period cannot be negative, got {grace_period!r}")
+        if hand_pause < 0:
+            raise ValueError(f"hand_pause cannot be negative, got {hand_pause!r}")
         self.env = Environment(**(env_kwargs or {}))
         self.grace_period = grace_period
+        self.hand_pause = hand_pause
         self.host = host
         self.connect_timeout = connect_timeout
+        self.settings = self._table_settings()  # fixed: sent with every accepted join
         self.state = LOBBY
-        # Inspection (logging, tests): recent hand results and hand start times
-        # (time.monotonic(), taken just before each hand starts).
+        # Inspection (logging, tests): recent hand results, hand start times
+        # (time.monotonic(), taken just before each hand starts) and the lobby
+        # statuses published to clients.
         self.results: collections.deque[HandResult] = collections.deque(maxlen=HISTORY_LIMIT)
         self.hand_start_times: collections.deque[float] = collections.deque(maxlen=HISTORY_LIMIT)
+        self.lobby_history: collections.deque[LobbyStatus] = collections.deque(maxlen=HISTORY_LIMIT)
 
+        # Registry, guarded by registry_lock (never held while sending or calling
+        # into the engine).
+        self.registry_lock = threading.Lock()
         self._sessions: dict[str, Any] = {}  # name -> ClientSession | _RESERVED
         self._connections: set[socket.socket] = set()
-        self._lock = threading.Lock()  # guards the registry and connections
-        self._cond = threading.Condition()  # lobby wake-ups; guards the fields below
+        self._last_lobby: Optional[tuple] = None  # last published (state, active, needed, deadline)
+        self._lobby_fresh: set[ClientSession] = set()  # get the lobby status even if unchanged
+
+        # Lobby condition: guards the fields below; never held while calling the engine.
+        self._cond = threading.Condition()
+        self._generation = 0  # incremented by every poke
         self._stopping = False
         self._shut_down = False
-        self._last_change = time.monotonic()
+        self._last_arrival = time.monotonic()
 
         self._tcp = _RequestServer((host, port), self)
         self.port: int = self._tcp.server_address[1]
         self._listener_thread: Optional[threading.Thread] = None
         self._game_thread: Optional[threading.Thread] = None
+
+    def _table_settings(self) -> TableSettings:
+        dealer = self.env.dealer
+        big_blind = dealer.to_bb(dealer.big_blind)
+        return TableSettings(
+            small_blind_bb=dealer.to_bb(dealer.small_blind),
+            big_blind_bb=big_blind,
+            small_bet_bb=big_blind,  # preflop and flop: 1 BB
+            big_bet_bb=2 * big_blind,  # turn and river: 2 BB
+            max_seats=self.env.max_seats,
+            max_buy_in_bb=self.env.max_buy_in,
+            action_timeout=self.env.action_timeout,
+            grace_period=self.grace_period,
+            hand_pause=self.hand_pause,
+        )
 
     # --- running ---------------------------------------------------------------
 
@@ -179,37 +248,65 @@ class GameServer:
         """The lobby / game loop. Returns after `stop()` / `shutdown()`."""
         try:
             while True:
-                with self._cond:
-                    self._set_state(LOBBY)
-                    if not self._wait_for_start():
-                        break
-                    self._set_state(PLAYING)
+                self._set_state(LOBBY)
+                if not self._wait_for_start():
+                    break
+                self._set_state(PLAYING)
                 _log.info("game starts")
                 while not self._stopping and self.env.can_start():
                     if not self._play_hand():
                         break
-                if not self._stopping:
-                    _log.info("waiting for players")
+                    if self.hand_pause > 0 and not self._stopping and self.env.can_start():
+                        self._pause_between_hands()
+                if self._stopping:
+                    break
+                _log.info("waiting for players")
         finally:
-            with self._cond:
-                self._set_state(STOPPED)
+            self._set_state(STOPPED)
 
     def _wait_for_start(self) -> bool:
-        """LOBBY: wait (holding the condition) until at least two players can play
-        and the grace period after the last arrival is over. False when stopping."""
-        while not self._stopping:
-            if self.env.can_start():
-                remaining = self._last_change + self.grace_period - time.monotonic()
-                if remaining <= 0:
-                    return True
-                self._cond.wait(remaining)
-            else:
-                self._cond.wait()
-        return False
+        """LOBBY: wait until at least two players can play and the grace period
+        after the last arrival is over, publishing the lobby status as it changes.
+        False when stopping."""
+        while True:
+            with self._cond:
+                if self._stopping:
+                    return False
+                gen = self._generation  # read before env: a later poke is not lost
+            status = self._lobby_status()
+            self._publish_lobby(status)
+            now = time.monotonic()
+            if status.state == "starting" and status.deadline is not None and status.deadline <= now:
+                return True
+            timeout = None if status.deadline is None else status.deadline - now
+            self._wait_for_poke(gen, timeout)
+
+    def _pause_between_hands(self) -> None:
+        """Wait `hand_pause` seconds so the showdown stays on the clients' screens.
+        Joins are seated at once meanwhile. Ends early when stopping or when fewer
+        than two players are left (the loop then goes back to LOBBY)."""
+        until = time.monotonic() + self.hand_pause
+        while True:
+            with self._cond:
+                if self._stopping:
+                    return
+                gen = self._generation
+            if not self.env.can_start():
+                return
+            self._publish_lobby(self._lobby_status(pause_until=until))
+            remaining = until - time.monotonic()
+            if remaining <= 0:
+                return
+            self._wait_for_poke(gen, remaining)
 
     def _set_state(self, state: str) -> None:
-        self.state = state
-        self._cond.notify_all()
+        with self._cond:
+            self.state = state
+            if state == LOBBY:
+                # The grace period never counts from before play stopped.
+                self._last_arrival = time.monotonic()
+            self._generation += 1
+            self._cond.notify_all()
 
     def _play_hand(self) -> bool:
         players = self.env.active_players
@@ -218,6 +315,10 @@ class GameServer:
             self.env.dealer.hand_number + 1,
             ", ".join(f"{p.name} ({p.stack:g} BB)" for p in players),
         )
+        with self.registry_lock:
+            # Clients drop the lobby display on hand_started: after the hand the
+            # status is sent again, even if it equals the last one.
+            self._last_lobby = None
         self.hand_start_times.append(time.monotonic())
         try:
             result = self.env.start_round()
@@ -229,9 +330,11 @@ class GameServer:
         return True
 
     def stop(self) -> None:
-        """Ask the game loop to return (after the running hand, if any)."""
+        """Ask the game loop to return (after the running hand, if any). A lobby
+        wait or a pause between hands ends at once."""
         with self._cond:
             self._stopping = True
+            self._generation += 1
             self._cond.notify_all()
 
     def shutdown(self, timeout: float = 10.0) -> None:
@@ -241,12 +344,13 @@ class GameServer:
                 return
             self._shut_down = True
             self._stopping = True
+            self._generation += 1
             self._cond.notify_all()
         if self._listener_thread is not None:
             self._tcp.shutdown()
             self._listener_thread.join(timeout)
         self._tcp.server_close()
-        with self._lock:
+        with self.registry_lock:
             connections = list(self._connections)
             sessions = [s for s in self._sessions.values() if isinstance(s, ClientSession)]
         for conn in connections:
@@ -267,14 +371,106 @@ class GameServer:
             game.join(timeout)
         _log.info("server stopped")
 
+    # --- lobby -------------------------------------------------------------------
+
+    def _poke(self, arrival: bool = False) -> None:
+        """Wake the lobby / pause. `arrival`: a player arrived (seated, or back
+        after a rebuy / sit-in); in LOBBY the grace period restarts."""
+        with self._cond:
+            if arrival and self.state == LOBBY:
+                self._last_arrival = time.monotonic()
+            self._generation += 1
+            self._cond.notify_all()
+
+    def _wait_for_poke(self, gen: int, timeout: Optional[float]) -> None:
+        """Wait until something pokes the lobby after generation `gen`, the server
+        stops, or `timeout` seconds pass (None: no timeout)."""
+        with self._cond:
+            self._cond.wait_for(
+                lambda: self._generation != gen or self._stopping,
+                timeout=None if timeout is None else max(0.0, timeout),
+            )
+
+    def _lobby_status(self, pause_until: Optional[float] = None) -> _Lobby:
+        """The lobby status, computed from `env` (outside the lobby condition)."""
+        active = len(self.env.active_players)
+        if pause_until is not None:
+            return _Lobby("next_hand", active, MIN_PLAYERS, pause_until)
+        if active < MIN_PLAYERS:
+            return _Lobby("waiting", active, MIN_PLAYERS, None)
+        with self._cond:
+            last_arrival = self._last_arrival
+        return _Lobby("starting", active, MIN_PLAYERS, last_arrival + self.grace_period)
+
+    def _publish_lobby(self, status: _Lobby) -> None:
+        """Send `lobby` to every joined session if the status changed since the
+        last one published, and to newly joined sessions in any case."""
+        key = tuple(status)
+        with self.registry_lock:
+            sessions = [
+                s
+                for s in self._sessions.values()
+                if isinstance(s, ClientSession) and s.player is not None
+            ]
+            fresh, self._lobby_fresh = self._lobby_fresh, set()
+            changed = key != self._last_lobby
+            self._last_lobby = key
+        targets = sessions if changed else [s for s in sessions if s in fresh]
+        if not changed and not targets:
+            return
+        starts_in = None if status.deadline is None else max(0.0, status.deadline - time.monotonic())
+        wire = LobbyStatus(status.state, status.active, status.needed, starts_in)
+        if changed:
+            self.lobby_history.append(wire)
+            if starts_in is None:
+                _log.info("lobby: %s (%d/%d active)", status.state, status.active, status.needed)
+            else:
+                _log.info(
+                    "lobby: %s (%d/%d active), next hand in %.1fs",
+                    status.state,
+                    status.active,
+                    status.needed,
+                    starts_in,
+                )
+        for session in targets:
+            session.notify(encode_lobby(wire, session.name))
+
+    # --- session hooks (any thread; may hold the table lock) ----------------------
+
+    def _announce_turn(self, session: ClientSession, view: TableView) -> None:
+        """`acting` to every other seated player, right after the actor's `turn`."""
+        try:
+            name = view.me.name
+        except (IndexError, TypeError):
+            return
+        acting = Acting(view.hand_number, view.seat, name, self.env.action_timeout)
+        with self.registry_lock:
+            others = [
+                s
+                for s in self._sessions.values()
+                if isinstance(s, ClientSession) and s is not session
+            ]
+        for other in others:
+            player = other.player
+            if player is not None and player.status in _SEATED:
+                other.notify(encode_acting(acting, other.name))
+
+    def _session_status(self, session: ClientSession, kind: str) -> None:
+        """`seated` / `sat_out` / `returned` / `left`: the number of active players
+        changed (or the session ends). Being seated (a join) and returning (a
+        rebuy / sit-in that brings a player back) count as arrivals. These run
+        inside `handle_join` / `rebuy` / `sit_in` before they return, so the grace
+        period restarts before the request is answered."""
+        self._poke(arrival=kind in ("seated", "returned"))
+
     # --- registry ---------------------------------------------------------------
 
     def session_names(self) -> list[str]:
-        with self._lock:
+        with self.registry_lock:
             return [n for n, s in self._sessions.items() if isinstance(s, ClientSession)]
 
     def _session(self, name: str) -> ClientSession:
-        with self._lock:
+        with self.registry_lock:
             session = self._sessions.get(name)
         if session is None:
             raise SessionError(f"unknown player {name!r}")
@@ -283,9 +479,11 @@ class GameServer:
         return session
 
     def _drop(self, name: str, expected: Any) -> None:
-        with self._lock:
+        with self.registry_lock:
             if self._sessions.get(name) is expected:
                 del self._sessions[name]
+            if isinstance(expected, ClientSession):
+                self._lobby_fresh.discard(expected)
 
     def _unregister(self, session: ClientSession) -> None:
         """Session callback: its channel is over; the name can be used again."""
@@ -294,11 +492,10 @@ class GameServer:
             _log.info("%s disconnected", session.name)
         else:
             _log.info("session of %s closed", session.name)
-        with self._cond:
-            self._cond.notify_all()
+        self._poke()
 
     def _track_connection(self, conn: socket.socket, add: bool) -> None:
-        with self._lock:
+        with self.registry_lock:
             if add:
                 self._connections.add(conn)
             else:
@@ -328,8 +525,7 @@ class GameServer:
             elif kind == "leave":
                 _log.info("%s asks to leave", session.name)
                 session.submit_leave()
-                with self._cond:
-                    self._cond.notify_all()
+                self._poke()
             return ok_response()
         except (ProtocolError, SessionError) as e:
             return error_response(str(e))
@@ -350,17 +546,15 @@ class GameServer:
         except (IllegalActionError, ValueError, TypeError) as e:
             return error_response(str(e))
         _log.info("%s: %s ok (stack %g BB)", session.name, what, player.stack)
-        with self._cond:
-            if self.state == LOBBY:
-                # A player came back: the grace period restarts.
-                self._last_change = time.monotonic()
-            self._cond.notify_all()
+        # The game may now be able to start. A player brought back has already
+        # restarted the grace period through the `returned` hook.
+        self._poke()
         return ok_response()
 
     def _join(self, req: dict) -> dict:
         name = req["name"]
         port = req["callback_port"]
-        with self._lock:
+        with self.registry_lock:
             if self._stopping:
                 return error_response("the server is shutting down")
             if name in self._sessions:
@@ -370,17 +564,26 @@ class GameServer:
         try:
             try:
                 session = ClientSession.connect(
-                    name, port, host=self.host, timeout=self.connect_timeout, on_close=self._unregister
+                    name,
+                    port,
+                    host=self.host,
+                    timeout=self.connect_timeout,
+                    on_close=self._unregister,
+                    action_timeout=self.env.action_timeout,
+                    on_turn=self._announce_turn,
+                    on_status=self._session_status,
                 )
             except OSError as e:
                 self._drop(name, _RESERVED)
                 return error_response(f"cannot reach callback port {port}: {e}")
             # Register before joining: a turn could reach the client, and its
             # action arrive, before handle_join returns.
-            with self._lock:
+            with self.registry_lock:
                 self._sessions[name] = session
             session.start()
             session.feed(Join(name, req["stack_bb"], req["seat"]))
+            # Seating (at once, between hands) restarts the grace period via the
+            # `seated` hook before handle_join returns.
             player = handle_join(self.env, session, timeout=self.env.action_timeout)
         except BaseException:
             self._drop(name, _RESERVED)
@@ -395,18 +598,20 @@ class GameServer:
             error = reply.error if reply is not None and reply.error else "join rejected"
             _log.info("join of %s rejected: %s", name, error)
             return error_response(error)
-        session.player = player
-        with self._cond:
-            # Every new arrival restarts the grace period.
-            self._last_change = time.monotonic()
-            self._cond.notify_all()
+        with self.registry_lock:
+            # Together, so the lobby publisher sees the session either as joined
+            # and fresh, or not yet (no duplicate status).
+            session.player = player
+            if self._sessions.get(name) is session:
+                self._lobby_fresh.add(session)  # gets the lobby status at once
+        self._poke()
         _log.info(
             "%s joined with %g BB (%s)",
             name,
             req["stack_bb"],
             "queued until the hand is over" if reply.queued else f"seat {reply.seat}",
         )
-        return encode_join_response(reply)
+        return encode_join_response(reply, self.settings)
 
 
 def describe_result(result: HandResult) -> str:
