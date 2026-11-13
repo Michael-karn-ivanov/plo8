@@ -6,7 +6,11 @@ If the game is not started and is about to start (after 2nd client joined) - ser
 
 Interaction between this server and (future) clients happen over TCP in both directions.
 We assume server and all clients processes run on the same host (localhost).
-When server starts, it takes optional argument "port number" on which it listens for incoming clients.
+When server starts, it takes following arguments:
+    * optional argument "port number" on which it listens for incoming clients - default is 5000
+    * optional graceful period at the start of the game for all clients to join - default is 15 seconds
+    * optional time to act for client - default is 180 seconds
+    * optional time between hands - for players to see showdown - default - 3 seconds
 Each client connecting informs server with information about player (name, stack etc - see engine/plan.md and code) and about port it (client) is listening for callbacks.
 Server creates player object, corresponding to connected client and join it to the game.
 Each callback to player is later passed as a call to client on the port it (client) is listening (the one that was provided).
@@ -68,3 +72,10 @@ Server == send round summary - winner, pot won, winning hand (if shown), other h
 Server == send round summary - winner, pot won, winning hand (if shown), other hands (if showns) and updated stacks of each player ==> client C
 (Client / player D now joined from waiting)
 Server starts 2nd route.
+
+Clients (e.g. plo8/cli_client) are expected to render the table the way online poker rooms do. To support that, the server also:
+- answers a successful join with the table settings: blinds and bet sizes, maximum number of seats, maximum buy-in (if any), time given to act, and the grace period;
+- whenever a player is asked to act, informs every other seated client whose turn it is (seat, name) and how much time that player has, so clients can highlight the acting player and show a countdown;
+- while no hand is running, keeps connected clients informed about the lobby: how many active players are seated, how many are needed to start, and - while the graceful period is ticking - in how many seconds the game starts (re-sent whenever this changes);
+- pauses for a short, configurable time between hands, so players can see the showdown and the pot being awarded before the next hand starts.
+All these additions are optional for clients: a client that ignores them still plays correctly.
