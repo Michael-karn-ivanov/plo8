@@ -1,0 +1,32 @@
+# cli_client: a full-screen terminal client for the //cli_server Omaha Hi-Lo table.
+
+python_library(
+    name = "cli_client_lib",
+    srcs = glob(["cli_client/*.py"]),
+    # Module paths are taken relative to this directory, so the sources under
+    # cli_client/ import as `cli_client.*`.
+    base_module = "",
+    deps = [
+        "//cli_server:protocol",
+        "//engine:engine",
+        "//entities:entities",
+    ],
+)
+
+# buck2 run //cli_client:cli_client -- --server-port 8008 --port 9001 --name Alice
+python_binary(
+    name = "cli_client",
+    main_module = "cli_client.main",
+    deps = [":cli_client_lib"],
+)
+
+python_test(
+    name = "cli_client_test",
+    srcs = glob(["tests/*.py"]),
+    base_module = "cli_client_tests",
+    deps = [
+        ":cli_client_lib",
+        # test_integration runs an in-process GameServer.
+        "//cli_server:cli_server_lib",
+    ],
+)
