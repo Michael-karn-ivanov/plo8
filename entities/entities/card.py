@@ -97,11 +97,16 @@ class Card:
 
     Equality, hashing and ordering use the `(rank, suit_index)` key. Ordering is
     only for deterministic display and sorting, not a poker comparison.
+
+    `index` (0..51) is computed once at construction and stored in a slot, so
+    reading it is a plain attribute read. It takes no part in equality, ordering
+    or hashing.
     """
 
     rank: Rank = field(compare=False)
     suit: Suit = field(compare=False)
     _key: tuple[int, int] = field(init=False, repr=False, compare=True)
+    index: int = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         rank = self.rank
@@ -116,16 +121,14 @@ class Card:
             object.__setattr__(self, "rank", rank)
         if not isinstance(self.suit, Suit):
             raise ValueError(f"invalid suit: {self.suit!r}")
-        object.__setattr__(self, "_key", (int(rank), self.suit.index))
+        r = int(rank)
+        s = _SUIT_TO_INDEX[self.suit]
+        object.__setattr__(self, "_key", (r, s))
+        object.__setattr__(self, "index", (r - 2) * 4 + s)
 
     def __reduce__(self):
         # Pickle as the compact card index; unpickling returns the interned card.
         return (_card_from_index, (self.index,))
-
-    @property
-    def index(self) -> int:
-        """Stable integer encoding in 0..51."""
-        return (int(self.rank) - 2) * 4 + self.suit.index
 
     @classmethod
     def from_index(cls, i: int) -> "Card":

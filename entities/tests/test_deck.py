@@ -1,11 +1,20 @@
 import random
 import unittest
 
-from entities import ALL_CARDS, Card, Deck, Hand
+from entities import ALL_CARDS, Card, Deck, Hand, Rank, Suit
 
 
 def cards(text):
     return [Card.parse(t) for t in text.split()]
+
+
+def pre_change_shuffle(seed):
+    """Deal order of the pre-change (top-first list) implementation:
+    `Deck(Random(seed)).shuffle()` was `rng.shuffle(list(ALL_CARDS))`, with the
+    front of the list dealt first."""
+    order = list(ALL_CARDS)
+    random.Random(seed).shuffle(order)
+    return order
 
 
 class DeckTest(unittest.TestCase):
@@ -38,6 +47,8 @@ class DeckTest(unittest.TestCase):
         d = Deck()
         self.assertEqual(d.deal(2), [Card.parse("2c"), Card.parse("2d")])
         self.assertNotIn(Card.parse("2c"), d)
+        self.assertEqual(d.deal_one(), Card.parse("2h"))
+        self.assertEqual(d.remaining()[0], Card.parse("2s"))
 
     def test_overdeal(self):
         d = Deck()
@@ -73,6 +84,14 @@ class DeckTest(unittest.TestCase):
         d.remove(Card.parse("Qh"))
         self.assertEqual(len(d), 45)
 
+    def test_remove_keeps_order(self):
+        d = Deck(random.Random(8))
+        d.shuffle()
+        before = d.remaining()
+        dead = [before[0], before[17], before[-1]]
+        d.remove(dead)
+        self.assertEqual(d.remaining(), tuple(c for c in before if c not in dead))
+
     def test_remove_missing_is_atomic(self):
         d = Deck()
         d.remove([Card.parse("As")])
@@ -94,6 +113,95 @@ class DeckTest(unittest.TestCase):
         self.assertEqual(d.remaining(), ALL_CARDS)
 
 
+class DealPathTest(unittest.TestCase):
+    def test_golden_shuffle_order(self):
+        # Seeded experiments and e2e fillers must deal exactly as before.
+        for seed in (0, 12345):
+            with self.subTest(seed=seed):
+                d = Deck(random.Random(seed))
+                d.shuffle()
+                self.assertEqual(list(d.remaining()), pre_change_shuffle(seed))
+                dealt = [d.deal_one() for _ in range(52)]
+                self.assertEqual(dealt, pre_change_shuffle(seed))
+
+    def test_repeated_shuffles_match_pre_change(self):
+        # Each later shuffle permutes the current top-first order, as before.
+        rng = random.Random(3)
+        expected = list(ALL_CARDS)
+        d = Deck(random.Random(3))
+        for _ in range(3):
+            rng.shuffle(expected)
+            d.shuffle()
+            self.assertEqual(list(d.remaining()), expected)
+
+    def test_deal_one_matches_deal(self):
+        a, b = Deck(random.Random(21)), Deck(random.Random(21))
+        a.shuffle()
+        b.shuffle()
+        before = a.remaining()
+        singles = [a.deal_one() for _ in range(52)]
+        self.assertEqual(singles, b.deal(52))
+        self.assertEqual(tuple(singles), before)
+        self.assertEqual(len(a), 0)
+        self.assertEqual(len(b), 0)
+
+    def test_deal_n_top_first(self):
+        d = Deck(random.Random(2))
+        d.shuffle()
+        before = d.remaining()
+        self.assertEqual(d.deal(5), list(before[:5]))
+        self.assertEqual(d.remaining(), before[5:])
+        self.assertEqual(d.deal(1), [before[5]])
+        self.assertEqual(d.deal(len(d)), list(before[6:]))
+
+    def test_deal_zero(self):
+        full = Deck()
+        self.assertEqual(full.deal(0), [])
+        self.assertEqual(full.remaining(), ALL_CARDS)
+        d = Deck(random.Random(4))
+        d.shuffle()
+        d.deal(7)
+        before = d.remaining()
+        self.assertEqual(d.deal(0), [])
+        self.assertEqual(d.remaining(), before)
+        d.deal(len(d))
+        self.assertEqual(d.deal(0), [])
+
+    def test_deal_one_empty_message(self):
+        d = Deck()
+        d.deal(52)
+        with self.assertRaises(ValueError) as ctx_one:
+            d.deal_one()
+        with self.assertRaises(ValueError) as ctx_deal:
+            d.deal(1)
+        self.assertEqual(str(ctx_one.exception), str(ctx_deal.exception))
+        self.assertEqual(str(ctx_one.exception), "cannot deal 1 cards, only 0 remain")
+
+    def test_deal_argument_errors(self):
+        d = Deck()
+        for bad in (-1, True, 1.0):
+            with self.subTest(n=bad):
+                with self.assertRaises(ValueError) as ctx:
+                    d.deal(bad)
+                self.assertEqual(
+                    str(ctx.exception), f"n must be a non-negative int, got {bad!r}"
+                )
+        self.assertEqual(len(d), 52)
+        d.deal(50)
+        with self.assertRaises(ValueError) as ctx:
+            d.deal(3)
+        self.assertEqual(str(ctx.exception), "cannot deal 3 cards, only 2 remain")
+
+    def test_deal_one_does_not_call_deal(self):
+        class NoDeal(Deck):
+            def deal(self, n=1):
+                raise AssertionError("deal() must not be called by deal_one()")
+
+        d = NoDeal()
+        self.assertEqual(d.deal_one(), Card.parse("2c"))
+        self.assertEqual(len(d), 51)
+
+
 class StackingTest(unittest.TestCase):
     def shuffled(self, seed=5):
         d = Deck(random.Random(seed))
@@ -112,6 +220,27 @@ class StackingTest(unittest.TestCase):
         self.assertEqual(after[3:], tuple(c for c in before if c not in stack))
         self.assertEqual(d.deal(3), stack)
         self.assertEqual(len(d), 49)
+
+    def test_stacked_cards_dealt_first_with_deal_one(self):
+        d = self.shuffled()
+        stack = cards("As Kd 7h")
+        d.put_on_top(stack)
+        self.assertEqual([d.deal_one() for _ in range(3)], stack)
+        self.assertEqual(len(d), 49)
+
+    def test_stack_caller_built_cards(self):
+        d = self.shuffled()
+        stack = [Card(Rank.ACE, Suit.SPADES), Card(13, Suit.DIAMONDS), Card(Rank.SEVEN, Suit.HEARTS)]
+        for c in stack:
+            self.assertIsNot(c, ALL_CARDS[c.index])
+        d.put_on_top(stack)
+        self.assertEqual(len(d), 52)
+        self.assertEqual(len(set(d.remaining())), 52)
+        dealt = [d.deal_one() for _ in range(3)]
+        self.assertEqual(dealt, stack)
+        self.assertEqual([c.index for c in dealt], [51, 45, 22])
+        for c in stack:
+            self.assertNotIn(c, d)
 
     def test_single_card(self):
         d = self.shuffled()

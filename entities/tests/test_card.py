@@ -1,3 +1,7 @@
+import copy
+import dataclasses
+import inspect
+import pickle
 import unittest
 
 from entities import ALL_CARDS, Card, Rank, Suit
@@ -81,6 +85,19 @@ class CardTest(unittest.TestCase):
         # plain ints are coerced to Rank
         self.assertIs(Card(14, Suit.SPADES).rank, Rank.ACE)
 
+    def test_invalid_construction_messages(self):
+        cases = [
+            ((1, Suit.CLUBS), "invalid rank: 1"),
+            ((True, Suit.CLUBS), "invalid rank: True"),
+            (("A", Suit.CLUBS), "invalid rank: 'A'"),
+            ((Rank.ACE, "s"), "invalid suit: 's'"),
+        ]
+        for args, message in cases:
+            with self.subTest(args=args):
+                with self.assertRaises(ValueError) as ctx:
+                    Card(*args)
+                self.assertEqual(str(ctx.exception), message)
+
     def test_index_bijection(self):
         for i in range(52):
             c = Card.from_index(i)
@@ -89,8 +106,11 @@ class CardTest(unittest.TestCase):
         self.assertEqual(Card.parse("2c").index, 0)
         self.assertEqual(Card.parse("As").index, 51)
         for bad in [-1, 52, 1.0, True, "3"]:
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError) as ctx:
                 Card.from_index(bad)
+            self.assertEqual(
+                str(ctx.exception), f"card index must be an int in 0..51, got {bad!r}"
+            )
 
     def test_equality_and_hash(self):
         a = Card(Rank.ACE, Suit.SPADES)
@@ -115,6 +135,83 @@ class CardTest(unittest.TestCase):
         self.assertEqual(parse_cards(""), ())
         with self.assertRaises(ValueError):
             parse_cards("AsK")
+
+
+def expected_index(rank, suit):
+    return (int(rank) - 2) * 4 + suit.index
+
+
+class StoredIndexTest(unittest.TestCase):
+    def test_caller_built_cards_have_index(self):
+        for rank in Rank:
+            for suit in Suit:
+                with self.subTest(rank=rank, suit=suit):
+                    interned = ALL_CARDS[expected_index(rank, suit)]
+                    c = Card(rank, suit)
+                    self.assertIsNot(c, interned)
+                    self.assertIs(type(c.index), int)
+                    self.assertEqual(c.index, expected_index(rank, suit))
+                    self.assertEqual(c.index, interned.index)
+
+    def test_int_rank_card_has_index(self):
+        for r in range(2, 15):
+            for suit in Suit:
+                c = Card(r, suit)
+                self.assertIs(c.rank, Rank(r))
+                self.assertIs(type(c.index), int)
+                self.assertEqual(c.index, (r - 2) * 4 + suit.index)
+
+    def test_replace_recomputes_index(self):
+        c = Card.parse("As")
+        d = dataclasses.replace(c, suit=Suit.CLUBS)
+        self.assertEqual(d, Card.parse("Ac"))
+        self.assertEqual(d.index, Card.parse("Ac").index)
+        e = dataclasses.replace(c, rank=Rank.TWO)
+        self.assertEqual(e.index, Card.parse("2s").index)
+
+    def test_index_is_slot_not_property(self):
+        self.assertIn("index", Card.__slots__)
+        self.assertNotIsInstance(inspect.getattr_static(Card, "index"), property)
+        c = Card(Rank.ACE, Suit.SPADES)
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            c.index = 3
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            c.suit = Suit.CLUBS
+        self.assertEqual(c.index, 51)
+
+    def test_index_not_in_compare_or_repr(self):
+        fields = {f.name: f for f in dataclasses.fields(Card)}
+        self.assertFalse(fields["index"].compare)
+        self.assertFalse(fields["index"].repr)
+        self.assertFalse(fields["index"].init)
+        self.assertEqual([n for n, f in fields.items() if f.compare], ["_key"])
+
+    def test_behaviour_matches_interned_twin(self):
+        built = [Card(c.rank, c.suit) for c in ALL_CARDS]
+        for b, c in zip(built, ALL_CARDS):
+            self.assertEqual(b, c)
+            self.assertEqual(hash(b), hash(c))
+            # The pre-change hash: dataclass hash over the single compare field.
+            self.assertEqual(hash(b), hash(((int(c.rank), c.suit.index),)))
+            self.assertEqual(repr(b), repr(c))
+        reversed_built = built[::-1]
+        self.assertEqual(sorted(reversed_built), list(ALL_CARDS))
+        self.assertEqual(sorted(ALL_CARDS), list(ALL_CARDS))
+        self.assertEqual(
+            [c.index for c in sorted(reversed_built)], list(range(52))
+        )
+        self.assertEqual(repr(Card(Rank.ACE, Suit.SPADES)), "Card('As')")
+
+    def test_pickle_and_copy_of_caller_built_card(self):
+        c = Card(Rank.KING, Suit.DIAMONDS)
+        interned = Card.parse("Kd")
+        self.assertIsNot(c, interned)
+        for proto in range(pickle.HIGHEST_PROTOCOL + 1):
+            back = pickle.loads(pickle.dumps(c, protocol=proto))
+            self.assertIs(back, interned)
+            self.assertEqual(back.index, c.index)
+        self.assertIs(copy.copy(c), interned)
+        self.assertIs(copy.deepcopy(c), interned)
 
 
 if __name__ == "__main__":

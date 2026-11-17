@@ -45,6 +45,15 @@ class PickleTest(unittest.TestCase):
         self.assertLess(k, a)
         self.assertEqual(a.index, Card.parse("As").index)
 
+    def test_caller_built_card(self):
+        c = Card(Rank.SEVEN, Suit.HEARTS)
+        for proto in PROTOCOLS:
+            copy = roundtrip(c, proto)
+            self.assertIs(copy, ALL_CARDS[c.index])
+            self.assertEqual(copy, c)
+            self.assertEqual(hash(copy), hash(c))
+            self.assertEqual(copy.index, c.index)
+
     def test_hand(self):
         self.assertRoundTrips(Hand.parse("AsKd7h2c"))
 
@@ -77,6 +86,7 @@ class PickleTest(unittest.TestCase):
                 self.assertIsInstance(copy, Deck)
                 self.assertEqual(len(copy), len(d))
                 self.assertEqual(copy.remaining(), d.remaining())
+                self.assertEqual(copy.deal_one(), d.remaining()[0])
 
     def test_stacked_deck_keeps_order(self):
         d = Deck(random.Random(4))
@@ -103,6 +113,31 @@ class PickleTest(unittest.TestCase):
         copy.deal(10)
         self.assertEqual(len(d), 48)
         self.assertEqual(len(copy), 38)
+
+    def test_deck_state_is_top_first(self):
+        d = Deck(random.Random(6))
+        d.shuffle()
+        d.deal(3)
+        rng, top_first = d.__getstate__()
+        self.assertIsInstance(rng, random.Random)
+        self.assertIsInstance(top_first, list)
+        self.assertEqual(top_first, list(d.remaining()))
+        self.assertEqual(Deck().__getstate__()[1], list(ALL_CARDS))
+
+    def test_deck_setstate_takes_top_first_list(self):
+        order = random.Random(9).sample(ALL_CARDS, 20)
+        d = Deck.__new__(Deck)
+        d.__setstate__((random.Random(1), list(order)))
+        self.assertEqual(list(d.remaining()), order)
+        self.assertEqual(len(d), 20)
+        self.assertEqual(d.deal_one(), order[0])
+        self.assertEqual(d.deal(2), order[1:3])
+        # The state list is copied, not aliased.
+        state_list = list(order)
+        e = Deck.__new__(Deck)
+        e.__setstate__((random.Random(1), state_list))
+        e.deal_one()
+        self.assertEqual(state_list, order)
 
 
 if __name__ == "__main__":
