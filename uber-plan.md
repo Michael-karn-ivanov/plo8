@@ -32,7 +32,7 @@ the engine and server as they are today.
 | 11 | Engine speed unknown; target 2,000 hands/s/core | Measured on this Mac (Python 3.14, random agents, no NN): **2-max 4.0k hands/s, 6-max 1.2k, 9-max 0.8k; ~30k decisions/s** in all three. `best_omaha` ≈ **125 µs** per player on the river. At 6-max, evaluator ≈ 36% and `table_view` ≈ 33% of the time | Speed-ups go into `//engine`: lazy views, faster evaluator (Phase 1A). Target set from the measured baseline |
 | 12 | `engine.remote` style IPC not mentioned | `engine/remote.py` runs agents in other processes over `multiprocessing` pipes | Not used for training: one IPC round trip per decision is far too slow. Ray moves *batches*, never single decisions |
 | 13 | Hand-written bots only inside the trainer | The engine's `Agent` protocol (`on_turn`) is what `cli_server` drives | Arena bots implement **both** the batched `Controller` and the engine `Agent` protocol. They can play inside training and also sit at `cli_server` (via `//bot_client`) against you in `cli_client` |
-| 14 | Python 3.12 venv, `pip install torch ray ...` | System Python 3.14, buck2 `system_demo_toolchains()`, no third-party packages anywhere | One project venv for the RL projects; buck2 runs with that interpreter (Phase 0). Pure engine projects stay dependency-free |
+| 14 | Python 3.12 venv, `pip install torch ray ...` | System Python 3.14; buck2 `system_demo_toolchains()`, which downloads its own CPython 3.13 and ignores any venv; no third-party packages anywhere | One Python 3.14 venv (`plo8/.venv`) for the RL projects; `toolchains/BUCK` points buck2's Python toolchain at it (Phase 0, done). Pure engine projects stay dependency-free |
 | 15 | Rake as an adapter option (Phase 7) | No rake in the engine; e2e cases have `"rake": 0` | Rake is a rules change, so it goes in `//engine` (spec change) if you ever need it |
 | 16 | Bot client and export at the very end | `cli_server` + `cli_client` already work | `//bot_client` comes right after Phase 2 (RuleBot at the real table) and Phase 3 (first neural bot). It's the fastest sanity check there is: you play it yourself |
 
@@ -277,19 +277,25 @@ taken apart on a toy problem before you write your own.
 
 ### 0a. Python and buck2
 
-- Pick the newest Python for which **both** torch and ray publish wheels for macOS arm64
-  and Linux x86_64. Check when you start; 3.12 is the safe choice. The system Python here
-  is 3.14, and numpy, torch and ray are not installed.
-- Create one venv for the repo (`plo8/.venv`, add it to `.gitignore`) and
-  `pip install -r requirements-rl.txt` (numpy, torch, ray[default], onnx, onnxruntime,
-  boto3, pyyaml, tensorboard, gymnasium for Phase 0 only). Pin exact versions.
-- buck2 currently uses `system_demo_toolchains()`, whose Python toolchain runs `python3`
-  from `PATH`. Either activate the venv before running buck2 (and `buck2 kill` after
-  switching, because the daemon keeps its environment), or replace the demo Python
-  toolchain in `toolchains/BUCK` with an explicit `system_python_toolchain` pointing at
-  the venv interpreter (check the attribute names in the bundled prelude's
-  `toolchains/python.bzl`). Either way, `entities`, `engine`, `cli_server` and
-  `cli_client` must keep passing with no third-party packages imported.
+Done (2026-11-17). What was set up:
+
+- **Python 3.14.** torch 2.15, ray 2.60 and onnxruntime 1.32 all publish cp314 wheels for
+  macOS arm64 and Linux x86_64, so the venv uses the system Python 3.14 rather than 3.12.
+  Re-check wheel availability for all three before moving to a newer Python.
+- **One venv for the repo**, `plo8/.venv` (in `.gitignore`):
+  `python3.14 -m venv .venv && .venv/bin/pip install -r requirements-rl.txt`.
+  `requirements-rl.txt` pins exact versions of numpy, torch, ray[default], onnx,
+  onnxruntime, boto3, PyYAML, tensorboard, and gymnasium (Phase 0 only).
+- **buck2 runs the venv interpreter.** The prelude's `system_demo_toolchains()` does *not*
+  use `python3` from `PATH`: its Python toolchain is `remote_python_toolchain`, which
+  downloads a standalone CPython 3.13, so activating a venv has no effect. `toolchains/BUCK`
+  therefore replaces the demo macro with an explicit, minimal set: `system_python_toolchain`
+  and `system_python_bootstrap_toolchain` with `interpreter = ".venv/bin/python"`, plus
+  `python_wheel`, `cxx`, `genrule`, `remote_test_execution` and `test`. Run `buck2 kill`
+  after recreating the venv. If a future project needs a language the demo set covered
+  (Rust, Go, Java, ...), add that toolchain to `toolchains/BUCK` explicitly.
+- `entities`, `engine`, `cli_server` and `cli_client` still pass `buck2 test //...` on this
+  interpreter and import no third-party packages.
 - Third-party packages are **not** modelled as buck2 targets in v1. The venv is the
   contract, and `requirements-rl.txt` is the single place versions are pinned. If you
   later want hermetic builds, wrap wheels with `prebuilt_python_library`.
@@ -298,11 +304,21 @@ taken apart on a toy problem before you write your own.
 
 - PyTorch "Learn the Basics" (tensors, `nn.Module`, the optimizer loop).
 - Spinning Up: "Intro to Policy Optimization" and the PPO page. Keep the intuition.
-- Clone CleanRL and run `ppo.py --env-id CartPole-v1`. Watch
-  `charts/episodic_return` climb towards 500 in TensorBoard.
+- Clone CleanRL and run `ppo.py --env-id CartPole-v1` (it also needs `tyro`; install it
+  outside the repo venv, e.g. `pip install --target <scratch>/deps tyro` and
+  `PYTHONPATH=<scratch>/deps`). Watch `charts/episodic_return` climb towards 500 in
+  TensorBoard.
+- CleanRL targets gymnasium 0.29; with gymnasium 1.x it trains but logs no returns.
+  Pass `autoreset_mode=gym.vector.AutoresetMode.SAME_STEP` to `SyncVectorEnv` (keeps
+  CleanRL's done handling correct) and read episode stats from
+  `infos["final_info"]["episode"]["r"][i]` for each `i` where
+  `infos["final_info"]["_episode"][i]` is true.
 - Read `ppo.py` top to bottom and break it on purpose, one change at a time: learning
   rate ×10, clip 10, entropy coefficient 0. These are the failure modes you'll later
-  diagnose in poker.
+  diagnose in poker. On CartPole none of the three visibly breaks the return curve (all
+  reach ~500 by 500k steps); the signatures show only in the diagnostics: lr ×10 gives
+  ~19× the `approx_kl` and a non-zero `clipfrac`, clip 10 never clips, entropy 0 lets
+  entropy fall fastest. Watch those, not just reward.
 
 | CleanRL `ppo.py` | plo8 |
 |---|---|
@@ -995,7 +1011,7 @@ RL requirements:
 
 ```dockerfile
 # trainer/infra/Dockerfile — build context is the repo root
-FROM rayproject/ray:<same-ray-version-as-requirements-rl.txt>-py3XX-gpu
+FROM rayproject/ray:<same-ray-version-as-requirements-rl.txt>-py314-gpu  # match the venv's Python; if no py314 image exists, use the nearest one and build the venv there
 COPY --chown=ray:users requirements-rl.txt /home/ray/plo8/
 RUN pip install --no-cache-dir -r /home/ray/plo8/requirements-rl.txt
 COPY --chown=ray:users . /home/ray/plo8

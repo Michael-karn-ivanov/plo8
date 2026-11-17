@@ -1,3 +1,54 @@
-load("@prelude//toolchains:demo.bzl", "system_demo_toolchains")
+# Explicit toolchains for plo8.
+#
+# The prelude's system_demo_toolchains() downloads its own CPython 3.13, so a venv on PATH
+# is ignored. We instead point the Python toolchain at the repo venv (plo8/.venv, see
+# requirements-rl.txt), so RL projects can import numpy/torch/ray. Projects without
+# third-party deps (entities, engine, cli_server, cli_client) run unchanged on it.
+#
+# Setup:  python3.14 -m venv .venv && .venv/bin/pip install -r requirements-rl.txt
+# After recreating the venv:  buck2 kill
 
-system_demo_toolchains()
+load("@prelude//toolchains:cxx.bzl", "system_cxx_toolchain")
+load("@prelude//toolchains:genrule.bzl", "system_genrule_toolchain")
+load("@prelude//toolchains:python.bzl", "system_python_bootstrap_toolchain", "system_python_toolchain", "system_python_wheel_toolchain")
+load("@prelude//toolchains:remote_test_execution.bzl", "remote_test_execution_toolchain")
+load("@prelude//tests:test_toolchain.bzl", "noop_test_toolchain")
+
+VENV_PYTHON = ".venv/bin/python"
+
+system_python_toolchain(
+    name = "python",
+    interpreter = VENV_PYTHON,
+    visibility = ["PUBLIC"],
+)
+
+system_python_bootstrap_toolchain(
+    name = "python_bootstrap",
+    interpreter = VENV_PYTHON,
+    visibility = ["PUBLIC"],
+)
+
+system_python_wheel_toolchain(
+    name = "python_wheel",
+    visibility = ["PUBLIC"],
+)
+
+system_cxx_toolchain(
+    name = "cxx",
+    visibility = ["PUBLIC"],
+)
+
+system_genrule_toolchain(
+    name = "genrule",
+    visibility = ["PUBLIC"],
+)
+
+remote_test_execution_toolchain(
+    name = "remote_test_execution",
+    visibility = ["PUBLIC"],
+)
+
+noop_test_toolchain(
+    name = "test",
+    visibility = ["PUBLIC"],
+)

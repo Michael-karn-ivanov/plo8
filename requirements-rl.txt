@@ -1,0 +1,13 @@
+# Pinned third-party dependencies for the RL projects (rl_env, arena, trainer, bot_client).
+# Install into the repo venv:  python3.14 -m venv .venv && .venv/bin/pip install -r requirements-rl.txt
+# Python 3.14: torch, ray and onnxruntime all publish macOS arm64 + Linux x86_64 wheels for cp314.
+numpy==2.5.5
+torch==2.15.0
+ray[default]==2.60.0
+onnx==1.23.2
+onnxruntime==1.32.0
+boto3==1.44.5
+PyYAML==6.0.3
+tensorboard==2.21.0
+# Phase 0 only (CleanRL CartPole warm-up)
+gymnasium==1.4.0
