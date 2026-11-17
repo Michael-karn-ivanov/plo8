@@ -78,6 +78,18 @@ class PickleTest(unittest.TestCase):
                 self.assertEqual(len(copy), len(d))
                 self.assertEqual(copy.remaining(), d.remaining())
 
+    def test_stacked_deck_keeps_order(self):
+        d = Deck(random.Random(4))
+        d.shuffle()
+        d.deal(2)
+        stack = [c for c in (Card.parse(t) for t in ("As", "Kd", "7h", "2c")) if c in d]
+        d.put_on_top(stack)
+        for proto in PROTOCOLS:
+            with self.subTest(protocol=proto):
+                copy = roundtrip(d, proto)
+                self.assertEqual(copy.remaining(), d.remaining())
+                self.assertEqual(copy.deal(len(stack)), stack)
+
     def test_deck_copy_is_independent_and_keeps_rng(self):
         d = Deck(random.Random(11))
         d.shuffle()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import random
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Union
 
 from .card import ALL_CARDS, Card
 from .hand import HAND_SIZE, Hand
@@ -49,7 +49,7 @@ class Deck:
     def deal_hand(self) -> Hand:
         return Hand(self.deal(HAND_SIZE))
 
-    def remove(self, cards: Iterable[Card]) -> None:
+    def remove(self, cards: Union[Card, Iterable[Card]]) -> None:
         """Remove known cards from the deck. All-or-nothing: on error the deck is unchanged."""
         if isinstance(cards, Card):
             cards = (cards,)
@@ -63,7 +63,33 @@ class Deck:
             seen.add(c)
         self._cards = [c for c in self._cards if c not in seen]
 
+    def put_on_top(self, cards: Union[Card, Iterable[Card]]) -> None:
+        """Stack the deck: move ``cards`` to the top, in the given order.
+
+        The first given card is dealt first; the other cards keep their relative
+        order. Every card must still be in the deck and be listed once.
+        All-or-nothing: on error the deck is unchanged. ``shuffle()`` and
+        ``reset()`` discard the stack.
+        """
+        if isinstance(cards, Card):
+            cards = (cards,)
+        stacked = list(cards)
+        stacked_set: set[Card] = set()
+        present = set(self._cards)
+        for c in stacked:
+            if not isinstance(c, Card):
+                raise TypeError(f"expected a Card, got {type(c).__name__}: {c!r}")
+            if c in stacked_set:
+                raise ValueError(f"card listed twice: {c}")
+            if c not in present:
+                raise ValueError(f"card not in deck: {c}")
+            stacked_set.add(c)
+        if not stacked:
+            return
+        self._cards = stacked + [c for c in self._cards if c not in stacked_set]
+
     def remaining(self) -> tuple[Card, ...]:
+        """The cards left, in deal order (top first)."""
         return tuple(self._cards)
 
     def reset(self) -> None:
