@@ -2,7 +2,9 @@
 
 A pure Python library (standard library only, no third-party dependencies) with
 the core value types the Omaha Hi-Lo 8-or-better game engine is built on: `Card`,
-`Hand`, `Board` (the shared cards: flop, turn, river) and `Deck`.
+`Hand`, `Board` (the shared cards: flop, turn, river) and `Deck`. The deck can be
+stacked (chosen cards put on top, in a given order) so recorded hands can be
+replayed.
 
 Hand evaluation (hi/lo ranking), betting, pot logic and game flow are out of
 scope. They belong to the game engine, which consumes these types.
@@ -112,6 +114,8 @@ The shared community cards, revealed in three stages.
 
 ### `Deck`
 A mutable 52-card deck. It is the only mutable type in the library.
+Internally it is a `list[Card]` whose front (index 0) is the top of the deck:
+cards are dealt from the front.
 - `Deck(rng: random.Random | None = None)` creates a full deck in `ALL_CARDS`
   order. A `random.Random` can be injected for reproducible shuffles; this is
   needed for RL experiment seeding and for tests.
@@ -121,9 +125,39 @@ A mutable 52-card deck. It is the only mutable type in the library.
 - `deal_one() -> Card`.
 - `deal_hand() -> Hand` deals 4 cards.
 - `remove(cards)` takes known cards (dead cards, or fixed hands for simulation)
-  out of the deck. Raises `ValueError` if a card is not present.
-- `__len__`, `__contains__`, `remaining() -> tuple[Card, ...]`.
+  out of the deck. Accepts a single `Card` or an iterable. Raises `ValueError` if
+  a card is not present or is listed twice. All-or-nothing: on error the deck is
+  unchanged.
+- `put_on_top(cards)` stacks the deck: moves the given cards, which must all
+  still be in the deck, to the top in the given order, so the first of them is
+  dealt first. See Stacking.
+- `__len__`, `__contains__`, `remaining() -> tuple[Card, ...]`. `remaining()`
+  lists the cards in deal order (top first).
 - `reset()` restores all 52 cards in canonical order. It does not shuffle.
+- Pickling: `__getstate__` / `__setstate__` carry the RNG and the card list (the
+  class uses `__slots__`), so a pickled deck keeps its order, including a
+  stacked top, and shuffles like the original would.
+
+### Stacking
+Used to replay recorded hands, e.g. the end-to-end tests of `//cli_server`,
+whose `StackedDeck` subclass shuffles and then stacks the recorded cards on top.
+- `put_on_top(cards: Card | Iterable[Card]) -> None`. A single `Card` is treated
+  as a one-card sequence, as in `remove`.
+- Validation, before anything changes (all-or-nothing, like `remove`): every
+  item is a `Card` (`TypeError` otherwise), no card is listed twice, and every
+  card is still in the deck (`ValueError` otherwise, naming the card). A card
+  that was already dealt or removed cannot be stacked.
+- Effect: `self._cards = stacked + [c for c in self._cards if c not in
+  stacked_set]`. The stacked cards come first, in the given order; the other
+  cards keep their relative order. An empty input leaves the deck unchanged.
+- Calling it again stacks the new cards above the current top (cards listed
+  again are moved, not duplicated), so the last call wins for ordering.
+- The stack is just the deck's current order: `deal` consumes it from the top,
+  and `shuffle()` or `reset()` discards it. Callers that reshuffle per hand
+  (as the engine does: `reset()` and `shuffle()` once per hand) stack again
+  after shuffling.
+- No new state is added, so `len`, `remaining()`, `__contains__` and pickling
+  need no changes.
 
 ## Changes requested by engine
 
@@ -134,6 +168,13 @@ methods, only one guaranteed property:
   `pickle` round-trips with equality and hashing preserved, because the engine sends
   hands, boards and cards to agent processes over `multiprocessing` connections.
 
+## Changes requested by cli_server
+
+`//cli_server`'s end-to-end test mode replays recorded hands with a `Deck`
+subclass passed to the engine. It needs `Deck.put_on_top(cards)` (see Stacking),
+because the card list is private. Subclasses must be able to override
+`shuffle()` and call `super().shuffle()` followed by `self.put_on_top(...)`.
+
 ## Build (buck2)
 
 `entities/BUCK`:
@@ -142,7 +183,8 @@ methods, only one guaranteed property:
 - `python_test(name = "entities_test", srcs = glob(["tests/*.py"]),
   deps = [":entities"])`.
 
-Other projects (the game engine, the RL code) depend on `//entities:entities`.
+Other projects (the game engine, the RL code, the e2e mode of `cli_server`)
+depend on `//entities:entities`.
 
 ## Testing
 
@@ -158,5 +200,20 @@ supports, and run with `buck2 test //entities:entities_test`.
 - **Deck:** a fresh deck has 52 unique cards; dealing reduces `len` and never
   repeats a card; overdealing raises; a seeded RNG gives the same order every
   time; `remove` and `reset` behave correctly.
+- **Stacking:**
+  - after `shuffle()` then `put_on_top([c1, c2, c3])`, `deal(3)` returns exactly
+    `[c1, c2, c3]`; `len` is unchanged by stacking; the rest of the deck keeps its
+    relative order and has no duplicates;
+  - a single `Card` argument works; an empty list is a no-op;
+  - stacking a card that was dealt or removed, a card listed twice, or a non-`Card`
+    raises, and the deck is unchanged afterwards (same `remaining()`);
+  - a second `put_on_top` puts its cards above the first stack and moves a card
+    listed in both instead of duplicating it;
+  - `shuffle()` and `reset()` discard the stack;
+  - a stack big enough for a whole hand (e.g. 4 players × 4 hole cards + 5 board
+    cards) deals in the given order;
+  - a subclass overriding `shuffle()` as `super().shuffle(); self.put_on_top(...)`
+    deals the stacked cards first after each `reset()` + `shuffle()`.
 - **Pickling:** `Card`, `Hand`, `Board`, `Street` and a partly dealt `Deck` round-trip
-  through `pickle` and compare equal (and hash equal) to the originals.
+  through `pickle` and compare equal (and hash equal) to the originals; a stacked
+  deck keeps its order through `pickle`.
