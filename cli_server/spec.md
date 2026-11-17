@@ -79,3 +79,14 @@ Clients (e.g. plo8/cli_client) are expected to render the table the way online p
 - while no hand is running, keeps connected clients informed about the lobby: how many active players are seated, how many are needed to start, and - while the graceful period is ticking - in how many seconds the game starts (re-sent whenever this changes);
 - pauses for a short, configurable time between hands, so players can see the showdown and the pot being awarded before the next hand starts.
 All these additions are optional for clients: a client that ignores them still plays correctly.
+
+Server can also support end-to-end testing mode. In this mode it gets 2 extra arguments into cli input:
+--e2e_test - flag, false when not passed
+--case - name of the file in ./e2e_test_sets - e.g. 12_heads_up_three_raises_preflop_bb_scoops. 
+If --case not passed when e2e_test passed - run e2e tests against all files in e2e_test_sets.
+In this mode server spins up server itself, but also spins up several very simple "client" processes (not like fully-functional cli_client-s). And it replays hand described in the file: i.e. emulating client decisions and also controlling which hands dealt to clients and which table is opened.
+What is asserted during each test replay:
+- all clients receive correct updates on information
+- stacks of the clients are correctly updated through the hand and at the end of it
+- winners correctly determined and pot correctly splitted
+So this mode is actual e2e test engine both for server (its api etc) and for game engine (in ../engine) itself.
