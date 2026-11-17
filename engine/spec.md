@@ -33,3 +33,33 @@ Players can explicitly leave the game, emptying their seat.
 
 Also, environment has a method for a new player to join the game. They select a seat (index from button, if not passed - they join as big blind) and stack (amount of blinds) they join with. Also let's all the players may have name (nick), which they set when join. 
 If player while round is in progress, they don't participate in game but are waiting in the queue for round to complete and get cards dealt starting new round.
+
+Step mode (driving a hand one decision at a time)
+
+Besides the callback mode above, the environment can play a hand in step mode, so that one process can run many tables side by side and decide for all of them in batches (reinforcement learning).
+* In step mode the environment does not call the acting player's turn callback. Instead it stops at each decision and hands it to the caller: which player is to act and that player's legal actions. On request (and only then) it also gives that player's table view - the same view the turn callback would have received, showing only that player's own hole cards.
+* The caller answers by submitting that player's action. The environment applies it and runs on to the next decision, or to the end of the hand if no decision is left.
+* Starting a hand in step mode does everything starting a round does today (deck reset and shuffle, blinds, deal) and stops at the first decision. If no decision is possible at all (for example everyone left in the hand is all-in after the blinds), the hand runs to the end straight away and the caller is told there is nothing to decide.
+* When the hand ends, the caller can read the hand result, and all end-of-hand processing has been done exactly as in callback mode: stacks updated, end-of-hand notifications and rebuy window, leave requests and join queue processed, button moved.
+* An illegal action submitted in step mode is rejected with an error and leaves the hand exactly as it was, so the caller can submit a legal action instead. The engine never folds or sits out a player for this in step mode, and there is no turn timeout, because the caller is in control.
+* Starting a hand while another hand is still in progress, or submitting an action when no decision is pending, is an error.
+* Everything else stays as in callback mode: other callbacks a player's agent has (hole cards, table events, end of hand) are still called if present, and the hand's events are recorded the same way.
+* Callback mode and step mode are interchangeable: for the same players, stacks, button, deck and sequence of actions, both produce identical events, identical hand results and identical final stacks, and the legal actions offered at each decision are identical. Callback mode keeps working exactly as today, so plo8/cli_server, plo8/cli_client and their tests and end-to-end cases are unaffected.
+* Step mode is deterministic: the same deck (same seed or same stacked cards), seating and actions always give the same events and results.
+* Table views are built only when someone needs them - when the step-mode caller asks for one, or when an agent actually has the callback that receives it - never just to be thrown away.
+
+Speed
+
+The engine must be fast enough to generate training data by self-play.
+* Target: at least 2,000 hands per second on one CPU core at a 6-player table, playing random legal actions in step mode, engine only (no neural network). Measured baseline before this change on the development Mac: about 4,000 hands/s heads-up, 1,230 at 6 players, 800 at 9 players, about 30,000 decisions/s; hand evaluation and building table views took roughly a third of the time each.
+* The project includes a benchmark tool (a buck2 binary, standard library only) that plays random legal actions on many tables (default 512) in step mode in one process and reports hands per second and decisions per second at 2, 6 and 9 players. Its numbers before and after each speed-up are recorded in plan.md.
+* Hand evaluation (best high hand, best qualifying low, best Omaha hand from 2 hole cards + 3 board cards) may be reimplemented for speed, but its results must stay exactly the same as the current implementation, checked against it on a large number of random hands.
+* Speed-ups must not change any rule, event, result or public behaviour described above.
+* If the target is not reached with pure Python, the remaining gap and the chosen next step (for example a native evaluator behind the same functions) are written down in plan.md.
+
+Acceptance for step mode and speed
+* Callback mode and step mode give identical events, legal actions, results and stacks for many random seeds, table sizes (2-10 players), stacks (including short stacks, all-ins and side pots) and action sequences.
+* An illegal step-mode action raises and leaves the state unchanged; a hand with no possible decision completes immediately with a full result.
+* Fuzz test: 100,000 random step-mode hands at random table sizes and stacks run without errors, and in every hand the players' net results sum to zero (there is no rake).
+* All existing tests of plo8/entities, plo8/engine, plo8/cli_server and plo8/cli_client still pass, and so do all end-to-end cases of plo8/cli_server.
+* The benchmark meets the target, or the gap and the next step are recorded in plan.md.
