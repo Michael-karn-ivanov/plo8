@@ -19,6 +19,7 @@ It exports several classes:
 3. Environment
     * collection of players, dealer and starting position of the button
     * environment exposes method to start new round - i.e. deck is reset, player hands are reset, flop/turn/river emptied, corresponding players place big and small blinds.
+    * environment can be created with a deck supplied by the caller (e.g. a stacked deck) and with a chip unit (number of chips per big blind), so a recorded hand can be replayed exactly - same cards, same odd-chip splits (used by end-to-end tests of plo8/cli_server). For that the order in which the dealer takes cards from the deck is fixed and documented: hole cards one at a time to each player starting left of the button, four rounds, then flop, turn and river, no burn cards.
 
 Library is designed this way that there will be several agents - like separate processes. 
 They will share environment and dealer and will "play" at the table: i.e. each player can see their hand and each player will be responsible for its own actions.
