@@ -12,5 +12,6 @@ In each project folder, plan.md defines how this specification should be impleme
 2. Suggest code changes to implement changes in plan.md.
 - if you create project from scratch, create BUCK file and define tests and project artifacts in it
 3. After you update code, also update or create unit tests in /tests subfolder. Ensure tests pass.
+3a. If you changes implementation of cli_server or engine or entities - ensure e2e tests pass also
 
 Do not commit or amend changes - let me preview those and make corrections if needed.
