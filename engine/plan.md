@@ -33,6 +33,7 @@ engine/
     test_betting.py
     test_dealer.py
     test_environment.py
+    test_replay.py
     test_events.py
     test_join.py
     test_sit_out.py
@@ -56,11 +57,23 @@ Run: `buck2 build //engine:engine`, `buck2 test //engine/...`.
 Stacks are expressed in big blinds as the spec requires, but stored internally as
 integer chips to avoid float rounding in pot splits:
 
-- `CHIPS_PER_BB = 100` (configurable on `Environment`); small blind = 50 chips, big blind = 100.
+- The chip unit is `chips_per_bb` on `Environment` (default `100`): BB = `chips_per_bb`
+  chips, SB = `chips_per_bb // 2`, small bet = `chips_per_bb`, big bet =
+  `2 * chips_per_bb`. It must be an even `int` ≥ 2 (`ValueError` otherwise), so the SB
+  is exactly half the BB and half a bet unit (the all-in reopening threshold) is a whole
+  number of chips.
+- Every chip computation — blinds, bets, pots, side pots, hi/lo halves and odd chips —
+  is done in these integer chips. A caller that replays a hand recorded in chips sets
+  `chips_per_bb` to the recording's big blind, so engine chips are the recording's
+  chips and odd-chip splits come out exactly as recorded (with the default 100 a
+  1-chip odd chip of the recording would not exist or land elsewhere).
 - `Player.stack` (float, in BB) is a property over `Player._chips` (int).
 - All public amounts (`rebuy`, `join`, views, events, `LegalActions`) accept/return BB;
-  conversion is done in one place (`to_chips` / `to_bb` helpers) and amounts are rounded
-  to whole chips.
+  conversion is done in one place (`Dealer.to_chips` / `Dealer.to_bb`, using the table's
+  `chips_per_bb`) and incoming amounts are rounded to whole chips. An amount that
+  rounds to 0 chips is rejected like any non-positive amount.
+- `Environment.chips_per_bb`, `Dealer.small_blind` and `Dealer.big_blind` (in chips) are
+  readable, so hosts can report the table settings.
 - Bet sizes are fixed by the limit structure (see Actions), so agents never pass a bet
   amount.
 
@@ -71,18 +84,22 @@ library (`from entities import Card, Rank, Suit, Hand, Board, Street, Deck`):
 - `Card`, `Rank`, `Suit` — immutable cards; `Rank` values 2..14 give high-hand order and
   `Rank.low_value` (ace = 1) gives 8-or-better low order.
 - `Hand` — a player's 4 hole cards. The dealer deals one card at a time to each player
-  (`Deck.deal_one()`), then builds a `Hand` from each player's 4 cards.
+  (`Deck.deal_one()`), then builds a `Hand` from each player's 4 cards, in the order
+  they were received.
 - `Board` / `Street` — the dealer's board is an immutable `Board`, replaced street by
   street via `with_flop` / `with_turn` / `with_river`; `Board.street` is the street
   reported in `TableView`.
-- `Deck` — the dealer owns one `Deck(rng)` (seeded `random.Random` from `Environment`).
-  A new hand calls `deck.reset()` then `deck.shuffle()` (`reset()` does not shuffle).
+- `Deck` — the dealer owns one deck for the life of the table: either the deck passed
+  to `Environment(deck=...)` (any `Deck` instance, including subclasses such as a
+  stacked deck) or, by default, `Deck(random.Random(seed))`. How the dealer uses it is
+  a fixed contract, see Dealer → Deck use and deal order.
   No burn cards are dealt: with an RNG-shuffled deck that no agent can see, burning has
-  no effect on fairness or odds.
+  no effect on fairness or odds, and it keeps the deal order simple for replays.
 - All of these are picklable, so they can be sent to agent processes as-is.
 
-No changes to `entities` are needed beyond guaranteed pickling (see
-`entities/plan.md`, "Changes requested by engine").
+`entities` already provides everything needed: guaranteed pickling (see
+`entities/plan.md`, "Changes requested by engine") and `Deck.put_on_top`, which callers
+use to build stacked decks (the engine itself does not call it).
 
 ## Hand evaluation (`evaluator.py`)
 
@@ -255,7 +272,7 @@ Snapshots handed to agents so they cannot mutate engine state or see others' car
 
 ## Pots (`pots.py`)
 
-- Contributions are tracked per player via `total_bet`.
+- Contributions are tracked per player via `total_bet` (in chips).
 - `build_pots(players) -> list[Pot]`: sort distinct contribution levels of all players
   (including folded ones — their chips stay in the pot), create one pot per level;
   each `Pot` has `amount` and `eligible` = non-folded players who contributed at that
@@ -265,8 +282,10 @@ Snapshots handed to agents so they cannot mutate engine state or see others' car
   - If any eligible player has a qualifying low: half to best high (ties split),
     half to best low (ties split); a player can scoop both halves.
   - Otherwise the whole pot goes to best high.
-  - Odd chips: the odd chip from halving goes to the high half; odd chips within a
-    tied half go to the first winner(s) left of the button.
+  - Odd chips (in the table's chip unit, see Units / chips): the odd chip from halving
+    goes to the high half; odd chips within a tied half go to the first winner(s) left
+    of the button. These rules are deterministic, so a replayed hand splits exactly as
+    recorded.
   - Returns the individual shares so the dealer can credit them one by one and emit a
     `PotAwarded` per share.
 
@@ -277,22 +296,54 @@ counter, the current hand's event history and an `in_hand` flag (true from the s
 of `play_hand()` until end-of-hand processing is done). The dealer sees all seated
 players but deals in only `ACTIVE` ones; the participants of a hand are fixed when it
 starts (`hand_players`). Waiting players are kept by the `Environment`. The dealer
-emits events through a broadcast function supplied by the `Environment`.
+emits events through a broadcast function supplied by the `Environment`. It also holds
+the chip unit (`small_blind`, `big_blind` in chips, `to_chips` / `to_bb`).
 
 Hand flow (`Dealer.play_hand()`):
-1. **Start**: emit `HandStarted`.
+1. **Start**: prepare the deck (`reset()` + `shuffle()`, see below), emit `HandStarted`.
 2. **Preflop**: post SB and BB (short stacks post all-in), emitting `BlindPosted` for
-   each; deal 4 hole cards to each participant one at a time starting left of the
-   button; once all are dealt, call `on_hole_cards` for each participant (seat order,
-   starting left of the button) — before any betting. Betting starts left of BB
-   (heads-up: button is SB and acts first preflop, last postflop). SB/BB are the first
-   and second `ACTIVE` players clockwise from the button; sitting-out seats are skipped
-   for blinds, dealing and action.
+   each; deal the hole cards in the documented deal order (below); once all are dealt,
+   call `on_hole_cards` for each participant (seat order, starting left of the
+   button) — before any betting. Betting starts left of BB (heads-up: button is SB and
+   acts first preflop, last postflop). SB/BB are the first and second `ACTIVE` players
+   clockwise from the button; sitting-out seats are skipped for blinds, dealing and
+   action.
 3. **Flop**: deal 3 board cards (`BoardDealt`), betting starts at first active player
    left of the button.
 4. **Turn**: deal 1 card (`BoardDealt`), betting round.
 5. **River**: deal 1 card (`BoardDealt`), betting round.
 6. **Showdown**: if ≥ 2 non-folded players remain.
+
+### Deck use and deal order (contract)
+
+How the dealer consumes the deck is part of the engine's public contract, so that a
+caller-supplied deck (e.g. a stacked deck replaying a recorded hand) produces exactly
+the intended hole cards and board:
+- **Once per hand**, before any card is dealt, the dealer calls `deck.reset()` and then
+  `deck.shuffle()` — exactly once each, in that order, on the deck object itself (no
+  copy), so a subclass that overrides `shuffle()` (e.g. `super().shuffle()` followed by
+  `self.put_on_top(script)`) controls the top of the deck for that hand.
+- **During the hand** the dealer only calls `deck.deal_one()`, one card at a time from
+  the top. It never calls `deal(n)`, `remove`, `put_on_top`, `shuffle` or `reset`
+  mid-hand, and never looks at cards without dealing them.
+- **Hole cards**: four rounds; in each round one card to every participant, clockwise,
+  starting with the first participant left of the button and ending with the button.
+  Sitting-out seats are skipped. Heads-up this means the BB (left of the button)
+  receives the first card and the button/SB the second. A player's `Hand` lists the
+  cards in round order (card *k* of the hand is the card from round *k*).
+- **Board**: then the flop (next 3 cards, in that order as the `Board.flop` tuple), the
+  turn (next card) and the river (next card). **No burn cards.** The same order is used
+  when the board is run out after all-ins.
+- Streets that are not reached (hand ends by folds) are not dealt; their cards stay in
+  the deck.
+- Resulting positions, with `n` participants counted from the left of the button
+  (participant `0` = first left of the button, `n-1` = the button): deck card `i`
+  (0-based, top first) for `i < 4n` goes to participant `i % n` as hole card `i // n`;
+  cards `4n`, `4n+1`, `4n+2` are the flop, `4n+3` the turn, `4n+4` the river.
+
+The deal order is documented in the module docstring of `dealer.py` and covered by
+`test_replay`; changing it is a breaking change for callers that stack decks
+(e.g. the end-to-end tests of `//cli_server`).
 
 Betting round (`_betting_round(street)`):
 - Reset `street_bet`/`has_acted` (except blinds preflop which count as bets).
@@ -335,20 +386,33 @@ End of hand (in this order):
 
 ## Environment (`environment.py`)
 
-- `Environment(players=(), button=0, chips_per_bb=100, seed=None, max_buy_in=None,
-  max_seats=10, action_timeout=600.0)` — owns the `Dealer`, the seated player list and the join queue.
+- `Environment(players=(), button=0, chips_per_bb=100, seed=None, deck=None,
+  max_buy_in=None, max_seats=10, action_timeout=600.0)` — owns the `Dealer`, the seated
+  player list and the join queue.
   Seated players (`ACTIVE` and `SITTING_OUT`) are kept in clockwise order;
   `Player.seat` is the index in that list. Initial `players` are seated directly
   (each must have a positive stack; unnamed ones get a default name). With no initial
   players there is no button and no game until two players have joined (see Joining);
   `button` is then ignored, and `action_timeout` (default 600 s) sets the turn timeout.
+- `chips_per_bb` — the chip unit (see Units / chips): even `int` ≥ 2, `ValueError`
+  otherwise. Fixed for the life of the table.
+- `deck` — optional `entities.Deck` instance (subclasses allowed, e.g. a stacked deck)
+  used by the dealer for every hand of this table, following Dealer → Deck use and deal
+  order; anything that is not a `Deck` raises `TypeError`. When omitted, the
+  environment creates `Deck(random.Random(seed))`. When a deck is given, `seed` is not
+  used for dealing (the supplied deck brings its own RNG); the deck is not copied, so
+  the caller keeps control over it.
+- Together, `deck` and `chips_per_bb` let a caller replay a recorded hand exactly: same
+  hole cards and board (stacked deck + documented deal order) and the same odd-chip
+  splits (chip unit = the recording's big blind). Seat order and button come from the
+  usual seating rules (initial `players` + `button`, or the join rules below).
 - Owns event broadcasting (`_broadcast`, see Events) and the per-table `seq` counter;
   the dealer and the join / leave / rebuy / sit-out bookkeeping all go through it.
-- `start_round()` — begins a new hand: resets the deck (shuffle), clears hole cards
-  and per-hand player state and the hand's event history, empties flop/turn/river and
-  pots, has SB/BB players post blinds, then lets the dealer run the hand with the
-  `ACTIVE` players. Returns the `HandResult`. After the hand, processes leave requests
-  and the join queue.
+- `start_round()` — begins a new hand: resets and shuffles the deck (once, see Dealer →
+  Deck use and deal order), clears hole cards and per-hand player state and the hand's
+  event history, empties flop/turn/river and pots, has SB/BB players post blinds, then
+  lets the dealer run the hand with the `ACTIVE` players. Returns the `HandResult`.
+  After the hand, processes leave requests and the join queue.
 - Requires 2–`max_seats` `ACTIVE` players to start a hand; otherwise raises
   `NotEnoughPlayersError` (sitting-out players do not count).
 - `run(n_hands)` convenience loop; stops early when fewer than two `ACTIVE` players
@@ -452,6 +516,8 @@ Concurrency:
   guarded by a `threading.Lock`, so a host thread that accepts agent connections can
   call `join` / `leave` while the dealer is running a hand. Callbacks are invoked
   outside the lock.
+- Only the dealer's thread touches the deck (one reset + shuffle per hand, then
+  `deal_one()`), so a supplied deck does not need its own locking.
 
 ## Multi-agent / separate processes (`remote.py`)
 
@@ -488,9 +554,9 @@ The engine itself is single-threaded and runs in one host process that owns the
 
 ## Tests
 
-- Card, hand, board and deck behaviour is tested in `//entities`; engine tests only
-  cover how the dealer uses them (no card dealt twice in a hand,
-  same seed gives the same hand).
+- Card, hand, board and deck behaviour (including `put_on_top`) is tested in
+  `//entities`; engine tests only cover how the dealer uses them (no card dealt twice
+  in a hand, same seed gives the same hand, the deal-order contract in `test_replay`).
 - `test_evaluator`: category ordering, wheel straight, exactly-2-hole-cards rule
   (e.g., four flush cards on board + one in hand is not a flush), low qualification,
   counterfeited lows, A-2 low vs A-3 low.
@@ -506,7 +572,27 @@ The engine itself is single-threaded and runs in one host process that owns the
 - `test_environment`: `start_round` resets deck/hands/board and posts blinds; rebuy
   callback is called after every hand and rebuy increases stack; rebuy during betting
   is rejected; default and duplicate names; `NotEnoughPlayersError` with < 2 active
-  players.
+  players; `chips_per_bb` that is odd, < 2 or not an `int`, and a `deck` that is not a
+  `Deck`, are rejected.
+- `test_replay` (supplied deck and chip unit):
+  - a recording `Deck` subclass sees exactly one `reset()` followed by one `shuffle()`
+    per hand, before any card is dealt, and only `deal_one()` calls during the hand;
+    the same deck object is used for every hand of the table;
+  - a stacked deck (subclass whose `shuffle()` calls `super().shuffle()` then
+    `put_on_top(script)`) deals exactly the scripted cards: for 2 (heads-up: BB gets
+    the first card), 3 and 6 participants, with the button not on seat 0 and with a
+    sitting-out seat that is skipped, every player's `Hand` (in round order) and the
+    flop / turn / river equal the positions given by the deal-order formula; the same
+    holds for an all-in run-out; a hand that ends preflop deals no board cards;
+  - over several hands with the same stacked deck, each hand deals its own script
+    (the overridden `shuffle()` runs once per hand and restacks);
+  - with `chips_per_bb = 2` (and e.g. 10): blinds are 1 / 2 chips (0.5 / 1 BB in
+    events), bet sizes scale accordingly, a split pot with an odd chip and a tied low
+    awards the odd chips per the odd-chip rules in those units, and stacks in events
+    and `HandResult` equal `chips / chips_per_bb`;
+  - replaying the same scripted hand (same deck script, chip unit, seating and agent
+    actions) on two fresh environments gives identical event streams and identical
+    `HandResult`s.
 - `test_events`: every participant gets `on_hole_cards` with exactly its own 4 cards
   after the blinds and before the first `on_turn` of the hand, sitting-out players do
   not; every seated player (actor included, sitting-out included, waiting excluded)
