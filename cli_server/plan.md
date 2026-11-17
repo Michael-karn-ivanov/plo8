@@ -7,6 +7,11 @@ players are seated, then waits a grace period after the last join before the fir
 hand. After that it plays hands for as long as at least two players are active, with a
 short pause between hands so players can see the showdown.
 
+The same binary also has an end-to-end test mode (`--e2e_test`). It replays recorded
+hands from `cli_server/e2e_test_sets/*.json` through a real server and real client
+processes, and checks what every client receives against the recording (see End-to-end
+test mode).
+
 The server holds no poker rules of its own. Table logic (seating, waiting queue,
 blinds, betting, showdown, rebuy window, sitting out, leaving, action timeout) is the
 engine's `Environment` / `Dealer`. Remote play goes through the engine's `RemoteAgent`
@@ -16,7 +21,9 @@ and `handle_join`. This project adds:
 - a language-neutral JSON wire format;
 - the lobby / grace-period loop and the pause between hands;
 - the extra information clients need to draw the table like an online poker room:
-  table settings on join, "whose turn it is" notifications, and lobby status.
+  table settings on join, "whose turn it is" notifications, and lobby status;
+- the e2e replay engine: case loader, stacked deck, scripted client processes and the
+  checker.
 
 ## Layout
 
@@ -25,18 +32,33 @@ cli_server/
   spec.md
   plan.md
   BUCK
+  e2e_test_sets/
+    12_heads_up_three_raises_preflop_bb_scoops.json
+    ...                # one recorded hand per file
   cli_server/
     __init__.py
     main.py          # command line parsing, logging, signal handling, entry point
     protocol.py      # JSON-lines framing; encode/decode of engine types and messages
     session.py       # ClientSession: one joined client; the `conn` given to RemoteAgent
     server.py        # GameServer: request listener, session registry, lobby, game loop
+    e2e/
+      __init__.py
+      case.py        # Case: load and validate a test-set file
+      deck.py        # StackedDeck: deals the case's cards in the engine's deal order
+      expect.py      # builds what every client is expected to receive
+      client.py      # the scripted client process (`python -m cli_server.e2e.client`)
+      driver.py      # runs one case: server + client processes; runs all cases
+      check.py       # compares client transcripts with the expectations
   tests/
     fake_client.py   # test helper: a scripted TCP client with its own callback port
     test_protocol.py
     test_session.py
     test_server.py
     test_main.py
+    test_e2e_case.py
+    test_e2e_deck.py
+    test_e2e_check.py
+    test_e2e_cases.py  # runs every file in e2e_test_sets through the driver
 ```
 
 ## Build (buck2)
@@ -48,22 +70,31 @@ cli_server/
   depending on the server.
 - `python_library(name = "cli_server_lib", srcs = ["cli_server/session.py",
   "cli_server/server.py", "cli_server/main.py"], base_module = "",
-  deps = [":protocol", "//engine:engine"], visibility = ["//cli_client/..."])`. The
+  deps = [":protocol", ":e2e", "//engine:engine"], visibility = ["//cli_client/..."])`. The
   client's integration test runs an in-process `GameServer`.
+- `python_library(name = "e2e", srcs = glob(["cli_server/e2e/*.py"]), base_module = "",
+  resources = glob(["e2e_test_sets/*.json"]), deps = [":protocol", "//engine:engine",
+  "//entities:entities"])`. The JSON files are resources, so they sit next to the
+  `cli_server` package in the built binary. `driver.py` finds them at
+  `Path(__file__).resolve().parents[2] / "e2e_test_sets"`. `driver.py` imports
+  `GameServer` lazily, inside the function that runs a case, so `:e2e` does not depend on
+  `:cli_server_lib` at import time and there is no dependency cycle.
 - `python_binary(name = "cli_server", main_module = "cli_server.main",
   deps = [":cli_server_lib"])`.
 - `python_test(name = "cli_server_test", srcs = glob(["tests/*.py"]),
   base_module = "cli_server_tests", deps = [":cli_server_lib"])`. Tests use `unittest`
-  and the standard library only (`socket`, `socketserver`, `threading`, `json`).
+  and the standard library only (`socket`, `socketserver`, `threading`, `json`,
+  `subprocess`).
 
-Run: `buck2 run //cli_server:cli_server -- --port 8008`, `buck2 test //cli_server/...`.
+Run: `buck2 run //cli_server:cli_server -- --port 8008`,
+`buck2 run //cli_server:cli_server -- --e2e_test [--case NAME]`, `buck2 test //cli_server/...`.
 
 ## Command line (`main.py`)
 
 ```
 cli_server [--port PORT] [--grace-period SECONDS] [--action-timeout SECONDS]
            [--hand-pause SECONDS] [--max-seats N] [--max-buy-in BB] [--seed N]
-           [--log-level LEVEL]
+           [--log-level LEVEL] [--e2e_test [--case NAME]]
 ```
 - `--port` (spec: "port number"): TCP port the server listens on for client calls.
   Default `8008`. `0` picks a free port. The actual port is logged at startup.
@@ -76,6 +107,19 @@ cli_server [--port PORT] [--grace-period SECONDS] [--action-timeout SECONDS]
 - `--hand-pause` (spec: "time between hands"): default `3` seconds. Must be ≥ 0; `0`
   disables the pause. Tests use `0` or a fraction of a second.
 - `--max-seats`, `--max-buy-in`, `--seed`: passed to `Environment`.
+- `--e2e_test` (spec): a flag, false when not passed. Runs the end-to-end test mode
+  instead of serving a game. `--e2e-test` is accepted as an alias.
+- `--case NAME` (spec): a file in `e2e_test_sets`, with or without `.json` (e.g.
+  `12_heads_up_three_raises_preflop_bb_scoops`). Without `--case`, every `*.json` file
+  in `e2e_test_sets` is run, sorted by name. `--case` without `--e2e_test`, or a name
+  that has no file, is an argument error (exit status 2; the unknown-name message lists
+  the available cases).
+- In e2e mode `--port`, `--grace-period`, `--hand-pause`, `--max-seats` and
+  `--max-buy-in` are not used: every case gets its own server on a free port, with the
+  settings the case needs (see Running a case). `--action-timeout` defaults to 10 s in
+  this mode, so a stuck replay fails quickly; an explicit value is used as given.
+  `--seed` (default `0` in this mode) seeds the shuffle that fills the cards the case
+  does not fix, so runs are reproducible. `--log-level` applies as usual.
 - Invalid values (negative times, non-numbers, a port outside `0..65535`) are rejected
   by `argparse` with exit status 2.
 - The server binds to `127.0.0.1` only, because server and clients share a host (spec).
@@ -85,7 +129,8 @@ cli_server [--port PORT] [--grace-period SECONDS] [--action-timeout SECONDS]
 - SIGINT / SIGTERM: stop accepting requests. If a hand is running, the interrupt
   aborts it in the main thread (the engine's `_abort_hand` refunds the bets). A lobby
   wait or a pause between hands is woken up and ends at once. Then send `close` to
-  every session and exit 0.
+  every session and exit 0. In e2e mode an interrupt stops the current case, kills its
+  client processes, prints the report so far and exits 1.
 
 ## Wire protocol (`protocol.py`)
 
@@ -166,7 +211,7 @@ Informational messages generated by the server itself (no reply, optional for cl
 | `type` | fields | when |
 |---|---|---|
 | `acting` | `hand_number`, `seat`, `name`, `timeout` | a player has been asked to act. Sent to every other seated player (active and sitting out), not to the actor, who gets `turn`. `timeout` is the seconds the actor has, counted from now |
-| `lobby` | `state`, `active`, `needed`, `starts_in` | no hand is running (see Lobby status). `state` is `"waiting"` (not enough players), `"starting"` (grace period ticking) or `"next_hand"` (pause between hands). `active` = number of `ACTIVE` seated players with chips, `needed` = 2 (engine `MIN_PLAYERS`), `starts_in` = seconds until the next hand starts, or null while waiting |
+| `lobby` | `state`, `active`, `needed`, `starts_in` | no hand is running (see Lobby status). `state` is `"waiting"` (not enough players), `"starting"` (grace period ticking) or `"next_hand"` (pause between hands). `active` = number of `ACTIVE` seated players with chips, `needed` = the server's `required_players` (2, the engine's `MIN_PLAYERS`, outside e2e mode), `starts_in` = seconds until the next hand starts, or null while waiting |
 
 Clients must answer `turn` and `hand_end` promptly. The dealer waits for each answer,
 up to `action_timeout`. A missing answer to `turn` folds the hand and sits the player
@@ -258,10 +303,21 @@ messages and poke the lobby (see Concurrency).
 
 ## GameServer (`server.py`)
 
-`GameServer(port, grace_period, hand_pause, env_kwargs)` owns the `Environment`, the
-`TableSettings`, the request listener, the session registry (`dict[name,
-ClientSession]`, guarded by `registry_lock`) and the lobby `threading.Condition` with a
-`generation` counter.
+`GameServer(port, grace_period, hand_pause, env_kwargs, required_players=MIN_PLAYERS,
+max_hands=None)` owns the `Environment`, the `TableSettings`, the request listener,
+the session registry (`dict[name, ClientSession]`, guarded by `registry_lock`) and the
+lobby `threading.Condition` with a `generation` counter.
+- `env_kwargs` is passed to `Environment(...)` as is. Besides the command-line values
+  it may carry `chips_per_bb` and `deck`; the e2e driver uses both.
+- `required_players` (≥ `MIN_PLAYERS`): the number of active players needed before the
+  grace period starts. The command line always uses `MIN_PLAYERS` (spec: 2 players).
+  The e2e driver sets it to the number of players in the case, so the hand starts only
+  once all of them have joined, whatever the join timing.
+- `max_hands`: when set, `serve_forever()` returns after that many hands have been
+  played (the sessions are left open; `shutdown()` closes them). The command line never
+  sets it; the e2e driver uses `1`.
+- `port` / `settings` are readable after construction (the actual port when `0` was
+  given).
 
 ### Request listener
 A `socketserver.ThreadingTCPServer` on `127.0.0.1:port` (`allow_reuse_address`,
@@ -328,7 +384,7 @@ clear the highlight.
 ### Lobby status (`lobby`)
 `_lobby_status() -> LobbyStatus(state, active, needed, deadline)` is computed by the
 main thread from `env` (never under the lobby condition):
-- `active = len(env.active_players)`, `needed = MIN_PLAYERS`;
+- `active = len(env.active_players)`, `needed = required_players`;
 - LOBBY with `active < needed` → `"waiting"`, no deadline;
 - LOBBY with `active >= needed` → `"starting"`, deadline = `last_arrival +
   grace_period`;
@@ -345,6 +401,7 @@ on `hand_started`.
 
 ### Lobby and game loop (main thread)
 ```
+hands = 0
 while not stopping:
     while not stopping:                          # LOBBY: no hand is running
         status = lobby_status()                  # reads env, outside cond
@@ -358,6 +415,9 @@ while not stopping:
             env.start_round()                    # blocks while clients act
         except NotEnoughPlayersError:
             break
+        hands += 1
+        if max_hands is not None and hands >= max_hands:
+            return                               # e2e: one hand per case
         if hand_pause > 0 and env.can_start():   # PAUSE between hands
             pause_until = monotonic() + hand_pause
             publish_lobby(next_hand status)
@@ -365,8 +425,9 @@ while not stopping:
     log("waiting for players")                   # < 2 active players: back to LOBBY
 ```
 - At startup the server is in LOBBY. Nothing happens until two players are seated
-  (`env.can_start()`: two or more `ACTIVE` players with chips). Clients see
-  `lobby` `"waiting"` with `active` 0/1.
+  (`env.can_start()`: two or more `ACTIVE` players with chips) and, with
+  `required_players` above two, until that many are active. Clients see `lobby`
+  `"waiting"` with `active` 0/1.
 - `last_arrival` is set on every accepted join, and on a rebuy or sit-in that brings
   a player back while in LOBBY, so the grace period is always counted from the last
   player who arrived. Each new arrival restarts the grace period and publishes a new
@@ -403,6 +464,8 @@ while not stopping:
   calling into the engine.
 - `stopping` is set by the signal handler, which also pokes the condition so a lobby
   wait or a pause ends at once (the pause sleeps with `wait_for_poke` too).
+- `serve_forever()` may run on a thread other than the main thread (the e2e driver
+  does this). Then signals are not involved and `stop()` sets `stopping` and pokes.
 
 ## How the spec's example maps to messages
 - Join: response with `queued`, `seat` and `table` (blinds, bet sizes, seats, max
@@ -429,13 +492,200 @@ while not stopping:
 - "Server starts 2nd round": after the `hand_end` replies, `lobby` `"next_hand"` with
   `starts_in = hand_pause`, then after the pause `event` `hand_started`.
 
+## End-to-end test mode (`cli_server/e2e/`)
+
+`cli_server --e2e_test [--case NAME]` replays recorded hands through the real server
+(`GameServer`, the wire protocol, `ClientSession`, `RemoteAgent`) and the real engine.
+Each player in the hand is a separate, very simple client process. It plays the
+recorded decisions and records everything it receives. The cards come from the
+recording: the deck is stacked. Afterwards the transcripts are checked against what
+the recording says every client must have seen. One case = one file = one hand,
+played on a fresh server.
+
+### Case files (`e2e_test_sets/*.json`, `case.py`)
+A case is one recorded hand, as in `12_heads_up_three_raises_preflop_bb_scoops.json`:
+- `hand_id`, `description`: used only for logging and the report.
+- `game`: `variant` (`"omaha_hi_lo_8"`), `betting` (`"fixed_limit"`), `unit`
+  (`"chips"`), `blinds {sb, bb}`, `small_bet`, `big_bet`, `cap_raises`, `rake`.
+- `players`: `id` (the player's name), `seat` (table seat number; only the clockwise
+  order matters), `stack` (chips), `hole` (4 cards or null when unknown).
+- `button`: `id` of the button player. `hero` is ignored (every player is replayed).
+- `streets`: `street` (`preflop` / `flop` / `turn` / `river`), `board` (the cards
+  dealt on that street: 0 / 3 / 1 / 1), `actions` (`player`, `action` in `post_sb`,
+  `post_bb`, `fold`, `check`, `call`, `bet`, `raise`; `amount` = chips put in by this
+  action, `to` = the player's street bet after it; both optional for fold / check),
+  `pot_after`.
+- `showdown`: `player`, `hole`, `mucked`, `hi` / `lo` (category and cards; for the
+  reader, not checked: the engine reports hands, not hand names).
+- `pots`: `type` (`main` / `side`), `amount`, `eligible`, `hi {winners, amount}`, `lo
+  {winners, amount} | null`, `odd_chips`, `awards {id: chips}`.
+- `result`: `ended_by` (`"showdown"` / `"fold"`), `net {id: chips}`, `final_stacks {id:
+  chips}`.
+
+`load_case(path) -> Case` parses the file into frozen dataclasses (`Case`,
+`CasePlayer`, `CaseStreet`, `CaseAction`, `CasePot`, `CaseResult`) and validates it.
+A file that fails validation is reported as an ERROR (a bad test, not a failed test)
+with the reason. Checks:
+- the game is the one the engine plays: `variant` `omaha_hi_lo_8`, `betting`
+  `fixed_limit`, `unit` `chips`, `rake` 0, `sb * 2 == bb`, `small_bet == bb`,
+  `big_bet == 2 * bb`, `cap_raises == 4` (read as the engine's cap of four bets per
+  street: a bet and three raises, the big blind counting as the bet preflop);
+- 2 to 10 players with unique ids and seats and positive stacks; `button` is one of
+  them;
+- all cards parse (`Card.parse`), each known hole has 4 cards, the boards have 3 / 1
+  / 1 cards, and no card appears twice in the case (a hole listed both in `players`
+  and in `showdown` must be the same hand);
+- every player at showdown has known hole cards (unknown cards are random, and a
+  random hand could change the result);
+- actions name known players; preflop starts with `post_sb` and `post_bb`; `bet` only
+  when nobody has bet on the street yet; the running sums of `amount` agree with `to`,
+  `pot_after`, the stacks, `net` and `final_stacks` (`final_stack = stack + net`, the
+  nets sum to 0); for each pot `awards` sum to `amount`.
+
+### Seating: case seats → engine seats
+The engine numbers seats clockwise from 0 and has no gaps. The driver orders the case
+players clockwise by `seat`, starting with the button player. The k-th of them (k = 0
+is the button) gets engine seat k:
+- the button player joins first, at an empty table, and takes the button (engine
+  rule);
+- the second joins next and is seated after them (engine rule for a one-player
+  table);
+- the k-th (k ≥ 2) joins with `seat = k`, the offset "right of the button" with k
+  players seated, so it lands at the end of the clockwise list.
+
+The driver waits for each join response before starting the next client, so the join
+order is fixed. With `required_players = n` and `grace_period = 0`, the hand starts
+right after the last join, with the button on engine seat 0. The engine then picks the
+blinds: heads-up the button is SB, otherwise the next two players. Case validation
+checks that the `post_sb` / `post_bb` players agree.
+
+### Stacked deck (`deck.py`)
+`StackedDeck(script: Sequence[Card | None], rng)` is an `entities.Deck` subclass. It
+is passed to the engine as `Environment(deck=...)`. `script` lists the cards in the
+order the dealer takes them from the deck, and `None` marks a card the case does not
+fix. `shuffle()` calls `Deck.shuffle()` and then puts the script on top with
+`Deck.put_on_top(...)` (see Required entities capabilities). Each `None` is replaced
+by the next shuffled card that the script does not use. Unknown cards are therefore
+random (seeded by `--seed`) but never duplicate a known card.
+
+The script follows the engine's documented deal order (engine plan, Dealer → Hand
+flow; no burn cards):
+1. hole cards: four rounds, one card per round to each participant, starting with the
+   first player left of the button (engine seats 1, 2, …, n−1, 0);
+2. flop (3 cards), turn (1), river (1). A street the hand does not reach is `None`.
+
+If the engine's deal order ever changes, the `hole_cards` / `board_dealt` checks fail
+for every case, which makes the cause easy to see.
+
+### Units
+The engine runs with `chips_per_bb = case.game.blinds.bb`, so engine chips are case
+chips. Odd-chip splits then happen exactly as in the recording (with the default 100
+chips per BB a 1-chip odd chip of the case would be split differently). On the wire
+everything is in BB, as usual: the driver joins with `stack_bb = stack / bb`. The
+checker converts every BB float it receives back to chips with `round(x * bb)` and
+compares integers.
+
+### Scripted client process (`client.py`)
+A very simple client (not `cli_client`), started as `python -m cli_server.e2e.client`
+with `sys.executable`. The parent's `sys.path` is passed as `PYTHONPATH`, so the child
+finds the same modules inside the buck2-built binary or test. It uses only
+`protocol.py` (`read_message` / `write_message`).
+- Its config is one JSON line on stdin: server port, `name`, `stack_bb`, `seat`
+  offset (or null), `action_timeout`, and `script`: this player's actions in order,
+  each `{street, action}`, where `action` is the engine action (`bet` and `raise` are
+  both `raise`; blinds are not in the script, the engine posts them).
+- It listens on a free callback port, connects to the server port, sends `join` and
+  prints `{"type": "joined", "response": ...}` on stdout. The driver waits for this
+  line before starting the next client.
+- It reads its callback channel and appends every message, in arrival order, to its
+  transcript. It answers:
+  - `turn`: the next scripted action, if its street matches `view.street` and
+    `legal` allows it. Otherwise it records a problem (`unexpected turn`, `street
+    mismatch`, `not legal: ...`) and sends `fold`, so the hand still finishes. A
+    rejected `action` response is recorded as a problem too.
+  - `hand_end`: no rebuy, no sit-in, no leave.
+  - `close` (or EOF): prints `{"type": "transcript", "messages": [...], "responses":
+    [...], "problems": [...], "unused_script": [...]}` on stdout and exits 0.
+- Any exception is reported in `problems` (the transcript is still printed) and the
+  process exits 1.
+
+### Running a case (`driver.py`)
+`run_case(case, seed, action_timeout) -> CaseReport`:
+1. Build the seating and the `StackedDeck` script from the case.
+2. Create `GameServer(port=0, grace_period=0, hand_pause=0, env_kwargs={action_timeout,
+   chips_per_bb: bb, deck: StackedDeck(script, Random(seed)), seed}, required_players=n,
+   max_hands=1)` and run `serve_forever()` on a background thread.
+3. Start the client processes one at a time in seating order. Each waits for its
+   `joined` line.
+4. Wait until the server thread returns (the hand was played) and call `shutdown()`.
+   This sends `close` to every session. Collect each client's `transcript` line and
+   wait for the process to exit.
+5. Overall deadline per case: `30 s + 4 × action_timeout`. When it passes, the driver
+   stops the server, kills the clients and reports FAIL "timed out" with whatever
+   transcripts it has.
+6. Check (below) and return the report: PASS / FAIL (with the list of mismatches) /
+   ERROR (invalid case, or the server or a client crashed).
+
+`run_cases(names | None, seed, action_timeout) -> int` runs the selected cases
+sequentially, each on its own server. It prints one line per case (`PASS`, `FAIL` or
+`ERROR`, the name, the description). Under each failed case it prints the mismatches:
+client, message index, expected and actual, at most 20 per case. Then a summary line
+`N passed, M failed, K errors`. It returns the exit status: 0 if every case passed,
+otherwise 1. Every check is collected, not just the first failure.
+
+### What is checked (`expect.py`, `check.py`)
+`expect.py` derives from the case, with the engine seats from Seating, the expected
+public events of the hand and the expected result. `check.py` compares every client's
+transcript with them.
+
+1. **Joins**: every join was accepted, not queued, at the planned engine seat, and its
+   `table` shows the blinds 0.5 / 1 BB. Every client got `seated`.
+2. **Public information** (spec: "all clients receive correct updates on
+   information"):
+   - The `event` messages from `hand_started` to the last award are identical for all
+     clients (same events, same order, same `seq`).
+   - They match the expected stream. Exact match, in order:
+     `hand_started` (button 0, SB / BB seats, participants with their starting
+     stacks), `blind_posted` × 2 (amount, `all_in`, `stack_bb`), then for each street
+     `board_dealt` (exactly the case's cards; not for preflop) followed by one
+     `player_acted` per case action (seat, name, street, action with `bet` → `raise`,
+     `amount_bb`, `to_bb` when the case gives it, `stack_bb` = the stack tracked from
+     the case, `all_in` = that stack is 0, `reason` null).
+   - Settlement events, which a hand history does not list one by one, are checked by
+     content: the `hand_shown` events are exactly the case's showdown players with
+     their holes (any order); the `pot_awarded` amounts, summed per pot and player,
+     equal the case's `awards`, and summed per share they equal `hi.amount` /
+     `lo.amount` (`whole` counts as hi); the winners per share equal `hi.winners` /
+     `lo.winners`; `bet_returned` amounts plus awards give the final stacks.
+   - No `hand_shown` when `ended_by` is `"fold"`.
+   - Every client got `hole_cards` exactly once, before its first `turn`, with its own
+     case hole when known (4 cards that are not in the case otherwise). No client got
+     another player's cards before showdown, in `hole_cards` or in any `view`.
+   - Turns: each client got one `turn` per scripted action, in order. Every other
+     client got one `acting` for it (actor's seat and name) after the preceding events
+     and before the actor's `player_acted`. The actor got no `acting` for its own turn.
+   - No `lobby` message between `hand_started` and `hand_end`.
+3. **Stacks** (spec: "stacks are correctly updated through the hand and at the end of
+   it"): every `stack_bb` in the events equals the stack tracked from the case at that
+   point. The seats in each `turn` view show the same stacks. `hand_end` seats have
+   `stack` = `final_stacks` and `net` = `net`, for every client.
+4. **Winners and pot split** (spec): `hand_end` `result` on every client has
+   `showdown` = (`ended_by == "showdown"`). It has one pot per case pot, main first,
+   then side pots in order: `amount`, `eligible` (ids → seats), `high` / `low` winners
+   and amounts equal to the case (per winner as in `awards`, odd chips included),
+   `uncontested` when the hand ended by fold. The sum of the final stacks equals the
+   sum of the starting stacks.
+5. **Script fully played**: no client has `problems` or `unused_script`. No `action`
+   request was rejected. Every client exited 0.
+
 ## Required engine capabilities
 Used as they are: `Environment` (incl. `max_seats`, `action_timeout`,
-`active_players`, `can_start`), `Dealer.small_blind` / `big_blind` / `max_buy_in` /
-`to_bb`, `MIN_PLAYERS`, `handle_join`, `RemoteAgent`, `Join`, `JoinReply`, `Leave`,
-`HandEndReply`, `Action`, `ActionType`, `LegalActions`, `IllegalActionError`,
-`NotEnoughPlayersError`, the views (`TableView.seat` / `me` identify the actor for
-`acting`) and the `TableEvent` classes from `engine.events`.
+`active_players`, `can_start`, and for e2e mode `chips_per_bb` and `deck`),
+`Dealer.small_blind` / `big_blind` / `max_buy_in` / `to_bb`, `MIN_PLAYERS`,
+`handle_join`, `RemoteAgent`, `Join`, `JoinReply`, `Leave`, `HandEndReply`, `Action`,
+`ActionType`, `LegalActions`, `IllegalActionError`, `NotEnoughPlayersError`, the views
+(`TableView.seat` / `me` identify the actor for `acting`) and the `TableEvent` classes
+from `engine.events`.
 
 Already in the engine and relied on:
 - **Hole cards on deal.** `on_hole_cards(player, hand, view)` is called for each
@@ -447,9 +697,22 @@ Already in the engine and relied on:
   `("event", event)`.
 - **Synchronous event delivery before the next turn**, which gives `acting` its
   ordering.
+- **Injected deck and chip unit** (e2e mode): `Environment(deck=..., chips_per_bb=...)`
+  uses the given `Deck` for every hand (`reset()` and `shuffle()` once per hand, then
+  `deal_one()` only), and `chips_per_bb` sets the blinds (SB = `chips_per_bb // 2`).
+  Both are part of the engine's contract, together with the deal order (see
+  `engine/plan.md`, "Dealer → Deck use and deal order (contract)"); `chips_per_bb`
+  must be an even int >= 2.
+- **Seating of the first joiners** (empty table: first joiner takes the button,
+  second sits after them; offset `n` = right of the button) and the blind order, used
+  by the e2e seating.
 
-No new engine capabilities are needed: table settings, turn announcements, lobby
-status and the pause between hands are all done in the server.
+## Required entities capabilities
+- `Deck.put_on_top(cards)` (see `entities/plan.md`, "Stacking"): moves
+  the given cards, which must all still be in the deck and be distinct, to the top of
+  the deck in the given order, so they are dealt first. The other cards keep their
+  order. All-or-nothing like `remove`. `StackedDeck` needs this because `Deck` keeps
+  its card list private.
 
 ## Tests
 - `test_protocol`: encode/decode round trip for `Card`, `Hand`, `Board`, every
@@ -480,6 +743,12 @@ status and the pause between hands are all done in the server.
     player sends `"waiting"`; a rebuy that brings a busted player back sends
     `"starting"`; no `lobby` is sent while a hand is running; unchanged status is not
     re-sent;
+  - `required_players = 3`: two joined players stay `"waiting"` with `needed` 3; the
+    third join starts the grace period;
+  - `max_hands = 1`: `serve_forever()` returns after one hand, and `shutdown()` then
+    sends `close` to every client;
+  - `env_kwargs` with `chips_per_bb` and a `deck` reach the `Environment` (blinds in
+    events are still 0.5 / 1 BB; the dealt cards come from the given deck);
   - `acting`: for every `turn`, each other seated client (sitting-out ones included)
     gets one `acting` with the actor's seat, name and timeout, after the events that
     preceded the turn and before the actor's `player_acted`; the actor and a queued
@@ -506,5 +775,26 @@ status and the pause between hands are all done in the server.
   - a stop request ends a lobby wait and a pause at once;
   - the total chips stay the same across hands, apart from joins, rebuys and leaves.
 - `test_main`: argument defaults (port 8008, grace period 15 s, action timeout 180 s,
-  hand pause 3 s), `--port 0`, `--hand-pause 0`, invalid values (negative times, zero
-  action timeout, out-of-range port) rejected.
+  hand pause 3 s, `e2e_test` false, `case` none), `--port 0`, `--hand-pause 0`, invalid
+  values (negative times, zero action timeout, out-of-range port) rejected; `--case`
+  without `--e2e_test` and an unknown case name exit 2; `--e2e_test` defaults
+  (action timeout 10 s, seed 0); `--case NAME` and `--case NAME.json` pick the same
+  file.
+- `test_e2e_case`: the sample case loads into the expected dataclasses. Invalid cases
+  are rejected with a clear reason: wrong variant / betting / blinds / bet sizes / cap,
+  rake, duplicate card, unknown player in an action, showdown player with unknown hole,
+  `players` and `showdown` holes that differ, inconsistent `pot_after` / `to` / `net` /
+  `final_stacks`.
+- `test_e2e_deck`: the seating gives the button engine seat 0 and keeps the clockwise
+  order, including seats with gaps (1, 4, 6) and a button that is not the lowest
+  seat. The script puts the hole cards in the engine's round-robin order from the left
+  of the button and the board after them. A dealer using `StackedDeck` deals exactly
+  the case's holes and board. `None` slots get cards not used elsewhere, and the same
+  seed gives the same filler. Every hand reshuffles and restacks.
+- `test_e2e_check`: synthetic transcripts. A correct one passes. Each kind of
+  mismatch is reported with client and message index: a changed stack, a missing
+  `acting`, an extra `lobby` during the hand, a wrong pot split, another player's hole
+  cards, clients seeing different event streams, unused script.
+- `test_e2e_cases`: `run_cases(None, seed=0, action_timeout=10)` over every file in
+  `e2e_test_sets` returns 0. This makes the recorded hands part of `buck2 test`
+  (server, wire protocol and engine together).
