@@ -1,0 +1,244 @@
+{
+  "hand_id": "2026-11-17-000026",
+  "description": "Heads-up on the flop with a bet and three raises (4 small bets each); turn and river checked down. No low; UTG's top set of aces beats BTN's set of sevens.",
+  "game": {
+    "variant": "omaha_hi_lo_8",
+    "betting": "fixed_limit",
+    "unit": "chips",
+    "blinds": {
+      "sb": 1,
+      "bb": 2
+    },
+    "small_bet": 2,
+    "big_bet": 4,
+    "cap_raises": 4,
+    "rake": 0
+  },
+  "players": [
+    {
+      "id": "SB",
+      "seat": 1,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BB",
+      "seat": 2,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "UTG",
+      "seat": 3,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BTN",
+      "seat": 4,
+      "stack": 100,
+      "hole": [
+        "7s",
+        "7d",
+        "Kd",
+        "Qh"
+      ]
+    }
+  ],
+  "button": "BTN",
+  "hero": "BTN",
+  "streets": [
+    {
+      "street": "preflop",
+      "board": [],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "post_sb",
+          "amount": 1
+        },
+        {
+          "player": "BB",
+          "action": "post_bb",
+          "amount": 2
+        },
+        {
+          "player": "UTG",
+          "action": "raise",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BTN",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "SB",
+          "action": "fold"
+        },
+        {
+          "player": "BB",
+          "action": "fold"
+        }
+      ],
+      "pot_after": 11
+    },
+    {
+      "street": "flop",
+      "board": [
+        "As",
+        "7c",
+        "Jd"
+      ],
+      "actions": [
+        {
+          "player": "UTG",
+          "action": "bet",
+          "amount": 2,
+          "to": 2
+        },
+        {
+          "player": "BTN",
+          "action": "raise",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "UTG",
+          "action": "raise",
+          "amount": 4,
+          "to": 6
+        },
+        {
+          "player": "BTN",
+          "action": "raise",
+          "amount": 4,
+          "to": 8
+        },
+        {
+          "player": "UTG",
+          "action": "call",
+          "amount": 2,
+          "to": 8
+        }
+      ],
+      "pot_after": 27
+    },
+    {
+      "street": "turn",
+      "board": [
+        "Kc"
+      ],
+      "actions": [
+        {
+          "player": "UTG",
+          "action": "check"
+        },
+        {
+          "player": "BTN",
+          "action": "check"
+        }
+      ],
+      "pot_after": 27
+    },
+    {
+      "street": "river",
+      "board": [
+        "9h"
+      ],
+      "actions": [
+        {
+          "player": "UTG",
+          "action": "check"
+        },
+        {
+          "player": "BTN",
+          "action": "check"
+        }
+      ],
+      "pot_after": 27
+    }
+  ],
+  "showdown": [
+    {
+      "player": "UTG",
+      "hole": [
+        "Ac",
+        "Ad",
+        "Jc",
+        "Td"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "three_of_a_kind",
+        "cards": [
+          "Ac",
+          "Ad",
+          "As",
+          "Kc",
+          "Jd"
+        ]
+      },
+      "lo": null
+    },
+    {
+      "player": "BTN",
+      "hole": [
+        "7s",
+        "7d",
+        "Kd",
+        "Qh"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "three_of_a_kind",
+        "cards": [
+          "7s",
+          "7d",
+          "7c",
+          "As",
+          "Kc"
+        ]
+      },
+      "lo": null
+    }
+  ],
+  "pots": [
+    {
+      "type": "main",
+      "amount": 27,
+      "eligible": [
+        "UTG",
+        "BTN"
+      ],
+      "hi": {
+        "winners": [
+          "UTG"
+        ],
+        "amount": 27
+      },
+      "lo": null,
+      "odd_chips": [],
+      "awards": {
+        "UTG": 27
+      }
+    }
+  ],
+  "result": {
+    "ended_by": "showdown",
+    "net": {
+      "SB": -1,
+      "BB": -2,
+      "UTG": 15,
+      "BTN": -12
+    },
+    "final_stacks": {
+      "SB": 99,
+      "BB": 98,
+      "UTG": 115,
+      "BTN": 88
+    }
+  }
+}

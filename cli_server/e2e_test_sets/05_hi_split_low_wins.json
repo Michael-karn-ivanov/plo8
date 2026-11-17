@@ -1,0 +1,332 @@
+{
+  "hand_id": "2026-11-17-000005",
+  "description": "UTG and BTN tie the hi with the same 7-high straight; BB makes the wheel low 5-4-3-2-A and takes the low half.",
+  "game": {
+    "variant": "omaha_hi_lo_8",
+    "betting": "fixed_limit",
+    "unit": "chips",
+    "blinds": {
+      "sb": 1,
+      "bb": 2
+    },
+    "small_bet": 2,
+    "big_bet": 4,
+    "cap_raises": 4,
+    "rake": 0
+  },
+  "players": [
+    {
+      "id": "SB",
+      "seat": 1,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BB",
+      "seat": 2,
+      "stack": 100,
+      "hole": [
+        "Ah",
+        "2h",
+        "Ts",
+        "Tc"
+      ]
+    },
+    {
+      "id": "UTG",
+      "seat": 3,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "MP",
+      "seat": 4,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "CO",
+      "seat": 5,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BTN",
+      "seat": 6,
+      "stack": 100,
+      "hole": null
+    }
+  ],
+  "button": "BTN",
+  "hero": "BB",
+  "streets": [
+    {
+      "street": "preflop",
+      "board": [],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "post_sb",
+          "amount": 1
+        },
+        {
+          "player": "BB",
+          "action": "post_bb",
+          "amount": 2
+        },
+        {
+          "player": "UTG",
+          "action": "raise",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "MP",
+          "action": "fold"
+        },
+        {
+          "player": "CO",
+          "action": "fold"
+        },
+        {
+          "player": "BTN",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "SB",
+          "action": "fold"
+        },
+        {
+          "player": "BB",
+          "action": "call",
+          "amount": 2,
+          "to": 4
+        }
+      ],
+      "pot_after": 13
+    },
+    {
+      "street": "flop",
+      "board": [
+        "3c",
+        "4d",
+        "5h"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "bet",
+          "amount": 2,
+          "to": 2
+        },
+        {
+          "player": "UTG",
+          "action": "call",
+          "amount": 2,
+          "to": 2
+        },
+        {
+          "player": "BTN",
+          "action": "call",
+          "amount": 2,
+          "to": 2
+        }
+      ],
+      "pot_after": 19
+    },
+    {
+      "street": "turn",
+      "board": [
+        "Kc"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "bet",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "UTG",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BTN",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        }
+      ],
+      "pot_after": 31
+    },
+    {
+      "street": "river",
+      "board": [
+        "9s"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "bet",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "UTG",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BTN",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        }
+      ],
+      "pot_after": 43
+    }
+  ],
+  "showdown": [
+    {
+      "player": "BB",
+      "hole": [
+        "Ah",
+        "2h",
+        "Ts",
+        "Tc"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "straight",
+        "cards": [
+          "5h",
+          "4d",
+          "3c",
+          "2h",
+          "Ah"
+        ]
+      },
+      "lo": {
+        "cards": [
+          "5h",
+          "4d",
+          "3c",
+          "2h",
+          "Ah"
+        ]
+      }
+    },
+    {
+      "player": "UTG",
+      "hole": [
+        "6c",
+        "7d",
+        "Kh",
+        "Qh"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "straight",
+        "cards": [
+          "7d",
+          "6c",
+          "5h",
+          "4d",
+          "3c"
+        ]
+      },
+      "lo": {
+        "cards": [
+          "7d",
+          "6c",
+          "5h",
+          "4d",
+          "3c"
+        ]
+      }
+    },
+    {
+      "player": "BTN",
+      "hole": [
+        "6s",
+        "7s",
+        "Qd",
+        "Jd"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "straight",
+        "cards": [
+          "7s",
+          "6s",
+          "5h",
+          "4d",
+          "3c"
+        ]
+      },
+      "lo": {
+        "cards": [
+          "7s",
+          "6s",
+          "5h",
+          "4d",
+          "3c"
+        ]
+      }
+    }
+  ],
+  "pots": [
+    {
+      "type": "main",
+      "amount": 43,
+      "eligible": [
+        "BB",
+        "UTG",
+        "BTN"
+      ],
+      "hi": {
+        "winners": [
+          "UTG",
+          "BTN"
+        ],
+        "amount": 22
+      },
+      "lo": {
+        "winners": [
+          "BB"
+        ],
+        "amount": 21
+      },
+      "odd_chips": [],
+      "awards": {
+        "UTG": 11,
+        "BTN": 11,
+        "BB": 21
+      }
+    }
+  ],
+  "result": {
+    "ended_by": "showdown",
+    "net": {
+      "SB": -1,
+      "BB": 7,
+      "UTG": -3,
+      "MP": 0,
+      "CO": 0,
+      "BTN": -3
+    },
+    "final_stacks": {
+      "SB": 99,
+      "BB": 107,
+      "UTG": 97,
+      "MP": 100,
+      "CO": 100,
+      "BTN": 97
+    }
+  }
+}

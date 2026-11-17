@@ -1,0 +1,264 @@
+{
+  "hand_id": "2026-11-17-000017",
+  "description": "Paired board with no low. UTG makes nines full of queens on the turn, but BTN flopped jacks full and rivers quad jacks. BTN scoops; UTG's A-2 has no low.",
+  "game": {
+    "variant": "omaha_hi_lo_8",
+    "betting": "fixed_limit",
+    "unit": "chips",
+    "blinds": {
+      "sb": 1,
+      "bb": 2
+    },
+    "small_bet": 2,
+    "big_bet": 4,
+    "cap_raises": 4,
+    "rake": 0
+  },
+  "players": [
+    {
+      "id": "SB",
+      "seat": 1,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BB",
+      "seat": 2,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "UTG",
+      "seat": 3,
+      "stack": 100,
+      "hole": [
+        "9c",
+        "Qd",
+        "Ah",
+        "2h"
+      ]
+    },
+    {
+      "id": "BTN",
+      "seat": 4,
+      "stack": 100,
+      "hole": null
+    }
+  ],
+  "button": "BTN",
+  "hero": "UTG",
+  "streets": [
+    {
+      "street": "preflop",
+      "board": [],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "post_sb",
+          "amount": 1
+        },
+        {
+          "player": "BB",
+          "action": "post_bb",
+          "amount": 2
+        },
+        {
+          "player": "UTG",
+          "action": "raise",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BTN",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "SB",
+          "action": "fold"
+        },
+        {
+          "player": "BB",
+          "action": "fold"
+        }
+      ],
+      "pot_after": 11
+    },
+    {
+      "street": "flop",
+      "board": [
+        "9s",
+        "9d",
+        "Jc"
+      ],
+      "actions": [
+        {
+          "player": "UTG",
+          "action": "bet",
+          "amount": 2,
+          "to": 2
+        },
+        {
+          "player": "BTN",
+          "action": "raise",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "UTG",
+          "action": "raise",
+          "amount": 4,
+          "to": 6
+        },
+        {
+          "player": "BTN",
+          "action": "call",
+          "amount": 2,
+          "to": 6
+        }
+      ],
+      "pot_after": 23
+    },
+    {
+      "street": "turn",
+      "board": [
+        "Qh"
+      ],
+      "actions": [
+        {
+          "player": "UTG",
+          "action": "bet",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BTN",
+          "action": "raise",
+          "amount": 8,
+          "to": 8
+        },
+        {
+          "player": "UTG",
+          "action": "call",
+          "amount": 4,
+          "to": 8
+        }
+      ],
+      "pot_after": 39
+    },
+    {
+      "street": "river",
+      "board": [
+        "Jd"
+      ],
+      "actions": [
+        {
+          "player": "UTG",
+          "action": "bet",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BTN",
+          "action": "raise",
+          "amount": 8,
+          "to": 8
+        },
+        {
+          "player": "UTG",
+          "action": "raise",
+          "amount": 8,
+          "to": 12
+        },
+        {
+          "player": "BTN",
+          "action": "call",
+          "amount": 4,
+          "to": 12
+        }
+      ],
+      "pot_after": 63
+    }
+  ],
+  "showdown": [
+    {
+      "player": "UTG",
+      "hole": [
+        "9c",
+        "Qd",
+        "Ah",
+        "2h"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "full_house",
+        "cards": [
+          "9c",
+          "9s",
+          "9d",
+          "Qd",
+          "Qh"
+        ]
+      },
+      "lo": null
+    },
+    {
+      "player": "BTN",
+      "hole": [
+        "Js",
+        "Jh",
+        "Ks",
+        "Td"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "four_of_a_kind",
+        "cards": [
+          "Js",
+          "Jh",
+          "Jc",
+          "Jd",
+          "Qh"
+        ]
+      },
+      "lo": null
+    }
+  ],
+  "pots": [
+    {
+      "type": "main",
+      "amount": 63,
+      "eligible": [
+        "UTG",
+        "BTN"
+      ],
+      "hi": {
+        "winners": [
+          "BTN"
+        ],
+        "amount": 63
+      },
+      "lo": null,
+      "odd_chips": [],
+      "awards": {
+        "BTN": 63
+      }
+    }
+  ],
+  "result": {
+    "ended_by": "showdown",
+    "net": {
+      "SB": -1,
+      "BB": -2,
+      "UTG": -30,
+      "BTN": 33
+    },
+    "final_stacks": {
+      "SB": 99,
+      "BB": 98,
+      "UTG": 70,
+      "BTN": 133
+    }
+  }
+}

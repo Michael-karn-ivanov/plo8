@@ -1,0 +1,312 @@
+{
+  "hand_id": "2026-11-17-000003",
+  "description": "UTG raises preflop and bets flop, turn and river; CO and BB call all the way. No low possible; UTG's broadway straight scoops.",
+  "game": {
+    "variant": "omaha_hi_lo_8",
+    "betting": "fixed_limit",
+    "unit": "chips",
+    "blinds": {
+      "sb": 1,
+      "bb": 2
+    },
+    "small_bet": 2,
+    "big_bet": 4,
+    "cap_raises": 4,
+    "rake": 0
+  },
+  "players": [
+    {
+      "id": "SB",
+      "seat": 1,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BB",
+      "seat": 2,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "UTG",
+      "seat": 3,
+      "stack": 120,
+      "hole": [
+        "Ac",
+        "Ah",
+        "Qs",
+        "Jc"
+      ]
+    },
+    {
+      "id": "MP",
+      "seat": 4,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "CO",
+      "seat": 5,
+      "stack": 80,
+      "hole": null
+    },
+    {
+      "id": "BTN",
+      "seat": 6,
+      "stack": 100,
+      "hole": null
+    }
+  ],
+  "button": "BTN",
+  "hero": "UTG",
+  "streets": [
+    {
+      "street": "preflop",
+      "board": [],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "post_sb",
+          "amount": 1
+        },
+        {
+          "player": "BB",
+          "action": "post_bb",
+          "amount": 2
+        },
+        {
+          "player": "UTG",
+          "action": "raise",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "MP",
+          "action": "fold"
+        },
+        {
+          "player": "CO",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BTN",
+          "action": "fold"
+        },
+        {
+          "player": "SB",
+          "action": "fold"
+        },
+        {
+          "player": "BB",
+          "action": "call",
+          "amount": 2,
+          "to": 4
+        }
+      ],
+      "pot_after": 13
+    },
+    {
+      "street": "flop",
+      "board": [
+        "As",
+        "Kd",
+        "9h"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "check"
+        },
+        {
+          "player": "UTG",
+          "action": "bet",
+          "amount": 2,
+          "to": 2
+        },
+        {
+          "player": "CO",
+          "action": "call",
+          "amount": 2,
+          "to": 2
+        },
+        {
+          "player": "BB",
+          "action": "call",
+          "amount": 2,
+          "to": 2
+        }
+      ],
+      "pot_after": 19
+    },
+    {
+      "street": "turn",
+      "board": [
+        "5c"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "check"
+        },
+        {
+          "player": "UTG",
+          "action": "bet",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "CO",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BB",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        }
+      ],
+      "pot_after": 31
+    },
+    {
+      "street": "river",
+      "board": [
+        "Td"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "check"
+        },
+        {
+          "player": "UTG",
+          "action": "bet",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "CO",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BB",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        }
+      ],
+      "pot_after": 43
+    }
+  ],
+  "showdown": [
+    {
+      "player": "BB",
+      "hole": [
+        "9c",
+        "9d",
+        "6s",
+        "4s"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "three_of_a_kind",
+        "cards": [
+          "9c",
+          "9d",
+          "9h",
+          "As",
+          "Kd"
+        ]
+      },
+      "lo": null
+    },
+    {
+      "player": "UTG",
+      "hole": [
+        "Ac",
+        "Ah",
+        "Qs",
+        "Jc"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "straight",
+        "cards": [
+          "As",
+          "Kd",
+          "Qs",
+          "Jc",
+          "Td"
+        ]
+      },
+      "lo": null
+    },
+    {
+      "player": "CO",
+      "hole": [
+        "Kh",
+        "Ks",
+        "8c",
+        "7c"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "three_of_a_kind",
+        "cards": [
+          "Kh",
+          "Ks",
+          "Kd",
+          "As",
+          "Td"
+        ]
+      },
+      "lo": null
+    }
+  ],
+  "pots": [
+    {
+      "type": "main",
+      "amount": 43,
+      "eligible": [
+        "BB",
+        "UTG",
+        "CO"
+      ],
+      "hi": {
+        "winners": [
+          "UTG"
+        ],
+        "amount": 43
+      },
+      "lo": null,
+      "odd_chips": [],
+      "awards": {
+        "UTG": 43
+      }
+    }
+  ],
+  "result": {
+    "ended_by": "showdown",
+    "net": {
+      "SB": -1,
+      "BB": -14,
+      "UTG": 29,
+      "MP": 0,
+      "CO": -14,
+      "BTN": 0
+    },
+    "final_stacks": {
+      "SB": 99,
+      "BB": 86,
+      "UTG": 149,
+      "MP": 100,
+      "CO": 66,
+      "BTN": 100
+    }
+  }
+}

@@ -1,0 +1,147 @@
+{
+  "hand_id": "2026-11-17-000008",
+  "description": "CO raises, BTN and both blinds fold; CO wins the pot uncontested preflop.",
+  "game": {
+    "variant": "omaha_hi_lo_8",
+    "betting": "fixed_limit",
+    "unit": "chips",
+    "blinds": {
+      "sb": 1,
+      "bb": 2
+    },
+    "small_bet": 2,
+    "big_bet": 4,
+    "cap_raises": 4,
+    "rake": 0
+  },
+  "players": [
+    {
+      "id": "SB",
+      "seat": 1,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BB",
+      "seat": 2,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "UTG",
+      "seat": 3,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "MP",
+      "seat": 4,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "CO",
+      "seat": 5,
+      "stack": 100,
+      "hole": [
+        "Ac",
+        "Ad",
+        "Ks",
+        "4h"
+      ]
+    },
+    {
+      "id": "BTN",
+      "seat": 6,
+      "stack": 100,
+      "hole": null
+    }
+  ],
+  "button": "BTN",
+  "hero": "CO",
+  "streets": [
+    {
+      "street": "preflop",
+      "board": [],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "post_sb",
+          "amount": 1
+        },
+        {
+          "player": "BB",
+          "action": "post_bb",
+          "amount": 2
+        },
+        {
+          "player": "UTG",
+          "action": "fold"
+        },
+        {
+          "player": "MP",
+          "action": "fold"
+        },
+        {
+          "player": "CO",
+          "action": "raise",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BTN",
+          "action": "fold"
+        },
+        {
+          "player": "SB",
+          "action": "fold"
+        },
+        {
+          "player": "BB",
+          "action": "fold"
+        }
+      ],
+      "pot_after": 7
+    }
+  ],
+  "showdown": [],
+  "pots": [
+    {
+      "type": "main",
+      "amount": 7,
+      "eligible": [
+        "CO"
+      ],
+      "hi": {
+        "winners": [
+          "CO"
+        ],
+        "amount": 7
+      },
+      "lo": null,
+      "odd_chips": [],
+      "awards": {
+        "CO": 7
+      }
+    }
+  ],
+  "result": {
+    "ended_by": "fold",
+    "net": {
+      "SB": -1,
+      "BB": -2,
+      "UTG": 0,
+      "MP": 0,
+      "CO": 3,
+      "BTN": 0
+    },
+    "final_stacks": {
+      "SB": 99,
+      "BB": 98,
+      "UTG": 100,
+      "MP": 100,
+      "CO": 103,
+      "BTN": 100
+    }
+  }
+}

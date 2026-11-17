@@ -1,0 +1,180 @@
+{
+  "hand_id": "2026-11-17-000007",
+  "description": "MP opens, CO three-bets, MP calls; MP checks the flop and folds to CO's bet. No showdown.",
+  "game": {
+    "variant": "omaha_hi_lo_8",
+    "betting": "fixed_limit",
+    "unit": "chips",
+    "blinds": {
+      "sb": 1,
+      "bb": 2
+    },
+    "small_bet": 2,
+    "big_bet": 4,
+    "cap_raises": 4,
+    "rake": 0
+  },
+  "players": [
+    {
+      "id": "SB",
+      "seat": 1,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BB",
+      "seat": 2,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "UTG",
+      "seat": 3,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "MP",
+      "seat": 4,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "CO",
+      "seat": 5,
+      "stack": 100,
+      "hole": [
+        "As",
+        "2s",
+        "3h",
+        "Kh"
+      ]
+    },
+    {
+      "id": "BTN",
+      "seat": 6,
+      "stack": 100,
+      "hole": null
+    }
+  ],
+  "button": "BTN",
+  "hero": "CO",
+  "streets": [
+    {
+      "street": "preflop",
+      "board": [],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "post_sb",
+          "amount": 1
+        },
+        {
+          "player": "BB",
+          "action": "post_bb",
+          "amount": 2
+        },
+        {
+          "player": "UTG",
+          "action": "fold"
+        },
+        {
+          "player": "MP",
+          "action": "raise",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "CO",
+          "action": "raise",
+          "amount": 6,
+          "to": 6
+        },
+        {
+          "player": "BTN",
+          "action": "fold"
+        },
+        {
+          "player": "SB",
+          "action": "fold"
+        },
+        {
+          "player": "BB",
+          "action": "fold"
+        },
+        {
+          "player": "MP",
+          "action": "call",
+          "amount": 2,
+          "to": 6
+        }
+      ],
+      "pot_after": 15
+    },
+    {
+      "street": "flop",
+      "board": [
+        "Js",
+        "8s",
+        "4d"
+      ],
+      "actions": [
+        {
+          "player": "MP",
+          "action": "check"
+        },
+        {
+          "player": "CO",
+          "action": "bet",
+          "amount": 2,
+          "to": 2
+        },
+        {
+          "player": "MP",
+          "action": "fold"
+        }
+      ],
+      "pot_after": 17
+    }
+  ],
+  "showdown": [],
+  "pots": [
+    {
+      "type": "main",
+      "amount": 17,
+      "eligible": [
+        "CO"
+      ],
+      "hi": {
+        "winners": [
+          "CO"
+        ],
+        "amount": 17
+      },
+      "lo": null,
+      "odd_chips": [],
+      "awards": {
+        "CO": 17
+      }
+    }
+  ],
+  "result": {
+    "ended_by": "fold",
+    "net": {
+      "SB": -1,
+      "BB": -2,
+      "UTG": 0,
+      "MP": -6,
+      "CO": 9,
+      "BTN": 0
+    },
+    "final_stacks": {
+      "SB": 99,
+      "BB": 98,
+      "UTG": 100,
+      "MP": 94,
+      "CO": 109,
+      "BTN": 100
+    }
+  }
+}

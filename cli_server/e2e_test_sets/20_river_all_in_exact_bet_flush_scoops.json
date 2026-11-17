@@ -1,0 +1,237 @@
+{
+  "hand_id": "2026-11-17-000020",
+  "description": "BB (18 chips) check-raises the turn and bets the last 4 chips on the river, exactly one big bet; BTN calls. BB's K-high club flush scoops (no low: only two low cards on board).",
+  "game": {
+    "variant": "omaha_hi_lo_8",
+    "betting": "fixed_limit",
+    "unit": "chips",
+    "blinds": {
+      "sb": 1,
+      "bb": 2
+    },
+    "small_bet": 2,
+    "big_bet": 4,
+    "cap_raises": 4,
+    "rake": 0
+  },
+  "players": [
+    {
+      "id": "SB",
+      "seat": 1,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BB",
+      "seat": 2,
+      "stack": 18,
+      "hole": [
+        "Kc",
+        "8c",
+        "4s",
+        "5s"
+      ]
+    },
+    {
+      "id": "BTN",
+      "seat": 3,
+      "stack": 100,
+      "hole": null
+    }
+  ],
+  "button": "BTN",
+  "hero": "BB",
+  "streets": [
+    {
+      "street": "preflop",
+      "board": [],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "post_sb",
+          "amount": 1
+        },
+        {
+          "player": "BB",
+          "action": "post_bb",
+          "amount": 2
+        },
+        {
+          "player": "BTN",
+          "action": "raise",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "SB",
+          "action": "fold"
+        },
+        {
+          "player": "BB",
+          "action": "call",
+          "amount": 2,
+          "to": 4
+        }
+      ],
+      "pot_after": 9
+    },
+    {
+      "street": "flop",
+      "board": [
+        "Tc",
+        "9c",
+        "2h"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "check"
+        },
+        {
+          "player": "BTN",
+          "action": "bet",
+          "amount": 2,
+          "to": 2
+        },
+        {
+          "player": "BB",
+          "action": "call",
+          "amount": 2,
+          "to": 2
+        }
+      ],
+      "pot_after": 13
+    },
+    {
+      "street": "turn",
+      "board": [
+        "3c"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "check"
+        },
+        {
+          "player": "BTN",
+          "action": "bet",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BB",
+          "action": "raise",
+          "amount": 8,
+          "to": 8
+        },
+        {
+          "player": "BTN",
+          "action": "call",
+          "amount": 4,
+          "to": 8
+        }
+      ],
+      "pot_after": 29
+    },
+    {
+      "street": "river",
+      "board": [
+        "Jd"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "bet",
+          "amount": 4,
+          "to": 4,
+          "all_in": true
+        },
+        {
+          "player": "BTN",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        }
+      ],
+      "pot_after": 37
+    }
+  ],
+  "showdown": [
+    {
+      "player": "BB",
+      "hole": [
+        "Kc",
+        "8c",
+        "4s",
+        "5s"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "flush",
+        "cards": [
+          "Kc",
+          "Tc",
+          "9c",
+          "8c",
+          "3c"
+        ]
+      },
+      "lo": null
+    },
+    {
+      "player": "BTN",
+      "hole": [
+        "Qh",
+        "Qs",
+        "8d",
+        "7d"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "straight",
+        "cards": [
+          "Qh",
+          "Jd",
+          "Tc",
+          "9c",
+          "8d"
+        ]
+      },
+      "lo": null
+    }
+  ],
+  "pots": [
+    {
+      "type": "main",
+      "amount": 37,
+      "eligible": [
+        "BB",
+        "BTN"
+      ],
+      "hi": {
+        "winners": [
+          "BB"
+        ],
+        "amount": 37
+      },
+      "lo": null,
+      "odd_chips": [],
+      "awards": {
+        "BB": 37
+      }
+    }
+  ],
+  "result": {
+    "ended_by": "showdown",
+    "net": {
+      "SB": -1,
+      "BB": 19,
+      "BTN": -18
+    },
+    "final_stacks": {
+      "SB": 99,
+      "BB": 37,
+      "BTN": 82
+    }
+  }
+}

@@ -1,0 +1,267 @@
+{
+  "hand_id": "2026-11-17-000018",
+  "description": "BB's A-2 on a 3-4-5 board makes the wheel: a 5-high straight for hi and 5-4-3-2-A for lo, scooping UTG's trip kings.",
+  "game": {
+    "variant": "omaha_hi_lo_8",
+    "betting": "fixed_limit",
+    "unit": "chips",
+    "blinds": {
+      "sb": 1,
+      "bb": 2
+    },
+    "small_bet": 2,
+    "big_bet": 4,
+    "cap_raises": 4,
+    "rake": 0
+  },
+  "players": [
+    {
+      "id": "SB",
+      "seat": 1,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BB",
+      "seat": 2,
+      "stack": 100,
+      "hole": [
+        "Ah",
+        "2c",
+        "Js",
+        "Tc"
+      ]
+    },
+    {
+      "id": "UTG",
+      "seat": 3,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BTN",
+      "seat": 4,
+      "stack": 100,
+      "hole": null
+    }
+  ],
+  "button": "BTN",
+  "hero": "BB",
+  "streets": [
+    {
+      "street": "preflop",
+      "board": [],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "post_sb",
+          "amount": 1
+        },
+        {
+          "player": "BB",
+          "action": "post_bb",
+          "amount": 2
+        },
+        {
+          "player": "UTG",
+          "action": "raise",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BTN",
+          "action": "fold"
+        },
+        {
+          "player": "SB",
+          "action": "fold"
+        },
+        {
+          "player": "BB",
+          "action": "call",
+          "amount": 2,
+          "to": 4
+        }
+      ],
+      "pot_after": 9
+    },
+    {
+      "street": "flop",
+      "board": [
+        "3s",
+        "4d",
+        "Kc"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "check"
+        },
+        {
+          "player": "UTG",
+          "action": "bet",
+          "amount": 2,
+          "to": 2
+        },
+        {
+          "player": "BB",
+          "action": "raise",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "UTG",
+          "action": "raise",
+          "amount": 4,
+          "to": 6
+        },
+        {
+          "player": "BB",
+          "action": "call",
+          "amount": 2,
+          "to": 6
+        }
+      ],
+      "pot_after": 21
+    },
+    {
+      "street": "turn",
+      "board": [
+        "9h"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "check"
+        },
+        {
+          "player": "UTG",
+          "action": "bet",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BB",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        }
+      ],
+      "pot_after": 29
+    },
+    {
+      "street": "river",
+      "board": [
+        "5c"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "bet",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "UTG",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        }
+      ],
+      "pot_after": 37
+    }
+  ],
+  "showdown": [
+    {
+      "player": "BB",
+      "hole": [
+        "Ah",
+        "2c",
+        "Js",
+        "Tc"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "straight",
+        "cards": [
+          "5c",
+          "4d",
+          "3s",
+          "2c",
+          "Ah"
+        ]
+      },
+      "lo": {
+        "cards": [
+          "5c",
+          "4d",
+          "3s",
+          "2c",
+          "Ah"
+        ]
+      }
+    },
+    {
+      "player": "UTG",
+      "hole": [
+        "Ks",
+        "Kd",
+        "Qd",
+        "Jd"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "three_of_a_kind",
+        "cards": [
+          "Ks",
+          "Kd",
+          "Kc",
+          "9h",
+          "5c"
+        ]
+      },
+      "lo": null
+    }
+  ],
+  "pots": [
+    {
+      "type": "main",
+      "amount": 37,
+      "eligible": [
+        "BB",
+        "UTG"
+      ],
+      "hi": {
+        "winners": [
+          "BB"
+        ],
+        "amount": 19
+      },
+      "lo": {
+        "winners": [
+          "BB"
+        ],
+        "amount": 18
+      },
+      "odd_chips": [],
+      "awards": {
+        "BB": 37
+      }
+    }
+  ],
+  "result": {
+    "ended_by": "showdown",
+    "net": {
+      "SB": -1,
+      "BB": 19,
+      "UTG": -18,
+      "BTN": 0
+    },
+    "final_stacks": {
+      "SB": 99,
+      "BB": 119,
+      "UTG": 82,
+      "BTN": 100
+    }
+  }
+}

@@ -1,0 +1,266 @@
+{
+  "hand_id": "2026-11-17-000002",
+  "description": "Folds to SB who completes, BB checks; both check every street. BB wins hi with a pair of kings, SB wins lo with 7-4-3-2-A.",
+  "game": {
+    "variant": "omaha_hi_lo_8",
+    "betting": "fixed_limit",
+    "unit": "chips",
+    "blinds": {
+      "sb": 1,
+      "bb": 2
+    },
+    "small_bet": 2,
+    "big_bet": 4,
+    "cap_raises": 4,
+    "rake": 0
+  },
+  "players": [
+    {
+      "id": "SB",
+      "seat": 1,
+      "stack": 100,
+      "hole": [
+        "Ah",
+        "4h",
+        "Qc",
+        "Js"
+      ]
+    },
+    {
+      "id": "BB",
+      "seat": 2,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "UTG",
+      "seat": 3,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "MP",
+      "seat": 4,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "CO",
+      "seat": 5,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BTN",
+      "seat": 6,
+      "stack": 100,
+      "hole": null
+    }
+  ],
+  "button": "BTN",
+  "hero": "SB",
+  "streets": [
+    {
+      "street": "preflop",
+      "board": [],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "post_sb",
+          "amount": 1
+        },
+        {
+          "player": "BB",
+          "action": "post_bb",
+          "amount": 2
+        },
+        {
+          "player": "UTG",
+          "action": "fold"
+        },
+        {
+          "player": "MP",
+          "action": "fold"
+        },
+        {
+          "player": "CO",
+          "action": "fold"
+        },
+        {
+          "player": "BTN",
+          "action": "fold"
+        },
+        {
+          "player": "SB",
+          "action": "call",
+          "amount": 1,
+          "to": 2
+        },
+        {
+          "player": "BB",
+          "action": "check"
+        }
+      ],
+      "pot_after": 4
+    },
+    {
+      "street": "flop",
+      "board": [
+        "Kd",
+        "7c",
+        "3h"
+      ],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "check"
+        },
+        {
+          "player": "BB",
+          "action": "check"
+        }
+      ],
+      "pot_after": 4
+    },
+    {
+      "street": "turn",
+      "board": [
+        "9h"
+      ],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "check"
+        },
+        {
+          "player": "BB",
+          "action": "check"
+        }
+      ],
+      "pot_after": 4
+    },
+    {
+      "street": "river",
+      "board": [
+        "2d"
+      ],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "check"
+        },
+        {
+          "player": "BB",
+          "action": "check"
+        }
+      ],
+      "pot_after": 4
+    }
+  ],
+  "showdown": [
+    {
+      "player": "SB",
+      "hole": [
+        "Ah",
+        "4h",
+        "Qc",
+        "Js"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "high_card",
+        "cards": [
+          "Ah",
+          "Kd",
+          "Qc",
+          "9h",
+          "7c"
+        ]
+      },
+      "lo": {
+        "cards": [
+          "7c",
+          "4h",
+          "3h",
+          "2d",
+          "Ah"
+        ]
+      }
+    },
+    {
+      "player": "BB",
+      "hole": [
+        "Kh",
+        "Ts",
+        "8c",
+        "6d"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "pair",
+        "cards": [
+          "Kh",
+          "Kd",
+          "Ts",
+          "9h",
+          "7c"
+        ]
+      },
+      "lo": {
+        "cards": [
+          "8c",
+          "7c",
+          "6d",
+          "3h",
+          "2d"
+        ]
+      }
+    }
+  ],
+  "pots": [
+    {
+      "type": "main",
+      "amount": 4,
+      "eligible": [
+        "SB",
+        "BB"
+      ],
+      "hi": {
+        "winners": [
+          "BB"
+        ],
+        "amount": 2
+      },
+      "lo": {
+        "winners": [
+          "SB"
+        ],
+        "amount": 2
+      },
+      "odd_chips": [],
+      "awards": {
+        "BB": 2,
+        "SB": 2
+      }
+    }
+  ],
+  "result": {
+    "ended_by": "showdown",
+    "net": {
+      "SB": 0,
+      "BB": 0,
+      "UTG": 0,
+      "MP": 0,
+      "CO": 0,
+      "BTN": 0
+    },
+    "final_stacks": {
+      "SB": 100,
+      "BB": 100,
+      "UTG": 100,
+      "MP": 100,
+      "CO": 100,
+      "BTN": 100
+    }
+  }
+}

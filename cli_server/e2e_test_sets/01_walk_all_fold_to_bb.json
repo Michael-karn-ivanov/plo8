@@ -1,0 +1,141 @@
+{
+  "hand_id": "2026-11-17-000001",
+  "description": "Everybody folds to the big blind, who wins the small blind without a flop.",
+  "game": {
+    "variant": "omaha_hi_lo_8",
+    "betting": "fixed_limit",
+    "unit": "chips",
+    "blinds": {
+      "sb": 1,
+      "bb": 2
+    },
+    "small_bet": 2,
+    "big_bet": 4,
+    "cap_raises": 4,
+    "rake": 0
+  },
+  "players": [
+    {
+      "id": "SB",
+      "seat": 1,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BB",
+      "seat": 2,
+      "stack": 100,
+      "hole": [
+        "Ah",
+        "Kh",
+        "3c",
+        "5d"
+      ]
+    },
+    {
+      "id": "UTG",
+      "seat": 3,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "MP",
+      "seat": 4,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "CO",
+      "seat": 5,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BTN",
+      "seat": 6,
+      "stack": 100,
+      "hole": null
+    }
+  ],
+  "button": "BTN",
+  "hero": "BB",
+  "streets": [
+    {
+      "street": "preflop",
+      "board": [],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "post_sb",
+          "amount": 1
+        },
+        {
+          "player": "BB",
+          "action": "post_bb",
+          "amount": 2
+        },
+        {
+          "player": "UTG",
+          "action": "fold"
+        },
+        {
+          "player": "MP",
+          "action": "fold"
+        },
+        {
+          "player": "CO",
+          "action": "fold"
+        },
+        {
+          "player": "BTN",
+          "action": "fold"
+        },
+        {
+          "player": "SB",
+          "action": "fold"
+        }
+      ],
+      "pot_after": 3
+    }
+  ],
+  "showdown": [],
+  "pots": [
+    {
+      "type": "main",
+      "amount": 3,
+      "eligible": [
+        "BB"
+      ],
+      "hi": {
+        "winners": [
+          "BB"
+        ],
+        "amount": 3
+      },
+      "lo": null,
+      "odd_chips": [],
+      "awards": {
+        "BB": 3
+      }
+    }
+  ],
+  "result": {
+    "ended_by": "fold",
+    "net": {
+      "SB": -1,
+      "BB": 1,
+      "UTG": 0,
+      "MP": 0,
+      "CO": 0,
+      "BTN": 0
+    },
+    "final_stacks": {
+      "SB": 99,
+      "BB": 101,
+      "UTG": 100,
+      "MP": 100,
+      "CO": 100,
+      "BTN": 100
+    }
+  }
+}

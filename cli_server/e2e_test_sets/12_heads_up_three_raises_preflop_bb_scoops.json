@@ -1,0 +1,235 @@
+{
+  "hand_id": "2026-11-17-000012",
+  "description": "Heads-up: the button is the small blind and acts first preflop, last postflop. SB raises, BB re-raises, SB raises again, BB calls. BB's 9-high straight and 8-5-4-3-2 low scoop SB's aces.",
+  "game": {
+    "variant": "omaha_hi_lo_8",
+    "betting": "fixed_limit",
+    "unit": "chips",
+    "blinds": {
+      "sb": 1,
+      "bb": 2
+    },
+    "small_bet": 2,
+    "big_bet": 4,
+    "cap_raises": 4,
+    "rake": 0
+  },
+  "players": [
+    {
+      "id": "SB",
+      "seat": 1,
+      "stack": 100,
+      "hole": [
+        "Ah",
+        "Ad",
+        "Kc",
+        "Qc"
+      ]
+    },
+    {
+      "id": "BB",
+      "seat": 2,
+      "stack": 100,
+      "hole": null
+    }
+  ],
+  "button": "SB",
+  "hero": "SB",
+  "streets": [
+    {
+      "street": "preflop",
+      "board": [],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "post_sb",
+          "amount": 1
+        },
+        {
+          "player": "BB",
+          "action": "post_bb",
+          "amount": 2
+        },
+        {
+          "player": "SB",
+          "action": "raise",
+          "amount": 3,
+          "to": 4
+        },
+        {
+          "player": "BB",
+          "action": "raise",
+          "amount": 4,
+          "to": 6
+        },
+        {
+          "player": "SB",
+          "action": "raise",
+          "amount": 4,
+          "to": 8
+        },
+        {
+          "player": "BB",
+          "action": "call",
+          "amount": 2,
+          "to": 8
+        }
+      ],
+      "pot_after": 16
+    },
+    {
+      "street": "flop",
+      "board": [
+        "9c",
+        "8c",
+        "2d"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "check"
+        },
+        {
+          "player": "SB",
+          "action": "bet",
+          "amount": 2,
+          "to": 2
+        },
+        {
+          "player": "BB",
+          "action": "call",
+          "amount": 2,
+          "to": 2
+        }
+      ],
+      "pot_after": 20
+    },
+    {
+      "street": "turn",
+      "board": [
+        "5s"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "check"
+        },
+        {
+          "player": "SB",
+          "action": "check"
+        }
+      ],
+      "pot_after": 20
+    },
+    {
+      "street": "river",
+      "board": [
+        "Jh"
+      ],
+      "actions": [
+        {
+          "player": "BB",
+          "action": "bet",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "SB",
+          "action": "call",
+          "amount": 4,
+          "to": 4
+        }
+      ],
+      "pot_after": 28
+    }
+  ],
+  "showdown": [
+    {
+      "player": "BB",
+      "hole": [
+        "7c",
+        "6h",
+        "3s",
+        "4d"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "straight",
+        "cards": [
+          "9c",
+          "8c",
+          "7c",
+          "6h",
+          "5s"
+        ]
+      },
+      "lo": {
+        "cards": [
+          "8c",
+          "5s",
+          "4d",
+          "3s",
+          "2d"
+        ]
+      }
+    },
+    {
+      "player": "SB",
+      "hole": [
+        "Ah",
+        "Ad",
+        "Kc",
+        "Qc"
+      ],
+      "mucked": false,
+      "hi": {
+        "category": "pair",
+        "cards": [
+          "Ah",
+          "Ad",
+          "Jh",
+          "9c",
+          "8c"
+        ]
+      },
+      "lo": null
+    }
+  ],
+  "pots": [
+    {
+      "type": "main",
+      "amount": 28,
+      "eligible": [
+        "BB",
+        "SB"
+      ],
+      "hi": {
+        "winners": [
+          "BB"
+        ],
+        "amount": 14
+      },
+      "lo": {
+        "winners": [
+          "BB"
+        ],
+        "amount": 14
+      },
+      "odd_chips": [],
+      "awards": {
+        "BB": 28
+      }
+    }
+  ],
+  "result": {
+    "ended_by": "showdown",
+    "net": {
+      "SB": -14,
+      "BB": 14
+    },
+    "final_stacks": {
+      "SB": 86,
+      "BB": 114
+    }
+  }
+}

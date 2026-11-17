@@ -1,0 +1,175 @@
+{
+  "hand_id": "2026-11-17-000014",
+  "description": "Three-handed: BTN raises, both blinds call. SB check-raises the flop, BB folds, BTN calls, then folds to SB's turn bet.",
+  "game": {
+    "variant": "omaha_hi_lo_8",
+    "betting": "fixed_limit",
+    "unit": "chips",
+    "blinds": {
+      "sb": 1,
+      "bb": 2
+    },
+    "small_bet": 2,
+    "big_bet": 4,
+    "cap_raises": 4,
+    "rake": 0
+  },
+  "players": [
+    {
+      "id": "SB",
+      "seat": 1,
+      "stack": 100,
+      "hole": [
+        "8s",
+        "8d",
+        "7h",
+        "6h"
+      ]
+    },
+    {
+      "id": "BB",
+      "seat": 2,
+      "stack": 100,
+      "hole": null
+    },
+    {
+      "id": "BTN",
+      "seat": 3,
+      "stack": 100,
+      "hole": null
+    }
+  ],
+  "button": "BTN",
+  "hero": "SB",
+  "streets": [
+    {
+      "street": "preflop",
+      "board": [],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "post_sb",
+          "amount": 1
+        },
+        {
+          "player": "BB",
+          "action": "post_bb",
+          "amount": 2
+        },
+        {
+          "player": "BTN",
+          "action": "raise",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "SB",
+          "action": "call",
+          "amount": 3,
+          "to": 4
+        },
+        {
+          "player": "BB",
+          "action": "call",
+          "amount": 2,
+          "to": 4
+        }
+      ],
+      "pot_after": 12
+    },
+    {
+      "street": "flop",
+      "board": [
+        "8c",
+        "5h",
+        "2d"
+      ],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "check"
+        },
+        {
+          "player": "BB",
+          "action": "check"
+        },
+        {
+          "player": "BTN",
+          "action": "bet",
+          "amount": 2,
+          "to": 2
+        },
+        {
+          "player": "SB",
+          "action": "raise",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BB",
+          "action": "fold"
+        },
+        {
+          "player": "BTN",
+          "action": "call",
+          "amount": 2,
+          "to": 4
+        }
+      ],
+      "pot_after": 20
+    },
+    {
+      "street": "turn",
+      "board": [
+        "Kc"
+      ],
+      "actions": [
+        {
+          "player": "SB",
+          "action": "bet",
+          "amount": 4,
+          "to": 4
+        },
+        {
+          "player": "BTN",
+          "action": "fold"
+        }
+      ],
+      "pot_after": 24
+    }
+  ],
+  "showdown": [],
+  "pots": [
+    {
+      "type": "main",
+      "amount": 24,
+      "eligible": [
+        "SB"
+      ],
+      "hi": {
+        "winners": [
+          "SB"
+        ],
+        "amount": 24
+      },
+      "lo": null,
+      "odd_chips": [],
+      "awards": {
+        "SB": 24
+      }
+    }
+  ],
+  "result": {
+    "ended_by": "fold",
+    "net": {
+      "SB": 12,
+      "BB": -4,
+      "BTN": -8
+    },
+    "final_stacks": {
+      "SB": 112,
+      "BB": 96,
+      "BTN": 92
+    }
+  }
+}

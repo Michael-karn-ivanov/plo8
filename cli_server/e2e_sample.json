@@ -1,0 +1,103 @@
+{
+  "hand_id": "2026-11-16-000123",
+  "game": {
+    "variant": "omaha_hi_lo_8",
+    "betting": "fixed_limit",
+    "unit": "chips",
+    "blinds": { "sb": 1, "bb": 2 },
+    "small_bet": 2,
+    "big_bet": 4,
+    "cap_raises": 4,
+    "rake": 0
+  },
+
+  "players": [
+    { "id": "SB",    "seat": 1, "stack": 50, "hole": ["As", "Ks", "3d", "4c"] },
+    { "id": "BB",    "seat": 2, "stack": 60, "hole": ["Js", "Ts", "5c", "8d"] },
+    { "id": "UTG",   "seat": 3, "stack": 80, "hole": null },
+    { "id": "UTG+1", "seat": 4, "stack": 46, "hole": null }
+  ],
+  "button": "UTG+1",
+  "hero": "SB",
+
+  "streets": [
+    {
+      "street": "preflop",
+      "board": [],
+      "actions": [
+        { "player": "SB",    "action": "post_sb", "amount": 1 },
+        { "player": "BB",    "action": "post_bb", "amount": 2 },
+        { "player": "UTG",   "action": "raise",   "amount": 4, "to": 4 },
+        { "player": "UTG+1", "action": "fold" },
+        { "player": "SB",    "action": "raise",   "amount": 5, "to": 6 },
+        { "player": "BB",    "action": "call",    "amount": 4, "to": 6 },
+        { "player": "UTG",   "action": "call",    "amount": 2, "to": 6 }
+      ],
+      "pot_after": 18
+    },
+    {
+      "street": "flop",
+      "board": ["Ad", "Qs", "2s"],
+      "actions": [
+        { "player": "SB",  "action": "bet",   "amount": 2, "to": 2 },
+        { "player": "BB",  "action": "raise", "amount": 4, "to": 4 },
+        { "player": "UTG", "action": "fold" },
+        { "player": "SB",  "action": "call",  "amount": 2, "to": 4 }
+      ],
+      "pot_after": 26
+    },
+    {
+      "street": "turn",
+      "board": ["7h"],
+      "actions": [
+        { "player": "SB", "action": "check" },
+        { "player": "BB", "action": "bet",  "amount": 4, "to": 4 },
+        { "player": "SB", "action": "call", "amount": 4, "to": 4 }
+      ],
+      "pot_after": 34
+    },
+    {
+      "street": "river",
+      "board": ["Kd"],
+      "actions": [
+        { "player": "SB", "action": "check" },
+        { "player": "BB", "action": "check" }
+      ],
+      "pot_after": 34
+    }
+  ],
+
+  "showdown": [
+    {
+      "player": "SB",
+      "hole": ["As", "Ks", "3d", "4c"],
+      "mucked": false,
+      "hi": { "category": "two_pair", "cards": ["As", "Ks", "Ad", "Kd", "Qs"] },
+      "lo": { "cards": ["7h", "4c", "3d", "2s", "Ad"] }
+    },
+    {
+      "player": "BB",
+      "hole": ["Js", "Ts", "5c", "8d"],
+      "mucked": false,
+      "hi": { "category": "straight", "cards": ["Ad", "Kd", "Qs", "Js", "Ts"] },
+      "lo": { "cards": ["8d", "7h", "5c", "2s", "Ad"] }
+    }
+  ],
+
+  "pots": [
+    {
+      "type": "main",
+      "amount": 34,
+      "eligible": ["SB", "BB"],
+      "hi": { "winners": ["BB"], "amount": 17 },
+      "lo": { "winners": ["SB"], "amount": 17 },
+      "odd_chips": []
+    }
+  ],
+
+  "result": {
+    "ended_by": "showdown",
+    "net": { "SB": 3, "BB": 3, "UTG": -6, "UTG+1": 0 },
+    "final_stacks": { "SB": 53, "BB": 63, "UTG": 74, "UTG+1": 46 }
+  }
+}
