@@ -26,6 +26,7 @@ import time
 from typing import Any, Callable, NamedTuple, Optional
 
 from engine import (
+    MAX_PLAYERS,
     MIN_PLAYERS,
     Environment,
     HandEndReply,
@@ -76,6 +77,7 @@ CONNECT_TIMEOUT = 5.0  # seconds to reach a client's callback port
 HISTORY_LIMIT = 1000  # hand results / start times kept for inspection
 DEFAULT_GRACE_PERIOD = 15.0
 DEFAULT_HAND_PAUSE = 3.0
+REQUEST_DRAIN_TIMEOUT = 1.0  # shutdown: seconds to let requests in flight be answered
 
 LOBBY = "lobby"  # no hand is running; waiting for players / the grace period
 PLAYING = "playing"  # hands follow each other (including the pauses between them)
@@ -134,7 +136,12 @@ class _RequestHandler(socketserver.StreamRequestHandler):
                 return
             if msg is None:
                 return
-            if not self._reply(game.handle_request(msg)):
+            game._request_begins()
+            try:
+                answered = self._reply(game.handle_request(msg))
+            finally:
+                game._request_ends()
+            if not answered:
                 return
 
     def _reply(self, response: dict) -> bool:
@@ -148,11 +155,16 @@ class _RequestHandler(socketserver.StreamRequestHandler):
 class GameServer:
     """Hosts one table on `127.0.0.1:port`.
 
-    `env_kwargs` are passed to `Environment` (`action_timeout`, `max_seats`,
-    `max_buy_in`, `seed`). `grace_period` is the wait after the last arrival
-    before the first hand; `hand_pause` the wait between hands (0 = none). Use
-    `serve_forever()` to run the game loop in the calling thread (the binary does
-    this, so SIGINT aborts a running hand), or `start()` to run it in a
+    `env_kwargs` are passed to `Environment` as they are (`action_timeout`,
+    `max_seats`, `max_buy_in`, `seed`, and e.g. `chips_per_bb` / `deck` for the
+    e2e driver). `grace_period` is the wait after the last arrival before the
+    first hand; `hand_pause` the wait between hands (0 = none).
+    `required_players` (>= MIN_PLAYERS) active players are needed before the
+    grace period starts. With `max_hands` set, the game loop returns after that
+    many hands (the sessions stay open until `shutdown()`).
+
+    Use `serve_forever()` to run the game loop in the calling thread (the binary
+    does this, so SIGINT aborts a running hand), or `start()` to run it in a
     background thread (tests). `shutdown()` stops it.
     """
 
@@ -164,14 +176,31 @@ class GameServer:
         env_kwargs: Optional[dict[str, Any]] = None,
         host: str = HOST,
         connect_timeout: float = CONNECT_TIMEOUT,
+        required_players: int = MIN_PLAYERS,
+        max_hands: Optional[int] = None,
     ) -> None:
         if grace_period < 0:
             raise ValueError(f"grace_period cannot be negative, got {grace_period!r}")
         if hand_pause < 0:
             raise ValueError(f"hand_pause cannot be negative, got {hand_pause!r}")
+        if (
+            isinstance(required_players, bool)
+            or not isinstance(required_players, int)
+            or not MIN_PLAYERS <= required_players <= MAX_PLAYERS
+        ):
+            raise ValueError(
+                f"required_players must be {MIN_PLAYERS}-{MAX_PLAYERS}, got {required_players!r}"
+            )
+        if max_hands is not None and (
+            isinstance(max_hands, bool) or not isinstance(max_hands, int) or max_hands < 1
+        ):
+            raise ValueError(f"max_hands must be a positive int or None, got {max_hands!r}")
         self.env = Environment(**(env_kwargs or {}))
         self.grace_period = grace_period
         self.hand_pause = hand_pause
+        self.required_players = required_players
+        self.max_hands = max_hands
+        self.hands_played = 0
         self.host = host
         self.connect_timeout = connect_timeout
         self.settings = self._table_settings()  # fixed: sent with every accepted join
@@ -190,6 +219,11 @@ class GameServer:
         self._connections: set[socket.socket] = set()
         self._last_lobby: Optional[tuple] = None  # last published (state, active, needed, deadline)
         self._lobby_fresh: set[ClientSession] = set()  # get the lobby status even if unchanged
+        self._joining = 0  # joins being processed; no hand starts meanwhile
+
+        # Requests being processed (shutdown lets them be answered first).
+        self._requests = threading.Condition()
+        self._in_flight = 0
 
         # Lobby condition: guards the fields below; never held while calling the engine.
         self._cond = threading.Condition()
@@ -240,12 +274,14 @@ class GameServer:
         return self
 
     def serve_forever(self) -> None:
-        """Start the listener and run the game loop in this thread until `stop()`."""
+        """Start the listener and run the game loop in this thread until `stop()`
+        (or until `max_hands` hands were played). May run on any thread."""
         self.start_listener()
         self.run()
 
     def run(self) -> None:
-        """The lobby / game loop. Returns after `stop()` / `shutdown()`."""
+        """The lobby / game loop. Returns after `stop()` / `shutdown()`, or once
+        `max_hands` hands were played."""
         try:
             while True:
                 self._set_state(LOBBY)
@@ -256,6 +292,10 @@ class GameServer:
                 while not self._stopping and self.env.can_start():
                     if not self._play_hand():
                         break
+                    self.hands_played += 1
+                    if self.max_hands is not None and self.hands_played >= self.max_hands:
+                        _log.info("%d hand(s) played, the game loop ends", self.hands_played)
+                        return
                     if self.hand_pause > 0 and not self._stopping and self.env.can_start():
                         self._pause_between_hands()
                 if self._stopping:
@@ -265,9 +305,10 @@ class GameServer:
             self._set_state(STOPPED)
 
     def _wait_for_start(self) -> bool:
-        """LOBBY: wait until at least two players can play and the grace period
-        after the last arrival is over, publishing the lobby status as it changes.
-        False when stopping."""
+        """LOBBY: wait until `required_players` players can play and the grace
+        period after the last arrival is over, publishing the lobby status as it
+        changes. A join still being processed (its client not answered yet)
+        holds the start back. False when stopping."""
         while True:
             with self._cond:
                 if self._stopping:
@@ -275,10 +316,19 @@ class GameServer:
                 gen = self._generation  # read before env: a later poke is not lost
             status = self._lobby_status()
             self._publish_lobby(status)
+            with self.registry_lock:
+                joining = self._joining > 0
             now = time.monotonic()
-            if status.state == "starting" and status.deadline is not None and status.deadline <= now:
+            if (
+                status.state == "starting"
+                and status.deadline is not None
+                and status.deadline <= now
+                and not joining
+                and self.env.can_start()
+            ):
                 return True
-            timeout = None if status.deadline is None else status.deadline - now
+            # A finishing join pokes, so no timeout is needed while one runs.
+            timeout = None if status.deadline is None or joining else status.deadline - now
             self._wait_for_poke(gen, timeout)
 
     def _pause_between_hands(self) -> None:
@@ -338,7 +388,8 @@ class GameServer:
             self._cond.notify_all()
 
     def shutdown(self, timeout: float = 10.0) -> None:
-        """Stop accepting requests, send `close` to every session and stop the loop."""
+        """Stop accepting requests, answer the ones in flight, send `close` to
+        every session and stop the loop."""
         with self._cond:
             if self._shut_down:
                 return
@@ -350,6 +401,9 @@ class GameServer:
             self._tcp.shutdown()
             self._listener_thread.join(timeout)
         self._tcp.server_close()
+        with self._requests:
+            # e.g. the response to the last hand_end reply of a hand that just ended
+            self._requests.wait_for(lambda: self._in_flight == 0, REQUEST_DRAIN_TIMEOUT)
         with self.registry_lock:
             connections = list(self._connections)
             sessions = [s for s in self._sessions.values() if isinstance(s, ClientSession)]
@@ -370,6 +424,15 @@ class GameServer:
         if game is not None and game is not threading.current_thread():
             game.join(timeout)
         _log.info("server stopped")
+
+    def _request_begins(self) -> None:
+        with self._requests:
+            self._in_flight += 1
+
+    def _request_ends(self) -> None:
+        with self._requests:
+            self._in_flight -= 1
+            self._requests.notify_all()
 
     # --- lobby -------------------------------------------------------------------
 
@@ -394,13 +457,14 @@ class GameServer:
     def _lobby_status(self, pause_until: Optional[float] = None) -> _Lobby:
         """The lobby status, computed from `env` (outside the lobby condition)."""
         active = len(self.env.active_players)
+        needed = self.required_players
         if pause_until is not None:
-            return _Lobby("next_hand", active, MIN_PLAYERS, pause_until)
-        if active < MIN_PLAYERS:
-            return _Lobby("waiting", active, MIN_PLAYERS, None)
+            return _Lobby("next_hand", active, needed, pause_until)
+        if active < needed:
+            return _Lobby("waiting", active, needed, None)
         with self._cond:
             last_arrival = self._last_arrival
-        return _Lobby("starting", active, MIN_PLAYERS, last_arrival + self.grace_period)
+        return _Lobby("starting", active, needed, last_arrival + self.grace_period)
 
     def _publish_lobby(self, status: _Lobby) -> None:
         """Send `lobby` to every joined session if the status changed since the
@@ -553,13 +617,24 @@ class GameServer:
 
     def _join(self, req: dict) -> dict:
         name = req["name"]
-        port = req["callback_port"]
         with self.registry_lock:
             if self._stopping:
                 return error_response("the server is shutting down")
             if name in self._sessions:
                 return error_response(f"name {name!r} is already taken at this table")
             self._sessions[name] = _RESERVED  # concurrent joins with the same name
+            # Until the session knows its player, the lobby does not start a
+            # hand: the joiner would miss the `acting` announcements.
+            self._joining += 1
+        try:
+            return self._join_reserved(name, req)
+        finally:
+            with self.registry_lock:
+                self._joining -= 1
+            self._poke()
+
+    def _join_reserved(self, name: str, req: dict) -> dict:
+        port = req["callback_port"]
         session: Optional[ClientSession] = None
         try:
             try:
@@ -604,7 +679,6 @@ class GameServer:
             session.player = player
             if self._sessions.get(name) is session:
                 self._lobby_fresh.add(session)  # gets the lobby status at once
-        self._poke()
         _log.info(
             "%s joined with %g BB (%s)",
             name,

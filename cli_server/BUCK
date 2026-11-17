@@ -19,6 +19,23 @@ python_library(
     visibility = ["PUBLIC"],
 )
 
+# End-to-end test mode: case loader, stacked deck, scripted client process,
+# driver and checker. The recorded hands are resources, so they sit next to the
+# `cli_server` package in the built binary (driver.py finds them at
+# Path(__file__).resolve().parents[2] / "e2e_test_sets"). driver.py imports
+# GameServer lazily, so this library does not depend on :cli_server_lib.
+python_library(
+    name = "e2e",
+    srcs = glob(["cli_server/e2e/*.py"]),
+    base_module = "",
+    resources = glob(["e2e_test_sets/*.json"]),
+    deps = [
+        ":protocol",
+        "//engine:engine",
+        "//entities:entities",
+    ],
+)
+
 python_library(
     name = "cli_server_lib",
     srcs = [
@@ -28,6 +45,7 @@ python_library(
     ],
     base_module = "",
     deps = [
+        ":e2e",
         ":protocol",
         "//engine:engine",
     ],
@@ -36,6 +54,7 @@ python_library(
 )
 
 # buck2 run //cli_server:cli_server -- --port 8008
+# buck2 run //cli_server:cli_server -- --e2e_test [--case NAME]
 python_binary(
     name = "cli_server",
     main_module = "cli_server.main",

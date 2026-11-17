@@ -2,19 +2,26 @@ import contextlib
 import io
 import socket
 import unittest
+from unittest import mock
 
 from engine import MAX_PLAYERS
 
 from cli_server import main as cli
 
+SAMPLE = "12_heads_up_three_raises_preflop_bb_scoops"
+
+
+def parse_rejected(test, argv):
+    """Parse `argv`, expecting an argparse usage error (exit 2); return stderr."""
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        with test.assertRaises(SystemExit) as cm:
+            cli.parse_args(argv)
+    test.assertEqual(cm.exception.code, 2)
+    return stderr.getvalue()
+
 
 class ArgumentsTest(unittest.TestCase):
-    def assert_rejected(self, argv):
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit) as cm:
-                cli.parse_args(argv)
-        self.assertEqual(cm.exception.code, 2)  # argparse usage error
-
     def test_defaults(self):
         args = cli.parse_args([])
         self.assertEqual(args.port, 8008)
@@ -25,6 +32,8 @@ class ArgumentsTest(unittest.TestCase):
         self.assertIsNone(args.max_buy_in)
         self.assertIsNone(args.seed)
         self.assertEqual(args.log_level, "INFO")
+        self.assertFalse(args.e2e_test)
+        self.assertIsNone(args.case)
         self.assertEqual(cli.env_kwargs(args)["action_timeout"], 180.0)
 
     def test_values(self):
@@ -73,7 +82,36 @@ class ArgumentsTest(unittest.TestCase):
             ["--unknown"],
         ):
             with self.subTest(argv=argv):
-                self.assert_rejected(argv)
+                parse_rejected(self, argv)
+
+
+class E2EArgumentsTest(unittest.TestCase):
+    def test_e2e_defaults(self):
+        args = cli.parse_args(["--e2e_test"])
+        self.assertTrue(args.e2e_test)
+        self.assertIsNone(args.case)  # every case
+        self.assertEqual(args.action_timeout, 10.0)  # a stuck replay fails quickly
+        self.assertEqual(args.seed, 0)  # reproducible filler cards
+        self.assertTrue(cli.parse_args(["--e2e-test"]).e2e_test)  # alias
+
+    def test_e2e_explicit_values_are_kept(self):
+        args = cli.parse_args(["--e2e_test", "--action-timeout", "3", "--seed", "9"])
+        self.assertEqual((args.action_timeout, args.seed), (3.0, 9))
+
+    def test_case_with_or_without_json(self):
+        a = cli.parse_args(["--e2e_test", "--case", SAMPLE])
+        b = cli.parse_args(["--e2e_test", "--case", f"{SAMPLE}.json"])
+        self.assertEqual(a.case, SAMPLE)
+        self.assertEqual(b.case, SAMPLE)
+
+    def test_case_without_e2e_test(self):
+        err = parse_rejected(self, ["--case", SAMPLE])
+        self.assertIn("--e2e_test", err)
+
+    def test_unknown_case(self):
+        err = parse_rejected(self, ["--e2e_test", "--case", "no_such_case"])
+        self.assertIn("no_such_case", err)
+        self.assertIn(SAMPLE, err)  # the available cases are listed
 
 
 class MainTest(unittest.TestCase):
@@ -85,6 +123,22 @@ class MainTest(unittest.TestCase):
         port = taken.getsockname()[1]
         with contextlib.redirect_stderr(io.StringIO()):
             code = cli.main(["--port", str(port), "--log-level", "CRITICAL"])
+        self.assertEqual(code, 1)
+
+    def test_e2e_mode_runs_the_cases(self):
+        with mock.patch.object(cli, "run_cases", return_value=0) as run:
+            code = cli.main(["--e2e_test", "--case", f"{SAMPLE}.json", "--log-level", "CRITICAL"])
+        self.assertEqual(code, 0)
+        run.assert_called_once_with([SAMPLE], seed=0, action_timeout=10.0)
+
+        with mock.patch.object(cli, "run_cases", return_value=1) as run:
+            code = cli.main(["--e2e_test", "--seed", "4", "--log-level", "CRITICAL"])
+        self.assertEqual(code, 1)
+        run.assert_called_once_with(None, seed=4, action_timeout=10.0)
+
+    def test_e2e_mode_interrupted(self):
+        with mock.patch.object(cli, "run_cases", side_effect=KeyboardInterrupt):
+            code = cli.main(["--e2e_test", "--log-level", "CRITICAL"])
         self.assertEqual(code, 1)
 
 
