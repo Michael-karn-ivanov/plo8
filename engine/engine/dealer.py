@@ -1,4 +1,35 @@
-"""Dealer: dealing, fixed-limit betting rounds, showdown and button movement."""
+"""Dealer: dealing, fixed-limit betting rounds, showdown and button movement.
+
+Deck use and deal order (public contract)
+-----------------------------------------
+How the dealer consumes its deck is part of the engine's contract, so that a
+caller-supplied deck (e.g. a stacked `Deck` subclass replaying a recorded hand)
+produces exactly the intended hole cards and board:
+
+- Once per hand, before any card is dealt, the dealer calls `deck.reset()` and
+  then `deck.shuffle()` - exactly once each, in that order, on the deck object
+  itself (never a copy). A subclass overriding `shuffle()` (e.g.
+  `super().shuffle()` then `self.put_on_top(script)`) controls the top of the
+  deck for that hand.
+- During the hand the dealer only calls `deck.deal_one()`, one card at a time
+  from the top. It never calls `deal(n)`, `remove`, `put_on_top`, `shuffle` or
+  `reset` mid-hand, and never looks at cards without dealing them.
+- Hole cards: four rounds; in each round one card to every participant,
+  clockwise, starting with the first participant left of the button and ending
+  with the button. Sitting-out seats are skipped. Heads-up the BB (left of the
+  button) gets the first card and the button/SB the second. A player's `Hand`
+  lists the cards in round order.
+- Board: then the flop (next 3 cards, in that order), the turn (next card) and
+  the river (next card). No burn cards. The same order is used for an all-in
+  run-out. Streets that are not reached are not dealt.
+
+With `n` participants counted from the left of the button (participant 0 =
+first left of the button, n-1 = the button), deck card `i` (0-based, top first)
+for `i < 4n` goes to participant `i % n` as hole card `i // n`; cards `4n`,
+`4n+1`, `4n+2` are the flop, `4n+3` the turn and `4n+4` the river.
+
+Changing this order is a breaking change for callers that stack decks.
+"""
 
 from __future__ import annotations
 
@@ -26,7 +57,15 @@ from .events import (
     PotAwarded,
     TableEvent,
 )
-from .player import CHIPS_PER_BB, DefaultAgent, Player, PlayerStatus, call_safely, to_bb
+from .player import (
+    CHIPS_PER_BB,
+    DefaultAgent,
+    Player,
+    PlayerStatus,
+    call_safely,
+    to_bb,
+    to_chips,
+)
 from .pots import build_pots, split_pot
 from .views import HandResult, PotResult, PotView, SeatView, TableView
 
@@ -53,6 +92,9 @@ def _run_now(fn: Callable[[], None]) -> None:
 
 class Dealer:
     """Runs hands of fixed-limit Omaha Hi-Lo 8-or-better. Internally all amounts are chips.
+
+    The chip unit is `chips_per_bb` (an even int >= 2): the big blind is
+    `chips_per_bb` chips, the small blind half of it.
 
     The dealer sees all seated players (active and sitting out) but deals in only
     the active ones; the participants of a hand are fixed when it starts. `in_hand`
@@ -81,8 +123,15 @@ class Dealer:
         players = list(players)
         if len({id(p) for p in players}) != len(players):
             raise ValueError("the same player is seated twice")
-        if isinstance(chips_per_bb, bool) or not isinstance(chips_per_bb, int) or chips_per_bb < 2:
-            raise ValueError(f"chips_per_bb must be an int >= 2, got {chips_per_bb!r}")
+        if (
+            isinstance(chips_per_bb, bool)
+            or not isinstance(chips_per_bb, int)
+            or chips_per_bb < 2
+            or chips_per_bb % 2
+        ):
+            raise ValueError(f"chips_per_bb must be an even int >= 2, got {chips_per_bb!r}")
+        if deck is not None and not isinstance(deck, Deck):
+            raise TypeError(f"deck must be an entities.Deck, got {type(deck).__name__}")
         if players and not 0 <= button < len(players):
             raise ValueError(f"button seat {button} is not at the table")
         if not players and button != 0:
@@ -126,7 +175,12 @@ class Dealer:
     # --- helpers -----------------------------------------------------------
 
     def to_bb(self, chips: int) -> float:
+        """Chips of this table to big blinds."""
         return to_bb(chips, self.chips_per_bb)
+
+    def to_chips(self, amount_bb: float) -> int:
+        """Big blinds to whole chips of this table (rounded)."""
+        return to_chips(amount_bb, self.chips_per_bb)
 
     @property
     def active_players(self) -> list[Player]:
@@ -262,7 +316,8 @@ class Dealer:
         return result
 
     def start_hand(self) -> None:
-        """Reset the deck, board, pots, the event history and per-hand player
+        """Prepare the deck (one `reset()` then one `shuffle()`, see the module
+        docstring), reset the board, pots, the event history and per-hand player
         state; fix the participants, the button and the blind seats."""
         with self.lock:
             if self.in_hand:
@@ -336,8 +391,9 @@ class Dealer:
         )
 
     def deal_hole_cards(self) -> None:
-        """Deal 4 cards one at a time to each participant, starting left of the
-        button; then tell each participant (same order) its own hand."""
+        """Deal 4 rounds of one card to each participant, starting left of the
+        button and ending with the button (see the module docstring); then tell
+        each participant (same order) its own hand."""
         order = self._order_after(self.button)  # type: ignore[arg-type]
         dealt: dict[int, list[Card]] = {p.seat: [] for p in order}  # type: ignore[misc]
         for _ in range(4):
@@ -359,6 +415,7 @@ class Dealer:
             self._betting_round(self._order_after(self.button))  # type: ignore[arg-type]
 
     def _deal_board(self, street: Street) -> None:
+        """Deal the next street from the top of the deck, one card at a time (no burn)."""
         if street is Street.FLOP:
             cards = tuple(self.deck.deal_one() for _ in range(3))
             self.board = self.board.with_flop(*cards)

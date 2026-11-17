@@ -1,15 +1,17 @@
+import random
 import unittest
 
 from engine import (
     DEFAULT_ACTION_TIMEOUT,
+    Deck,
     Environment,
     IllegalActionError,
     NotEnoughPlayersError,
     Player,
     PlayerStatus,
     Street,
-    TableFullError,
 )
+from engine import TableFullError
 
 
 class Passive:
@@ -165,10 +167,44 @@ class StartRoundTest(unittest.TestCase):
     def test_chips_per_bb(self):
         p = Player("a", 100)
         env = Environment([p, Player("b", 100)], chips_per_bb=10)
+        self.assertEqual(env.chips_per_bb, 10)
+        self.assertEqual((env.dealer.small_blind, env.dealer.big_blind), (5, 10))
+        self.assertEqual(env.dealer.to_chips(1.5), 15)
+        self.assertEqual(env.dealer.to_bb(15), 1.5)
         self.assertEqual(p.stack, 100.0)
         self.assertEqual(p.chips, 1000)
         result = env.start_round()
         self.assertAlmostEqual(sum(result.stacks.values()), 200.0)
+        self.assertEqual(Environment().chips_per_bb, 100)
+
+    def test_invalid_chips_per_bb_rejected(self):
+        for bad in (3, 101, 1, 0, -2, 2.0, "100", True, None):
+            with self.subTest(chips_per_bb=bad):
+                with self.assertRaises(ValueError):
+                    Environment([Player("a", 100), Player("b", 100)], chips_per_bb=bad)
+        Environment(chips_per_bb=2)  # the smallest valid unit
+
+    def test_amount_rounding_to_zero_chips_rejected(self):
+        p = Player("a", 10)
+        env = Environment([p, Player("b", 10)], chips_per_bb=2)
+        with self.assertRaises(ValueError):
+            env.join(0.2)  # 0.4 chips -> 0
+        with self.assertRaises(ValueError):
+            p.rebuy(0.2)
+        env.join(0.5)  # 1 chip
+        self.assertEqual(env.players[-1].chips, 1)
+
+    def test_deck(self):
+        deck = Deck(random.Random(1))
+        env = Environment([Player("a", 100), Player("b", 100)], deck=deck)
+        self.assertIs(env.deck, deck)
+        env.start_round()
+        self.assertIs(env.dealer.deck, deck)  # not copied
+        self.assertIsInstance(Environment().deck, Deck)
+        for bad in ("deck", [], object(), random.Random(1)):
+            with self.subTest(deck=bad):
+                with self.assertRaises(TypeError):
+                    Environment(deck=bad)
 
     def test_action_timeout(self):
         self.assertEqual(Environment().action_timeout, DEFAULT_ACTION_TIMEOUT)

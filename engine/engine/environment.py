@@ -13,7 +13,7 @@ from entities import Deck
 
 from .dealer import Dealer, NotEnoughPlayersError
 from .events import PlayerJoined, PlayerLeft, TableEvent
-from .player import CHIPS_PER_BB, Player, PlayerStatus, call_safely, to_chips
+from .player import CHIPS_PER_BB, Player, PlayerStatus, call_safely
 from .views import HandResult
 
 __all__ = [
@@ -50,6 +50,15 @@ def _bind_agent(player: Player) -> None:
 class Environment:
     """Seated players (clockwise; seat = index), a dealer, the button and a join queue.
 
+    `chips_per_bb` is the table's chip unit (an even int >= 2; BB = `chips_per_bb`
+    chips, SB = half of it); every chip computation uses it, so a caller replaying
+    a hand recorded in chips sets it to the recording's big blind.
+
+    `deck` is an optional `entities.Deck` (subclasses, e.g. a stacked deck, are
+    allowed) used for every hand of this table, following the deck use and deal
+    order documented in `engine.dealer`. It is not copied; when it is given, `seed`
+    is not used for dealing. By default the deck is `Deck(random.Random(seed))`.
+
     The environment owns event broadcasting: every public event gets the next
     `seq` of the table and is delivered to all seated players in seat order.
     Agent notifications (events, `on_seated`, `on_left`, ...) are queued under
@@ -67,6 +76,15 @@ class Environment:
         action_timeout: Optional[float] = DEFAULT_ACTION_TIMEOUT,
         deck: Optional[Deck] = None,
     ) -> None:
+        if (
+            isinstance(chips_per_bb, bool)
+            or not isinstance(chips_per_bb, int)
+            or chips_per_bb < 2
+            or chips_per_bb % 2
+        ):
+            raise ValueError(f"chips_per_bb must be an even int >= 2, got {chips_per_bb!r}")
+        if deck is not None and not isinstance(deck, Deck):
+            raise TypeError(f"deck must be an entities.Deck, got {type(deck).__name__}")
         if (
             isinstance(max_seats, bool)
             or not isinstance(max_seats, int)
@@ -148,7 +166,13 @@ class Environment:
 
     @property
     def chips_per_bb(self) -> int:
+        """The table's chip unit: chips per big blind (fixed for the table's life)."""
         return self.dealer.chips_per_bb
+
+    @property
+    def deck(self) -> Deck:
+        """The deck the dealer uses for every hand of this table."""
+        return self.dealer.deck
 
     @property
     def max_buy_in(self) -> Optional[float]:
@@ -213,12 +237,12 @@ class Environment:
     def start_round(self) -> HandResult:
         """Start and play a new hand.
 
-        The deck is reset and shuffled, hole cards, per-hand player state and the
-        hand's event history are cleared, the board and pots are emptied, the SB
-        and BB players post the blinds, and the dealer runs the hand with the
-        active players. Afterwards players who asked to leave are removed and
-        queued joiners are seated. Raises NotEnoughPlayersError with fewer than
-        two active players.
+        The deck is reset and shuffled (once each, see `engine.dealer`), hole
+        cards, per-hand player state and the hand's event history are cleared,
+        the board and pots are emptied, the SB and BB players post the blinds, and
+        the dealer runs the hand with the active players. Afterwards players who
+        asked to leave are removed and queued joiners are seated. Raises
+        NotEnoughPlayersError with fewer than two active players.
         """
         return self.dealer.play_hand()
 
@@ -262,11 +286,11 @@ class Environment:
         agent: Optional[Any] = None,
     ) -> Player:
         """`join`, returning the new player (used by the remote join handler)."""
-        chips = to_chips(stack_bb, self.chips_per_bb)
+        chips = self.dealer.to_chips(stack_bb)
         if chips <= 0:
             raise ValueError(f"buy-in must be positive, got {stack_bb!r}")
         max_buy_in = self.max_buy_in
-        if max_buy_in is not None and chips > to_chips(max_buy_in, self.chips_per_bb):
+        if max_buy_in is not None and chips > self.dealer.to_chips(max_buy_in):
             raise ValueError(f"buy-in of {stack_bb} BB exceeds the max buy-in of {max_buy_in} BB")
         if seat is not None and (isinstance(seat, bool) or not isinstance(seat, int)):
             raise ValueError(f"seat must be an int offset from the button, got {seat!r}")
