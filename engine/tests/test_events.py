@@ -1,3 +1,4 @@
+import dataclasses
 import random
 import unittest
 
@@ -262,6 +263,27 @@ class EventStreamTest(unittest.TestCase):
         players[1].agent = Recorder()  # plain attribute assignment works too
         result = env.start_round()
         self.assertEqual(hand_events(players[1].agent, 3), list(result.history))
+
+
+class StampTest(unittest.TestCase):
+    def test_stamped_event_equals_replaced_copy(self):
+        env, players = table([None, None], seed=1)
+        dealer = env.dealer
+        originals = [
+            BlindPosted(0, "p0", "SB", 0.5, False, 99.5),
+            PlayerActed(1, "p1", Street.FLOP, ActionType.CALL, 1.0, 1.0, False, 98.0),
+            PlayerJoined(2, "p2", 30.0),
+        ]
+        for in_hand, hand_no in ((False, None), (True, 7)):
+            dealer.in_hand = in_hand
+            dealer.hand_number = 7
+            for k, original in enumerate(originals):
+                copy = dataclasses.replace(original)
+                expected = dataclasses.replace(original, seq=100 + k, hand_no=hand_no)
+                stamped = dealer.stamp(copy, 100 + k)
+                self.assertEqual(stamped, expected)
+                self.assertEqual((stamped.seq, stamped.hand_no), (100 + k, hand_no))
+        dealer.in_hand = False
 
 
 class ForcedFoldTest(unittest.TestCase):

@@ -33,7 +33,6 @@ Changing this order is a breaking change for callers that stack decks.
 
 from __future__ import annotations
 
-import dataclasses
 import functools
 import random
 import threading
@@ -238,10 +237,12 @@ class Dealer:
         return [p for p in self.players if p.seated]
 
     def stamp(self, event: TableEvent, seq: int) -> TableEvent:
-        """Set `seq` / `hand_no` on `event` and record it in the hand's history."""
-        hand_no = self.hand_number if self.in_hand else None
-        event = dataclasses.replace(event, hand_no=hand_no, seq=seq)
-        if self.in_hand:
+        """Set `seq` / `hand_no` on the freshly built `event` (in place, before
+        anyone else has seen it) and record it in the hand's history."""
+        in_hand = self.in_hand
+        object.__setattr__(event, "hand_no", self.hand_number if in_hand else None)
+        object.__setattr__(event, "seq", seq)
+        if in_hand:
             self.history.append(event)
         return event
 
