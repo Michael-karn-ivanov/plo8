@@ -22,6 +22,7 @@ from .actions import (
 )
 from .encoder import ENCODER_VERSION, OBS_DIM, OBS_LAYOUT, encode, encode_view
 from .stacks import HandSampler, HandSpec, StackConfig, draw_stacks
+from .table import NoHandError, Table
 from .tracker import HandTracker
 
 __all__ = [
@@ -36,6 +37,9 @@ __all__ = [
     "mask_array",
     "to_engine",
     "action_kind",
+    # table
+    "Table",
+    "NoHandError",
     # stacks
     "StackConfig",
     "draw_stacks",
