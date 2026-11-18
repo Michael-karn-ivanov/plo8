@@ -475,7 +475,13 @@ spent in rl_env (`1 − engine_time / total_time`). Timing with
 ### Results (development Mac)
 | Version | 2p dec/s | 6p dec/s | 9p dec/s | engine-only 6p dec/s | rl_env share (6p) |
 |---|---|---|---|---|---|
-| First implementation | _to measure_ | _to measure_ | _to measure_ | _to measure_ | _to measure_ |
+| First implementation | 31,837 | 38,863 | 35,104 | 141,206 | 72.5% |
+
+First implementation: `buck2 run //rl_env:bench` with the defaults (512 tables,
+20,000 hands per size, seed 0, `mixed` stacks, observation built at every
+decision), 2026-11-18. Engine-only at 2p / 9p: 84,672 / 152,215 dec/s; rl_env share
+62.4% / 76.9%. The target (≥ 5,000 dec/s) is met at every size, so none of the
+steps in "If the target is not met" is needed yet.
 
 A row is added after each speed-up, from the bench output.
 
