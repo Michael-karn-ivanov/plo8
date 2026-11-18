@@ -53,25 +53,16 @@ class Bot:
 
 
 class StackedDeck(Deck):
-    """A deck whose top cards are fixed after every shuffle."""
+    """A deck whose top cards are fixed after every shuffle (the deck contract:
+    `shuffle()` shuffles, then stacks the top; the deal methods are not touched)."""
 
     def __init__(self, top):
         super().__init__(random.Random(0))
         self.top = list(top)
-        self.queue = []
 
     def shuffle(self):
         super().shuffle()
-        self.remove(self.top)
-        self.queue = list(self.top)
-
-    def deal(self, n=1):
-        out = []
-        while self.queue and len(out) < n:
-            out.append(self.queue.pop(0))
-        if len(out) < n:
-            out += super().deal(n - len(out))
-        return out
+        self.put_on_top(self.top)
 
 
 def stacked(hands_in_deal_order, board):
