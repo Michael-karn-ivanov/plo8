@@ -20,6 +20,7 @@ from .actions import (
     mask_array,
     to_engine,
 )
+from .critic import NO_CARD, PRIV_DIM, critic_cards, expand_critic
 from .encoder import ENCODER_VERSION, OBS_DIM, OBS_LAYOUT, encode, encode_view
 from .stacks import HandSampler, HandSpec, StackConfig, draw_stacks
 from .table import NoHandError, Table
@@ -52,4 +53,9 @@ __all__ = [
     "OBS_LAYOUT",
     "encode",
     "encode_view",
+    # critic (privileged)
+    "NO_CARD",
+    "PRIV_DIM",
+    "critic_cards",
+    "expand_critic",
 ]
