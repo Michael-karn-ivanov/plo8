@@ -1,10 +1,29 @@
-"""Hand evaluation: high ranking, 8-or-better low ranking and Omaha 2+3 selection."""
+"""Hand evaluation: high ranking, 8-or-better low ranking and Omaha 2+3 selection.
+
+Table-driven implementation (pure Python, tables built once at import):
+
+- Per-card tables indexed by `Card.index`: `PRIME` (a distinct prime per rank),
+  `SUIT` (0..3) and `LOWBIT` (`1 << low_value` for low values <= 8, else 0).
+- High ranks are handled as integers: within one category every rank tuple has
+  the same length, so `category * 16**5 + sum(tiebreak_k * 16**(4 - k))` keeps
+  the tuple order exactly. `HIGH_INT` (non-flush) and `FLUSH_INT` (flush /
+  straight flush) map the product of the five rank primes to that integer;
+  `DECODE_HIGH` gives the public tuple back. The tables are built by running
+  the original ranking logic over every rank multiset, so the tuples are the
+  original ones by construction.
+- A qualifying low is five distinct low values <= 8; for such sets comparing
+  the descending tuples equals comparing the bitmasks `sum(1 << v)`, so the
+  best low is the smallest mask. `DECODE_LOW` gives the public tuple.
+
+Results are identical to the original implementation (kept in
+`tests/reference_evaluator.py` as the test oracle).
+"""
 
 from __future__ import annotations
 
 from collections import Counter
-from itertools import combinations
-from typing import Iterable, Optional
+from itertools import combinations, combinations_with_replacement
+from typing import Iterable, Optional, Sequence
 
 from entities import Board, Card, Hand
 
@@ -56,19 +75,11 @@ LowRank = tuple[int, ...]
 _WHEEL = [14, 5, 4, 3, 2]
 
 
-def _five(cards: Iterable[Card]) -> tuple[Card, ...]:
-    five = tuple(cards)
-    if len(five) != 5:
-        raise ValueError(f"exactly 5 cards are needed, got {len(five)}")
-    return five
+# --- the original ranking logic (builds the tables; fallback for odd input) ------
 
 
-def rank_high(cards: Iterable[Card]) -> HighRank:
-    """Rank a 5-card high hand. A-2-3-4-5 (the wheel) is a 5-high straight."""
-    five = _five(cards)
-    ranks = sorted((int(c.rank) for c in five), reverse=True)
-    flush = len({c.suit for c in five}) == 1
-
+def _rank_tuple(ranks: list[int], flush: bool) -> HighRank:
+    """High rank of five ranks (sorted descending); `flush`: all one suit."""
     straight_high: Optional[int] = None
     if len(set(ranks)) == 5:
         if ranks[0] - ranks[4] == 4:
@@ -101,6 +112,111 @@ def rank_high(cards: Iterable[Card]) -> HighRank:
     return (HIGH_CARD, *ranks)
 
 
+def _slow_high(five: Sequence[Card]) -> HighRank:
+    ranks = sorted((int(c.rank) for c in five), reverse=True)
+    return _rank_tuple(ranks, len({c.suit for c in five}) == 1)
+
+
+def _slow_low(five: Sequence[Card]) -> Optional[LowRank]:
+    values = sorted({c.rank.low_value for c in five}, reverse=True)
+    if len(values) != 5 or values[0] > 8:
+        return None
+    return tuple(values)
+
+
+# --- tables -----------------------------------------------------------------------
+
+_RANK_PRIMES = (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41)  # ranks 2..14
+
+
+def _low_value(rank: int) -> int:
+    return 1 if rank == 14 else rank
+
+
+def _low_bit(index: int) -> int:
+    v = _low_value((index >> 2) + 2)
+    return 1 << v if v <= 8 else 0
+
+
+# Card index = (rank - 2) * 4 + suit index.
+PRIME: tuple[int, ...] = tuple(_RANK_PRIMES[i >> 2] for i in range(52))
+SUIT: tuple[int, ...] = tuple(i & 3 for i in range(52))
+LOWBIT: tuple[int, ...] = tuple(_low_bit(i) for i in range(52))
+
+
+def _encode(t: HighRank) -> int:
+    v = t[0] * 16**5
+    for k, r in enumerate(t[1:]):
+        v += r * 16 ** (4 - k)
+    return v
+
+
+def _rank_product(ranks: Iterable[int]) -> int:
+    p = 1
+    for r in ranks:
+        p *= _RANK_PRIMES[r - 2]
+    return p
+
+
+HIGH_INT: dict[int, int] = {}
+FLUSH_INT: dict[int, int] = {}
+DECODE_HIGH: dict[int, HighRank] = {}
+DECODE_LOW: dict[int, LowRank] = {}
+
+
+def _build_tables() -> None:
+    # The 6,175 rank multisets (no rank more than 4 times), not suited.
+    for combo in combinations_with_replacement(range(2, 15), 5):
+        if max(Counter(combo).values()) > 4:
+            continue
+        ranks = sorted(combo, reverse=True)
+        t = _rank_tuple(ranks, False)
+        v = _encode(t)
+        HIGH_INT[_rank_product(ranks)] = v
+        DECODE_HIGH[v] = t
+    # The 1,287 sets of five distinct ranks, suited.
+    for combo in combinations(range(2, 15), 5):
+        ranks = sorted(combo, reverse=True)
+        t = _rank_tuple(ranks, True)
+        v = _encode(t)
+        FLUSH_INT[_rank_product(ranks)] = v
+        DECODE_HIGH[v] = t
+    # The 56 qualifying lows.
+    for values in combinations(range(1, 9), 5):
+        mask = 0
+        for x in values:
+            mask |= 1 << x
+        DECODE_LOW[mask] = tuple(sorted(values, reverse=True))
+
+
+_build_tables()
+
+_NO_LOW = 1 << 10  # bigger than every low mask
+
+
+# --- public functions ---------------------------------------------------------------
+
+
+def _five(cards: Iterable[Card]) -> tuple[Card, ...]:
+    five = tuple(cards)
+    if len(five) != 5:
+        raise ValueError(f"exactly 5 cards are needed, got {len(five)}")
+    return five
+
+
+def rank_high(cards: Iterable[Card]) -> HighRank:
+    """Rank a 5-card high hand. A-2-3-4-5 (the wheel) is a 5-high straight."""
+    five = _five(cards)
+    a, b, c, d, e = (x.index for x in five)
+    prod = PRIME[a] * PRIME[b] * PRIME[c] * PRIME[d] * PRIME[e]
+    s = SUIT[a]
+    flush = SUIT[b] == s and SUIT[c] == s and SUIT[d] == s and SUIT[e] == s
+    v = (FLUSH_INT if flush else HIGH_INT).get(prod)
+    if v is None:  # not five distinct cards
+        return _slow_high(five)
+    return DECODE_HIGH[v]
+
+
 def rank_low(cards: Iterable[Card]) -> Optional[LowRank]:
     """Rank a 5-card 8-or-better low, or return None if it does not qualify.
 
@@ -108,10 +224,11 @@ def rank_low(cards: Iterable[Card]) -> Optional[LowRank]:
     The result is sorted descending, so tuples compare directly: lower is better.
     """
     five = _five(cards)
-    values = sorted({c.rank.low_value for c in five}, reverse=True)
-    if len(values) != 5 or values[0] > 8:
-        return None
-    return tuple(values)
+    mask = 0
+    for x in five:
+        mask |= LOWBIT[x.index]
+    # Five cards set five bits only if all are low and of distinct values.
+    return DECODE_LOW.get(mask)
 
 
 def best_omaha(hand: Hand, board: Board) -> tuple[HighRank, Optional[LowRank]]:
