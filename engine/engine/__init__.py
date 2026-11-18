@@ -54,6 +54,7 @@ from .remote import (
     join_table,
     start_agent_process,
 )
+from .step import Decision, HandInProgressError, NoDecisionError
 from .views import HandResult, PotResult, PotView, SeatView, TableView
 
 __all__ = [
@@ -93,6 +94,10 @@ __all__ = [
     "PotSplit",
     "build_pots",
     "split_pot",
+    # step mode
+    "Decision",
+    "HandInProgressError",
+    "NoDecisionError",
     # events
     "TableEvent",
     "HandStarted",
