@@ -11,7 +11,7 @@ A hand can be played in two interchangeable ways:
   callbacks;
 - **step mode** (`Environment.start_hand()` / `step()`): the caller gets each decision
   and submits the action, so one process can run many tables and decide for all of
-  them in batches (reinforcement learning).
+  them in batches (reinforcement learning, `//rl_env`).
 
 Either way the engine enforces rules, moves chips, handles all-ins/side pots, decides
 who wins and reports every public table event to the seated players. Both modes run
@@ -33,12 +33,13 @@ engine/
     pots.py            # Pot, side-pot construction, pot splitting
     dealer.py          # Dealer: dealing, betting rounds, showdown, button movement; hand generator
     environment.py     # Environment: table setup, joining/leaving, start_round(), step mode
-    step.py            # Decision, step-mode errors
+    step.py            # Decision, HandHistory, step-mode errors
     views.py           # read-only snapshots passed to agents (TableView, HandResult)
     events.py          # public table events broadcast to seated players
     remote.py          # adapter for agents running in separate processes
+    benchmark.py       # step-mode self-play workload + report (library function, stdlib only)
   bench/
-    bench.py           # step-mode self-play benchmark (buck2 binary, standard library only)
+    bench.py           # command-line wrapper around engine.benchmark (buck2 binary)
   tests/
     reference_evaluator.py  # frozen copy of the original evaluator, used as the oracle
     test_evaluator.py
@@ -47,6 +48,7 @@ engine/
     test_betting.py
     test_dealer.py
     test_environment.py
+    test_stacks.py
     test_replay.py
     test_events.py
     test_join.py
@@ -54,8 +56,10 @@ engine/
     test_leave.py
     test_remote.py
     test_step.py
+    test_step_reads.py
     test_step_equivalence.py
     test_lazy_views.py
+    test_benchmark.py
   fuzz/
     test_fuzz_step.py  # 100,000 random step-mode hands (own test target)
 ```
@@ -65,6 +69,8 @@ engine/
 `engine/BUCK`:
 
 - `python_library(name = "engine", srcs = glob(["engine/**/*.py"]), base_module = "", deps = ["//entities:entities"], visibility = ["PUBLIC"])`
+  — includes `engine/benchmark.py`, so other projects (`//rl_env`'s benchmark) can
+  call the engine-only workload from the engine's own code.
 - `python_test(name = "engine_test", srcs = glob(["tests/*.py"]), base_module = "engine_tests", deps = [":engine"])`.
   Tests use the standard `unittest` module, so no third-party dependencies are needed
   with the system demo toolchain.
@@ -96,12 +102,39 @@ integer chips to avoid float rounding in pot splits:
 - `Player.stack` (float, in BB) is a property over `Player._chips` (int).
 - All public amounts (`rebuy`, `join`, views, events, `LegalActions`) accept/return BB;
   conversion is done in one place (`Dealer.to_chips` / `Dealer.to_bb`, using the table's
-  `chips_per_bb`) and incoming amounts are rounded to whole chips. An amount that
-  rounds to 0 chips is rejected like any non-positive amount.
+  `chips_per_bb`) and incoming amounts are rounded to whole chips
+  (`round(amount_bb * chips_per_bb)`), so a BB amount that is a whole number of the
+  table's chips (e.g. `1.234` at 1,000 chips/BB, despite float representation) converts
+  to exactly those chips. An amount that rounds to 0 chips is rejected like any
+  non-positive amount.
 - `Environment.chips_per_bb`, `Dealer.small_blind` and `Dealer.big_blind` (in chips) are
   readable, so hosts can report the table settings.
 - Bet sizes are fixed by the limit structure (see Actions), so agents never pass a bet
   amount.
+
+### Starting stacks are seated exactly
+
+A starting stack in BB is converted to chips **once, with the table's chip unit**,
+whichever way the player arrives (`//rl_env` replays recorded hands with players
+passed to `Environment(players=...)`, not through `join`):
+- **Players created directly** (`Player(name, stack, agent)`): a player that is not yet
+  at a table has no chip unit, so it keeps the amount as given in BB
+  (`Player._unseated_bb`; a `rebuy()` before seating adds to it, and to
+  `_unseated_rebuy_bb`). `stack` / `chips` of an unseated player report that amount
+  (chips at the default 100/BB, for display only). On the first `_attach` to a dealer
+  `_chips = to_chips(_unseated_bb, dealer.chips_per_bb)` (and `rebuy_chips` likewise
+  from `_unseated_rebuy_bb`) — no intermediate conversion at 100 chips/BB, so e.g.
+  `Player("A", 1.234)` at `chips_per_bb=1000` gets 1,234 chips (not 1,230), and
+  `Player("A", 0.005)` at 1,000 gets 5 chips (not rejected as 0). A player is attached
+  to one dealer for its whole life, so there is no later rescaling. At the default unit
+  this gives the same chips as before.
+- `Environment.__init__` validates each initial player's stack with the table's unit:
+  `to_chips(p._unseated_bb, chips_per_bb) <= 0` → `ValueError` (negative stacks are
+  rejected by `Player` itself).
+- **Joiners**: `join(stack_bb)` converts with `Dealer.to_chips` (the table's unit) and
+  sets the chips on the new player directly — already exact; covered by the same tests.
+- A stack that is not a whole number of the table's chips is rounded once to the
+  nearest chip (e.g. 1.237 BB at 10 chips/BB → 12 chips).
 
 ## Cards, hands, board and deck (from `//entities`)
 
@@ -205,7 +238,9 @@ Fast implementation (pure Python, lookup tables built once at import):
 State:
 - `name` (nick, see below), `seat`, `status`, `_chips` (stack),
   `hole_cards` (`Hand | None`, private), `street_bet`, `total_bet` (this hand),
-  `folded`, `all_in`, `has_acted`, `leave_requested`.
+  `folded`, `all_in`, `has_acted`, `leave_requested`; before the player is first
+  attached to a table, `_unseated_bb` / `_unseated_rebuy_bb` (see Units / chips →
+  Starting stacks are seated exactly).
 - `PlayerStatus`:
   - `WAITING` — joined, queued for a seat (see Environment → Joining); `seat is None`.
   - `ACTIVE` — seated with chips; dealt into the next hand.
@@ -213,10 +248,11 @@ State:
     hand, or the agent failed to act on its turn (see Sitting out). Keeps the seat but
     is not dealt cards, posts no blinds, never gets `on_turn` / `on_hole_cards`.
   - `LEFT` — removed from the table; terminal, the object is no longer usable for play.
-- `name` is set when the player is created / joins (`Player(name=None, agent=None)`);
-  if omitted the environment assigns `"Player<N>"`. Names must be unique at the table
-  (seated — active or sitting out — and waiting players); `name` is what views and
-  events show for the player. A name becomes free again once its player has left.
+- `name` is set when the player is created / joins (`Player(name=None, stack=0.0,
+  agent=None)`); if omitted the environment assigns `"Player<N>"`. Names must be unique
+  at the table (seated — active or sitting out — and waiting players); `name` is what
+  views and events show for the player. A name becomes free again once its player has
+  left.
 - Each player keeps a back-reference to its `Environment` (set on seating / join), used
   by `leave()` and by `rebuy()` validation.
 
@@ -336,9 +372,12 @@ Delivery (`Environment._broadcast(event)`):
   is nothing to order); the event is still stamped and recorded. The set of recipients
   with `on_event` is cached and invalidated when seats change (join / leave / status
   change) or an agent is replaced.
-- The same events are appended to the hand's history, which `TableView.history` and
-  `HandResult.history` expose, so an agent (or step-mode caller) that ignores
-  `on_event` can still read everything that happened.
+- The same events are appended to the hand's history (`Dealer.history`, a list created
+  fresh by `start_hand()` for each hand, append-only during the hand), which
+  `TableView.history` and `HandResult.history` expose as tuples, and which a step-mode
+  caller can read without a view and without a copy (`Environment.history`, see
+  Environment → Step mode). So an agent or caller that ignores `on_event` can still
+  read everything that happened.
 
 ## Views (`views.py`)
 
@@ -361,7 +400,9 @@ builder):
 - callback mode: for `on_turn` of players with an agent (the default agent gets none),
   for `on_hole_cards` and `on_seated` only if the agent defines them;
 - step mode: when the caller calls `Environment.view()`; the view of the pending
-  decision is cached until the decision is answered, so asking twice is free.
+  decision is cached until the decision is answered, so asking twice is free. The
+  view-free reads (`history`, `hole_cards()`, `privileged_hole_cards()`) never build
+  one.
 No view is built to be dropped (checked by `test_lazy_views`).
 
 ## Pots (`pots.py`)
@@ -527,7 +568,9 @@ End of hand (in this order, identical in both modes):
   player list and the join queue.
   Seated players (`ACTIVE` and `SITTING_OUT`) are kept in clockwise order;
   `Player.seat` is the index in that list. Initial `players` are seated directly
-  (each must have a positive stack; unnamed ones get a default name). With no initial
+  (each must have a stack of at least one chip of the table, and gets exactly the
+  chips its BB stack is worth at the table's unit, see Units / chips → Starting stacks
+  are seated exactly; unnamed ones get a default name). With no initial
   players there is no button and no game until two players have joined (see Joining);
   `button` is then ignored, and `action_timeout` (default 600 s) sets the turn timeout
   (callback mode only).
@@ -540,9 +583,10 @@ End of hand (in this order, identical in both modes):
   used for dealing (the supplied deck brings its own RNG); the deck is not copied, so
   the caller keeps control over it.
 - Together, `deck` and `chips_per_bb` let a caller replay a recorded hand exactly: same
-  hole cards and board (stacked deck + documented deal order) and the same odd-chip
-  splits (chip unit = the recording's big blind). Seat order and button come from the
-  usual seating rules (initial `players` + `button`, or the join rules below).
+  hole cards and board (stacked deck + documented deal order), the same starting
+  stacks in chips (exact seating) and the same odd-chip splits (chip unit = the
+  recording's big blind). Seat order and button come from the usual seating rules
+  (initial `players` + `button`, or the join rules below).
 - Owns event broadcasting (`_broadcast`, see Events) and the per-table `seq` counter;
   the dealer and the join / leave / rebuy / sit-out bookkeeping all go through it.
 - `start_round()` — callback mode: begins a new hand: resets and shuffles the deck
@@ -564,10 +608,15 @@ Types (`step.py`, exported from `engine`):
 - `Decision` — frozen dataclass describing the pending decision: `hand_number`, `seat`,
   `name`, `player` (the `Player` object, for convenience) and `legal: LegalActions`.
   It carries no view and no cards.
+- `HandHistory` — read-only `collections.abc.Sequence[TableEvent]` over the dealer's
+  history list of one hand (`__slots__ = ("_events",)`; `__len__`, `__getitem__` — an
+  int gives the event, a slice gives a tuple of just those events — `__iter__`; no
+  mutating methods, the list itself is not reachable through public attributes). It
+  is a live window, not a copy: events appended to the hand later show up in it.
 - `HandInProgressError(RuntimeError)` — a hand is started (either mode) while another
   one is in progress.
-- `NoDecisionError(RuntimeError)` — `step()` / `view()` called while no decision is
-  pending.
+- `NoDecisionError(RuntimeError)` — `step()` / `view()` / `hole_cards()` called while
+  no decision is pending.
 - Illegal actions raise the existing `IllegalActionError`.
 
 `Environment` methods:
@@ -596,6 +645,32 @@ Types (`step.py`, exported from `engine`):
   `None` before the first hand.
 - `hand_in_progress` (property) — `dealer.in_hand`.
 
+View-free reads (for callers such as `//rl_env` that build their own observations and
+must not pay for a `TableView` at every decision; none of them builds a view):
+- `history` (property) — `HandHistory` of the current hand: the public events stamped
+  so far, the same events, in the same order, as `view().history` would hold. The
+  `HandHistory` object is created once per hand by `Dealer.start_hand()` together with
+  the fresh history list (`Dealer.history_view`), so reading it costs nothing per
+  decision. A caller processes only new events with a cursor:
+  `new = env.history[seen:]; seen = len(env.history)`, resetting `seen` to 0 when
+  `decision.hand_number` changes (a new hand gives a new `HandHistory`). After the hand
+  ends it still shows that hand's events (equal to `last_result.history`) until the
+  next hand starts; before the first hand it is empty.
+- `hole_cards() -> Hand` — the acting player's own hole cards for the pending decision
+  (`decision.player.hole_cards`, identical to `view().hole_cards`). `NoDecisionError`
+  if no decision is pending.
+- `privileged_hole_cards() -> Mapping[int, Hand]` — seat → `Hand` for **every
+  participant** of the current hand (folded ones included), or of the last hand once it
+  is over (until the next hand starts); empty before the first hand. Built once per
+  hand on first call (hole cards do not change during a hand) and returned as a
+  read-only `types.MappingProxyType`; the cache is cleared by `Dealer.start_hand()`.
+  This is the only engine accessor that reveals other players' hidden cards: it is
+  meant for training tools allowed to see everything (the critic of `//rl_env`). It is
+  deliberately separate from everything an agent receives: it is not part of
+  `Decision`, `TableView`, `HandResult` (beyond the cards shown at showdown), events or
+  any callback, and `RemoteAgent` / `agent_loop` never call or send it. Its docstring
+  states this.
+
 Behaviour details:
 - Nothing else differs from callback mode: `on_hole_cards`, `on_event`, `on_hand_end`,
   `on_seated`, `on_sit_out`, `on_return`, `on_left` are called if the agent has them;
@@ -615,14 +690,19 @@ Behaviour details:
   seating and the submitted actions; the engine itself draws no random numbers.
 - Step mode is meant for a single controlling thread per table (one process may own
   many tables); `join` / `leave` from other threads remain guarded by the table lock
-  as before.
+  as before. The view-free reads are meant for that controlling thread (the history is
+  only appended to by it).
 
 Typical batched loop:
 
 ```python
 pending = {env: env.start_hand() for env in envs}
+seen = {env: 0 for env in envs}
 while True:
     batch = [(env, d) for env, d in pending.items() if d is not None]
+    for env, _ in batch:                              # view-free observation input
+        update_obs(env, env.history[seen[env]:], env.hole_cards())
+        seen[env] = len(env.history)
     views = [env.view() for env, _ in batch]          # only if the policy needs them
     actions = policy(views, [d.legal for _, d in batch])
     for (env, _), a in zip(batch, actions):
@@ -631,6 +711,7 @@ while True:
         if d is None:
             consume(env.last_result)
             pending[env] = env.start_hand()           # next hand
+            seen[env] = 0
 ```
 
 ### Sitting out
@@ -666,7 +747,9 @@ while True:
 ### Joining (`join`)
 
 `join(stack_bb, seat=None, name=None, agent=None) -> None`:
-- `stack_bb` — buy-in in big blinds; must be > 0 and ≤ `max_buy_in` if set.
+- `stack_bb` — buy-in in big blinds; must be > 0 (at least one chip of the table) and
+  ≤ `max_buy_in` if set. Converted with the table's chip unit, so a buy-in that is a
+  whole number of the table's chips is seated with exactly those chips.
 - `name` — the player's nick; must be unique among seated and waiting players
   (`ValueError` otherwise); default name assigned if omitted.
 - `seat` — position **relative to the button** (clockwise offset): `1` = first seat left
@@ -728,7 +811,8 @@ Seating:
 
 Concurrency:
 - Seat renumbering only happens between hands, so seat indices in a `TableView` /
-  `HandResult` / events / `Decision` are stable for the duration of a hand.
+  `HandResult` / events / `Decision` / `privileged_hole_cards()` are stable for the
+  duration of a hand.
 - `join`, `leave`, `rebuy` bookkeeping, queue processing and `seq` assignment are
   guarded by a `threading.RLock`, so a host thread that accepts agent connections can
   call `join` / `leave` while the dealer is running a hand. Callbacks are invoked
@@ -771,7 +855,8 @@ still are):
   arrives after the timeout (stale turn id) is discarded.
 - Each agent only ever receives its own hole cards (in `HoleCards` and in its own
   `TableView`s); other players' cards reach it only through `HandShown` at showdown, so
-  information is isolated per process.
+  information is isolated per process. `Environment.privileged_hole_cards()` is a
+  host-side, step-mode-caller accessor and is never used by this module.
 
 ## Speed
 
@@ -781,31 +866,50 @@ behaviour: every one of them must leave `test_step_equivalence`,
 `test_evaluator_equivalence`, the fuzz test and all existing tests (engine, entities,
 cli_server, cli_client, cli_server end-to-end cases) green.
 
+### Benchmark workload (`engine/benchmark.py`, library)
+
+The workload lives in the library so that `//rl_env`'s benchmark can print the
+engine-only number from the engine's own code next to its own. Standard library only.
+
+- `run_benchmark(players: int, *, tables=512, hands=20_000, stack=100.0, seed=0,
+  views=False, callback=False, warmup=1_000) -> BenchResult` — one run at one table
+  size:
+  - builds `tables` environments of `players` seats, players without agents (no
+    callbacks), each table with its own `Deck(random.Random(seed + t))`; one
+    `random.Random(seed)` chooses actions;
+  - loop as in Environment → Step mode: for every table with a pending decision pick
+    `rng.choice(decision.legal.actions)` and `step()` it; for every table whose hand
+    ended, top up any player below the starting stack with `rebuy()` (between hands,
+    so the table size stays constant and nobody sits out) and `start_hand()` again.
+    Views are not requested (engine-only cost); `views=True` requests one per decision
+    to measure that cost separately; `callback=True` runs the same workload in
+    callback mode with a random agent, for comparison;
+  - timing with `time.perf_counter()`, the first `warmup` hands excluded.
+- `BenchResult` (frozen dataclass): `players`, `hands`, `decisions`, `seconds`,
+  `hands_per_s`, `decisions_per_s`, `showdown_share`, and the settings used (`tables`,
+  `mode` — `"step"` / `"step+views"` / `"callback"`).
+- `format_report(results: Sequence[BenchResult]) -> str` — the report table: one line
+  per table size with hands, decisions, wall time, hands/s, decisions/s and the share
+  of hands reaching showdown. `//rl_env` prints these lines (or the `BenchResult`
+  numbers) as its engine-only reference.
+- Deterministic for given arguments (same hands and decisions; only the timings vary).
+
 ### Benchmark tool (`bench/bench.py`, `buck2 run //engine:bench`)
 
-Standard library only. Options: `--tables N` (default 512), `--players 2,6,9`
-(default; one run per size), `--hands H` (hands per run, default 20,000), `--stack BB`
-(default 100), `--seed S` (default 0), `--profile` (wrap the run in `cProfile` and
-print the top functions by cumulative and total time), `--callback` (run the same
-workload in callback mode with a random agent, for comparison).
-- Builds `N` environments of the given size, players without agents (no callbacks),
-  each table with its own `Deck(random.Random(seed + t))`; one `random.Random(seed)`
-  chooses actions.
-- Loop as in Environment → Step mode: for every table with a pending decision pick
-  `rng.choice(decision.legal.actions)` and `step()` it; for every table whose hand
-  ended, top up any player below the starting stack with `rebuy()` (between hands, so
-  the table size stays constant and nobody sits out) and `start_hand()` again. Views
-  are not requested (engine-only cost); `--views` requests one per decision to measure
-  that cost separately.
-- Reports per table size: hands, decisions, wall time, hands/s, decisions/s, and the
-  share of hands reaching showdown. Timing uses `time.perf_counter()`, warm-up of 1,000
-  hands excluded.
+A thin command-line wrapper: parses the options, calls `run_benchmark` once per table
+size and prints `format_report(...)`. Options: `--tables N` (default 512),
+`--players 2,6,9` (default; one run per size), `--hands H` (hands per run, default
+20,000), `--stack BB` (default 100), `--seed S` (default 0), `--views`, `--callback`,
+`--profile` (wrap the runs in `cProfile` and print the top functions by cumulative and
+total time — profiling stays in the tool, not in the library function).
 
 ### Speed-ups (in order of expected gain; each measured with the benchmark)
 
 1. **Lazy views**: no `TableView` for agents without `on_hole_cards`, for the default
    agent's turns, or in step mode unless `view()` is called (see Views). In the
-   baseline about a third of the time went into building views.
+   baseline about a third of the time went into building views. The view-free reads
+   (`history` without a copy, `hole_cards()`, cached `privileged_hole_cards()`) let
+   step-mode callers such as `//rl_env` keep this saving.
 2. **Table-driven evaluator** (see Hand evaluation): prime-product / bitmask lookups
    over the 60 combinations, board triples shared by all players at a showdown. In the
    baseline about a third of the time went into evaluation.
@@ -882,6 +986,19 @@ it.
   is rejected; default and duplicate names; `NotEnoughPlayersError` with < 2 active
   players; `chips_per_bb` that is odd, < 2 or not an `int`, and a `deck` that is not a
   `Deck`, are rejected.
+- `test_stacks` (exact seating, acceptance "a starting stack that is a whole number of
+  chips is seated exactly"): at `chips_per_bb` 2, 10, 1,000 and 10,000 (and 100 as a
+  control), for many stacks that are whole numbers of the table's chips (including
+  ones that are not whole at 100/BB, e.g. 1.234 BB at 1,000, 0.005 BB at 1,000, 0.5 BB
+  at 2, and values with inexact float representations such as 0.29, 1.1, 2.3 BB),
+  players passed to `Environment(players=...)` and players added with `join()` (both
+  between hands and queued mid-hand) have `chips == round(stack_bb · chips_per_bb)`
+  exactly and report the same `stack_bb` in `PlayerJoined` / `HandStarted`; a
+  `Player` rebought before seating is seated with stack + rebuy exactly; a stack below
+  one chip of the table is rejected, while one that is ≥ 1 chip of the table but < 1
+  chip at 100/BB is accepted; a non-whole stack is rounded once to the nearest chip;
+  at the default unit seating is unchanged from before (same chips as
+  `to_chips(stack, 100)`).
 - `test_replay` (supplied deck and chip unit):
   - a recording `Deck` subclass sees exactly one `reset()` followed by one `shuffle()`
     per hand, before any card is dealt, and only `deal_one()` calls during the hand;
@@ -900,7 +1017,10 @@ it.
     and `HandResult` equal `chips / chips_per_bb`;
   - replaying the same scripted hand (same deck script, chip unit, seating and agent
     actions) on two fresh environments gives identical event streams and identical
-    `HandResult`s; the same holds in step mode, and the deck sees the same calls.
+    `HandResult`s; the same holds in step mode, and the deck sees the same calls;
+  - a recorded hand with players created directly (`Environment(players=...)`, as
+    `//rl_env` does) at the recording's chip unit, with starting stacks that are not
+    whole at 100/BB, reproduces the recorded final stacks in chips.
 - `test_events`: every participant gets `on_hole_cards` with exactly its own 4 cards
   after the blinds and before the first `on_turn` of the hand, sitting-out players do
   not; every seated player (actor included, sitting-out included, waiting excluded)
@@ -968,6 +1088,29 @@ it.
     joiners seated, button moved, `last_result` set; `on_turn` never called;
   - determinism: two fresh environments with the same seed (and with the same stacked
     deck), seating and actions give identical events and results.
+- `test_step_reads` (view-free reads, acceptance "events and hole cards read without a
+  view equal the view's, and reading them builds no view"):
+  - over many random step-mode hands (sizes 2–10, short stacks and all-ins included),
+    at every decision: `tuple(env.history) == env.view().history` and
+    `env.hole_cards() == env.view().hole_cards`, with the view-free reads done first on
+    a fresh decision; and on a second set of hands with views never requested, a
+    `Dealer.table_view` call counter stays at 0 while `history`, `hole_cards()` and
+    `privileged_hole_cards()` are read at every decision;
+  - cursor reading: concatenating `env.history[seen:]` slices taken at each decision
+    (and once after the hand ends) gives exactly `last_result.history`; after the hand
+    `env.history` equals `last_result.history`; a new hand gives a new, initially
+    short `HandHistory`, and the old one still shows the old hand;
+  - `history` is not a copy: the same `HandHistory` object is returned at every
+    decision of a hand, and its length grows as events are added; it has no mutating
+    methods (`append`, `__setitem__`, `__delitem__` → `AttributeError` / `TypeError`)
+    and slicing returns a tuple;
+  - `privileged_hole_cards()` maps exactly the participants' seats (sitting-out seats
+    absent, folded players present) to the `Hand`s dealt (checked against a stacked
+    deck and the deal-order formula); it is read-only (`MappingProxyType`), the same
+    object at every decision of a hand; the cards it reveals for other seats never
+    appear in `Decision`, `view()`, `on_hole_cards` or events before showdown;
+  - `hole_cards()` with no pending decision → `NoDecisionError`; reading any of the
+    three changes no state (`seq`, history length, chips, pending decision).
 - `test_step_equivalence` (the interchangeability acceptance test): for several
   hundred seeds, table sizes 2–10, stacks drawn to include short stacks (< 1 BB,
   1–3 BB), all-ins and multi-way side pots, and button positions: play the hand in
@@ -980,9 +1123,16 @@ it.
   in the middle), and with views requested at every decision vs never (no effect on
   results).
 - `test_lazy_views`: counting `Dealer.table_view` calls — zero in step mode without
-  `view()` and with agents lacking `on_hole_cards`; exactly one per `view()`-requested
-  decision; one per `on_hole_cards` agent per hand; one per callback-mode turn of a
-  real agent and none for the default agent.
+  `view()` and with agents lacking `on_hole_cards` (also when `history`,
+  `hole_cards()` and `privileged_hole_cards()` are read at every decision); exactly
+  one per `view()`-requested decision; one per `on_hole_cards` agent per hand; one per
+  callback-mode turn of a real agent and none for the default agent.
+- `test_benchmark`: `run_benchmark` with a tiny workload (e.g. 4 tables, 50 hands,
+  warm-up 10) at 2 and 6 players returns a `BenchResult` with the requested hand count,
+  positive decisions and rates, a showdown share in [0, 1]; two runs with the same
+  arguments give the same hands, decisions and showdown share; `views=True` and
+  `callback=True` run; `format_report` gives one line per result containing its
+  hands/s and decisions/s.
 - `fuzz/test_fuzz_step` (`engine_fuzz_test`): 100,000 random step-mode hands
   (`ENGINE_FUZZ_HANDS` overrides the count) on tables of random size 2–10 with random
   stacks (0.5–200 BB, players topped up / rebought between hands), random legal
