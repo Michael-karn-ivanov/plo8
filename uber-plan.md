@@ -526,7 +526,9 @@ Engine spec change #3 (small, requested by `rl_env/plan.md` and already in
 `engine/spec.md`): read the current hand's public events and the acting player's hole
 cards **without** building a view, a separate accessor for every participant's hole
 cards (critic only), exact starting stacks at any chip unit (recorded-hand replays), and
-the engine benchmark's workload as a library function (`//engine:bench_lib`).
+the engine benchmark's workload as a library function (`engine.benchmark.run_benchmark`).
+In `engine/plan.md` these are `env.history`, `env.hole_cards()` and
+`env.privileged_hole_cards()`.
 `cli_server/spec.md` makes the `:e2e` library (recorded hands, stacked deck) usable by
 other projects' tests.
 
@@ -620,7 +622,7 @@ The engine's own speed was handled in 1A.2. This benchmark measures what a rollo
 will actually pay per decision: `TableBatch` over 512 tables, with the observation and
 mask built for every decision and `RandomController` (random actions, no network). It
 reports decisions/s at 2, 6 and 9 players next to the engine-only number from
-`//engine:bench_lib`, so you can see the encoder's share.
+`engine.benchmark.run_benchmark`, so you can see the encoder's share.
 
 Target before Phase 6: **at least 5,000 decisions/s per core with the encoder** (the
 network adds little per decision when batched). Every 2× here roughly halves the AWS
