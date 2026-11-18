@@ -54,8 +54,10 @@ from .remote import (
     join_table,
     start_agent_process,
 )
-from .step import Decision, HandInProgressError, NoDecisionError
+from .step import Decision, HandHistory, HandInProgressError, NoDecisionError
 from .views import HandResult, PotResult, PotView, SeatView, TableView
+
+# The benchmark workload (`engine.benchmark`) is imported on demand, not here.
 
 __all__ = [
     # entities re-exports
@@ -96,6 +98,7 @@ __all__ = [
     "split_pot",
     # step mode
     "Decision",
+    "HandHistory",
     "HandInProgressError",
     "NoDecisionError",
     # events
@@ -131,6 +134,5 @@ __all__ = [
     "agent_loop",
     "handle_join",
     "join_table",
-    "connect_and_join",
     "start_agent_process",
 ]
