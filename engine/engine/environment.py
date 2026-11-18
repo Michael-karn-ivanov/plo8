@@ -12,7 +12,7 @@ import random
 import threading
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Optional, Union
+from typing import Any, Callable, Iterable, Mapping, Optional, Union
 
 from entities import Deck, Hand
 
@@ -86,8 +86,8 @@ class Environment:
     Step mode: `start_hand()` starts a hand and returns its first `Decision`;
     `step(action)` answers it and returns the next one (None when the hand is
     over, `last_result` then holds its result); `view()` gives the acting
-    player's `TableView` on request. `history` and `hole_cards()` read the
-    hand without building a view.
+    player's `TableView` on request. `history`, `hole_cards()` and
+    `privileged_hole_cards()` read the hand without building a view.
     """
 
     def __init__(
@@ -408,6 +408,19 @@ class Environment:
             raise NoDecisionError("no decision is pending")
         return decision.player.hole_cards  # type: ignore[return-value]
 
+    def privileged_hole_cards(self) -> Mapping[int, Hand]:
+        """PRIVILEGED - reveals other players' hidden cards.
+
+        seat -> `Hand` of every participant of the current hand (folded ones
+        included), or of the last hand once it is over (until the next hand
+        starts); empty before the first hand. Read-only, built once per hand.
+
+        Meant only for host-side training tools allowed to see everything (e.g.
+        the critic of `//rl_env`). It is deliberately not part of `Decision`,
+        `TableView`, `HandResult`, events or any agent callback, and remote
+        agents never receive it."""
+        return self.dealer.privileged_hole_cards()
+
     # --- joining -------------------------------------------------------------
 
     def join(
@@ -489,6 +502,7 @@ class Environment:
         """Insert `player` at `offset` clockwise from the button and renumber seats.
         Called under the lock; `on_seated` and `PlayerJoined` are queued."""
         dealer = self.dealer
+        dealer._freeze_privileged()  # keep the last hand's seat numbers
         players = dealer.players
         n = len(players)
         active = self._active_seats()
@@ -576,6 +590,7 @@ class Environment:
     def _remove(self, player: Player) -> None:
         """Take `player` out of the seat list, renumber seats and fix the button."""
         dealer = self.dealer
+        dealer._freeze_privileged()  # keep the last hand's seat numbers
         players = dealer.players
         idx = player.seat
         assert idx is not None and players[idx] is player

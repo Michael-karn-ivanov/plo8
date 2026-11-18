@@ -46,7 +46,8 @@ from __future__ import annotations
 import functools
 import random
 import threading
-from typing import Callable, Generator, Iterable, Optional, Union
+from types import MappingProxyType
+from typing import Callable, Generator, Iterable, Mapping, Optional, Union
 
 from entities import Board, Card, Deck, Hand, Street
 
@@ -89,6 +90,8 @@ _FOLD_TYPE = ActionType.FOLD
 _CALL_TYPE = ActionType.CALL
 _RAISE_TYPE = ActionType.RAISE
 _LEFT = PlayerStatus.LEFT
+
+_NO_CARDS: Mapping[int, Hand] = MappingProxyType({})
 
 # What the hand generator yields (a decision) and is sent back (the answer).
 _Request = tuple[Player, LegalActions]
@@ -195,6 +198,9 @@ class Dealer:
         self._n_live = 0  # participants that have not folded
         self._n_can_act = 0  # participants that have not folded and are not all-in
         self._start_chips: dict[int, int] = {}
+        # seat -> Hand of every participant, built on first request (see
+        # privileged_hole_cards); cleared when a hand starts.
+        self._privileged: Optional[Mapping[int, Hand]] = None
 
         # Step mode: the running hand generator and the pending decision.
         self._steps: Optional[_HandSteps] = None
@@ -266,6 +272,37 @@ class Dealer:
             p.all_in = True
             if not p.folded:
                 self._n_can_act -= 1
+
+    # --- privileged reads ----------------------------------------------------
+
+    def privileged_hole_cards(self) -> Mapping[int, Hand]:
+        """seat -> `Hand` of every participant of the current hand (folded ones
+        included), or of the last hand once it is over, until the next hand
+        starts; empty before the first hand.
+
+        PRIVILEGED: this reveals other players' hidden cards. It is meant only
+        for host-side training tools allowed to see everything (e.g. the critic
+        of `//rl_env`); it is never part of anything an agent receives.
+
+        Built once per hand on the first call and returned as a read-only
+        mapping (the same object for the rest of the hand)."""
+        cards = self._privileged
+        if cards is not None:
+            return cards
+        active = self._active
+        if not active:
+            return _NO_CARDS
+        built = {p.seat: p.hole_cards for p in active if p.hole_cards is not None}
+        cards = MappingProxyType(built)  # type: ignore[arg-type]
+        if len(built) == len(active):  # not cached before the cards are dealt
+            self._privileged = cards
+        return cards
+
+    def _freeze_privileged(self) -> None:
+        """Seats are about to be renumbered between hands: fix the last hand's
+        seat -> cards mapping with the seat numbers of that hand."""
+        if self._privileged is None and self._active:
+            self.privileged_hole_cards()
 
     # --- events and notifications --------------------------------------------
 
@@ -469,6 +506,7 @@ class Dealer:
             self.board = Board.empty()
             self.history = []
             self.history_view = HandHistory(self.history)
+            self._privileged = None
             self._current_bet = 0
             self._bets = 0
             self._unit = self.big_blind

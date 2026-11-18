@@ -70,12 +70,16 @@ def passive(decision):
     return ActionType.CHECK if decision.legal.can_check else ActionType.CALL
 
 
-def play_step(env, hands, views_per_decision=0):
+def play_step(env, hands, views_per_decision=0, reads=False):
     decisions = 0
     for _ in range(hands):
         d = env.start_hand()
         while d is not None:
             decisions += 1
+            if reads:  # the view-free reads
+                env.history[:]
+                env.hole_cards()
+                env.privileged_hole_cards()
             for _ in range(views_per_decision):
                 env.view()
             d = env.step(passive(d))
@@ -103,10 +107,24 @@ class StepModeViewsTest(unittest.TestCase):
         self.assertTrue(all(a.events for a in agents))
         self.assertEqual(count["n"], 0)
 
+    def test_no_views_for_view_free_reads(self):
+        agents = [EventsOnly(), None, EventsOnly(), None, None]
+        with counting_views() as count:
+            env, _ = table(agents)
+            decisions = play_step(env, 10, reads=True)
+        self.assertGreater(decisions, 0)
+        self.assertEqual(count["n"], 0)
+
     def test_one_view_per_requested_decision(self):
         with counting_views() as count:
             env, _ = table([None] * 4)
             decisions = play_step(env, 5, views_per_decision=3)  # cached after the first
+        self.assertEqual(count["n"], decisions)
+
+    def test_one_view_per_requested_decision_with_reads(self):
+        with counting_views() as count:
+            env, _ = table([None] * 4)
+            decisions = play_step(env, 5, views_per_decision=2, reads=True)
         self.assertEqual(count["n"], decisions)
 
     def test_one_view_per_on_hole_cards_agent_per_hand(self):
