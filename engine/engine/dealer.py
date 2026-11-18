@@ -41,7 +41,7 @@ from typing import Callable, Iterable, Optional
 from entities import Board, Card, Deck, Hand, Street
 
 from .actions import Action, ActionType, IllegalActionError, LegalActions
-from .evaluator import HighRank, LowRank, best_omaha
+from .evaluator import HighRank, LowRank, best_omaha_many
 from .events import (
     FOLD_LEAVE,
     FOLD_TIMEOUT,
@@ -58,10 +58,10 @@ from .events import (
 )
 from .player import (
     CHIPS_PER_BB,
-    DefaultAgent,
     Player,
     PlayerStatus,
     call_safely,
+    fallback_action,
     to_bb,
     to_chips,
 )
@@ -73,7 +73,11 @@ __all__ = ["Dealer", "MAX_BETS_PER_STREET", "NotEnoughPlayersError"]
 # One bet plus three raises per street (the big blind is the opening bet preflop).
 MAX_BETS_PER_STREET = 4
 
-_DEFAULT_AGENT = DefaultAgent()
+_FOLD = Action.fold()
+_FOLD_TYPE = ActionType.FOLD
+_CALL_TYPE = ActionType.CALL
+_RAISE_TYPE = ActionType.RAISE
+_LEFT = PlayerStatus.LEFT
 
 
 class NotEnoughPlayersError(RuntimeError):
@@ -158,9 +162,15 @@ class Dealer:
         self.flush: Callable[[], None] = lambda: None
         self._seq = 0
 
-        self._active: list[Player] = []
+        # Per-hand state.
+        self._active: list[Player] = []  # participants, in seat order
+        self._order: list[Player] = []  # participants from the left of the button
+        self._preflop_order: list[Player] = []  # participants from the left of the BB
         self._current_bet = 0
         self._bets = 0
+        self._unit = self.big_blind  # bet unit of the current street
+        self._n_live = 0  # participants that have not folded
+        self._n_can_act = 0  # participants that have not folded and are not all-in
         self._start_chips: dict[int, int] = {}
 
         for seat, p in enumerate(players):
@@ -216,18 +226,19 @@ class Dealer:
         return [p for p in self._active if not p.folded]
 
     def _bet_unit(self) -> int:
-        """Small bet (1 BB) preflop and on the flop, big bet (2 BB) on turn and river."""
-        if self.board.street in (Street.PREFLOP, Street.FLOP):
-            return self.big_blind
-        return 2 * self.big_blind
+        """Small bet (1 BB) preflop and on the flop, big bet (2 BB) on turn and
+        river. Set once per street (when the hand starts and when a street is dealt)."""
+        return self._unit
 
     def _put(self, p: Player, chips: int) -> None:
         """Move chips from a player's stack into his bets."""
         p._chips -= chips
         p.street_chips += chips
         p.total_chips += chips
-        if p._chips == 0:
+        if p._chips == 0 and not p.all_in:
             p.all_in = True
+            if not p.folded:
+                self._n_can_act -= 1
 
     # --- events and notifications --------------------------------------------
 
@@ -250,7 +261,7 @@ class Dealer:
     def deliver(event: TableEvent, recipients: Iterable[Player]) -> None:
         """Call `on_event(player, event)` for each recipient, in seat order."""
         for p in recipients:
-            if p.status is PlayerStatus.LEFT:
+            if p.status is _LEFT:
                 continue
             callback = p._callback("on_event")
             if callback is not None:
@@ -333,14 +344,29 @@ class Dealer:
             self.history = []
             self._current_bet = 0
             self._bets = 0
+            self._unit = self.big_blind
             self._start_chips = {p.seat: p.chips for p in self.players}  # type: ignore[misc]
+            ready = self._ready
             for p in self.players:
-                p._reset_for_hand(dealt=self._ready(p))
+                p._reset_for_hand(dealt=ready(p))
             self._active = [p for p in self.players if p.in_hand]
+            self._order = self._order_after(self.button)
             sb, bb = self._blind_players()
             self.sb_seat, self.bb_seat = sb.seat, bb.seat
+            self._preflop_order = self._order_after(bb.seat)  # type: ignore[arg-type]
+            self._n_live = self._n_can_act = len(self._active)
             self.hand_number += 1
             self.in_hand = True
+
+    def _play_streets(self) -> None:
+        # Preflop action starts left of the big blind (heads-up: the button/SB).
+        self._betting_round(self._preflop_order)
+        for street in (Street.FLOP, Street.TURN, Street.RIVER):
+            if self._n_live < 2:
+                return  # hand is over, remaining streets are skipped
+            self._deal_board(street)
+            self._start_street()
+            self._betting_round(self._order)
 
     def _blind_players(self) -> tuple[Player, Player]:
         """SB/BB are the first and second participants clockwise from the button
@@ -389,38 +415,39 @@ class Dealer:
     def deal_hole_cards(self) -> None:
         """Deal 4 rounds of one card to each participant, starting left of the
         button and ending with the button (see the module docstring); then tell
-        each participant (same order) its own hand."""
-        order = self._order_after(self.button)  # type: ignore[arg-type]
-        dealt: dict[int, list[Card]] = {p.seat: [] for p in order}  # type: ignore[misc]
+        each participant (same order) its own hand. A participant's view is built
+        only if its agent has `on_hole_cards`."""
+        order = self._order
+        deal_one = self.deck.deal_one
+        dealt: list[list[Card]] = [[] for _ in order]
         for _ in range(4):
-            for p in order:
-                dealt[p.seat].append(self.deck.deal_one())  # type: ignore[index]
+            for cards in dealt:
+                cards.append(deal_one())
+        for p, cards in zip(order, dealt):
+            p.hole_cards = Hand(cards)
         for p in order:
-            p.hole_cards = Hand(dealt[p.seat])  # type: ignore[index]
-        for p in order:
-            self._notify(p, "on_hole_cards", p.hole_cards, self.table_view(p))
-
-    def _play_streets(self) -> None:
-        # Preflop action starts left of the big blind (heads-up: the button/SB).
-        self._betting_round(self._order_after(self.bb_seat))  # type: ignore[arg-type]
-        for street in (Street.FLOP, Street.TURN, Street.RIVER):
-            if len(self._live()) < 2:
-                return  # hand is over, remaining streets are skipped
-            self._deal_board(street)
-            self._start_street()
-            self._betting_round(self._order_after(self.button))  # type: ignore[arg-type]
+            callback = p._callback("on_hole_cards")
+            if callback is not None:
+                self.schedule(
+                    functools.partial(call_safely, callback, p, p.hole_cards, self.table_view(p))
+                )
 
     def _deal_board(self, street: Street) -> None:
-        """Deal the next street from the top of the deck, one card at a time (no burn)."""
+        """Deal the next street from the top of the deck, one card at a time (no
+        burn), and set the street's bet unit."""
+        deal_one = self.deck.deal_one
         if street is Street.FLOP:
-            cards = tuple(self.deck.deal_one() for _ in range(3))
+            cards: tuple[Card, ...] = (deal_one(), deal_one(), deal_one())
             self.board = self.board.with_flop(*cards)
+            self._unit = self.big_blind
         elif street is Street.TURN:
-            cards = (self.deck.deal_one(),)
+            cards = (deal_one(),)
             self.board = self.board.with_turn(cards[0])
+            self._unit = 2 * self.big_blind
         else:
-            cards = (self.deck.deal_one(),)
+            cards = (deal_one(),)
             self.board = self.board.with_river(cards[0])
+            self._unit = 2 * self.big_blind
         self._emit(BoardDealt(street, cards, self.board))
 
     def _start_street(self) -> None:
@@ -441,20 +468,17 @@ class Dealer:
         n = len(order)
         i = 0
         while True:
-            live = self._live()
-            if len(live) <= 1:
-                return  # everyone else folded
-            can_act = [p for p in live if not p.all_in]
-            if not can_act:
-                return
-            if len(can_act) == 1 and can_act[0].street_chips >= self._current_bet:
-                return  # nobody left to bet against
+            if self._n_live <= 1 or self._n_can_act == 0:
+                return  # everyone else folded / nobody can bet
+            current = self._current_bet
             for k in range(n):
                 p = order[(i + k) % n]
-                if self._needs_to_act(p):
+                if not p.folded and not p.all_in and (not p.has_acted or p.street_chips < current):
                     break
             else:
                 return  # everyone acted and matched the current bet
+            if self._n_can_act == 1 and p.street_chips >= current:
+                return  # nobody left to bet against
             self._take_turn(p)
             i = (i + k + 1) % n
 
@@ -465,24 +489,37 @@ class Dealer:
         since the last full raise. An all-in raise of less than half a bet makes
         players who already acted call or fold, without the option to re-raise.
         """
-        to_call = max(0, self._current_bet - p.street_chips)
-        unit = self._bet_unit()
-        capped = len(self._live()) > 2
-        raises_left = max(0, MAX_BETS_PER_STREET - self._bets) if capped else None
-        others_can_act = any(q is not p and not q.folded and not q.all_in for q in self._active)
+        current = self._current_bet
+        street = p.street_chips
+        chips = p._chips
+        to_call = current - street
+        if to_call < 0:
+            to_call = 0
+        unit = self._unit
+        if self._n_live > 2:
+            raises_left: Optional[int] = MAX_BETS_PER_STREET - self._bets
+            if raises_left < 0:  # type: ignore[operator]
+                raises_left = 0
+        else:
+            raises_left = None
+        own = 1 if (p.in_hand and not p.folded and not p.all_in) else 0
+        others_can_act = self._n_can_act - own > 0
         can_raise = (
             not p.has_acted
-            and p.chips > to_call
+            and chips > to_call
             and others_can_act
             and (raises_left is None or raises_left > 0)
         )
-        raise_to = min(self._current_bet + unit, p.street_chips + p.chips)
+        raise_to = current + unit
+        if raise_to > street + chips:
+            raise_to = street + chips
+        cpb = self.chips_per_bb
         return LegalActions(
             can_check=to_call == 0,
-            call_amount=self.to_bb(min(to_call, p.chips)),
+            call_amount=(to_call if to_call < chips else chips) / cpb,
             can_raise=can_raise,
-            raise_to=self.to_bb(raise_to),
-            bet_unit=self.to_bb(unit),
+            raise_to=raise_to / cpb,
+            bet_unit=unit / cpb,
             raises_left=raises_left,
         )
 
@@ -490,15 +527,20 @@ class Dealer:
         """Ask `p`'s agent for an action.
 
         A player who asked to leave is folded without asking the agent (a leave()
-        from inside on_turn is also a fold). A turn that ends without a valid
-        action folds the hand, and the player sits out from the next hand.
+        from inside on_turn is also a fold). The default agent (no agent) is
+        answered with `fallback_action` without building a view. A turn that ends
+        without a valid action folds the hand, and the player sits out from the
+        next hand.
         """
         if p.leave_requested:
-            self._apply(p, Action.fold(), FOLD_LEAVE)
+            self._apply(p, _FOLD, FOLD_LEAVE)
             return
         legal = self.legal_actions(p)
+        agent = p.agent
+        if agent is None:
+            self._apply(p, fallback_action(legal))
+            return
         view = self.table_view(p)
-        agent = p.agent if p.agent is not None else _DEFAULT_AGENT
         p._begin_turn(legal)
         try:
             agent.on_turn(p, view, legal)
@@ -508,23 +550,26 @@ class Dealer:
             action = p._end_turn()
         reason = None
         if p.leave_requested:
-            action, reason = Action.fold(), FOLD_LEAVE
+            action, reason = _FOLD, FOLD_LEAVE
         elif action is None or not legal.allows(action.type):
             p.missed_turn = True
-            action, reason = Action.fold(), FOLD_TIMEOUT
+            action, reason = _FOLD, FOLD_TIMEOUT
         self._apply(p, action, reason)
 
     def _apply(self, p: Player, action: Action, reason: Optional[str] = None) -> None:
         t = action.type
         put = 0
-        if t is ActionType.FOLD:
+        if t is _FOLD_TYPE:
             p.folded = True
-        elif t is ActionType.CALL:
-            put = min(self._current_bet - p.street_chips, p.chips)
+            self._n_live -= 1
+            if not p.all_in:
+                self._n_can_act -= 1
+        elif t is _CALL_TYPE:
+            put = min(self._current_bet - p.street_chips, p._chips)
             self._put(p, put)
-        elif t is ActionType.RAISE:
-            unit = self._bet_unit()
-            target = min(self._current_bet + unit, p.street_chips + p.chips)
+        elif t is _RAISE_TYPE:
+            unit = self._unit
+            target = min(self._current_bet + unit, p.street_chips + p._chips)
             put = target - p.street_chips
             self._put(p, put)
             # A raise of at least half a bet (e.g. all-in for less) counts as a full
@@ -536,16 +581,17 @@ class Dealer:
                         q.has_acted = False
             self._current_bet = target
         p.has_acted = True
+        cpb = self.chips_per_bb
         self._emit(
             PlayerActed(
                 p.seat,  # type: ignore[arg-type]
                 p.name,  # type: ignore[arg-type]
                 self.board.street,
                 t,
-                self.to_bb(put),
-                self.to_bb(p.street_chips),
+                put / cpb,
+                p.street_chips / cpb,
                 p.all_in,
-                p.stack,
+                p._chips / cpb,
                 reason,
             )
         )
@@ -553,7 +599,10 @@ class Dealer:
     # --- views -------------------------------------------------------------
 
     def table_view(self, p: Player) -> TableView:
-        """Snapshot for `p`: public table state plus only p's own hole cards."""
+        """Snapshot for `p`: public table state plus only p's own hole cards.
+
+        The only place views are built; it is called only when a view is consumed
+        (an agent callback that receives it)."""
         pots = build_pots(self._active) if self.in_hand else []
         pot = sum(q.total_chips for q in self._active) if self.in_hand else 0
         return TableView(
@@ -565,7 +614,7 @@ class Dealer:
             pot=self.to_bb(pot),
             side_pots=tuple(PotView(self.to_bb(pot.amount), pot.eligible) for pot in pots),
             current_bet=self.to_bb(self._current_bet),
-            bet_unit=self.to_bb(self._bet_unit()),
+            bet_unit=self.to_bb(self._unit),
             raises=self._bets,
             button=self.button,
             sb_seat=self.sb_seat,
@@ -618,11 +667,12 @@ class Dealer:
     def _settle(self) -> HandResult:
         """Showdown (if two or more players are left), uncalled bet, pots.
 
-        Hands are shown in order starting left of the button (`HandShown`),
-        then the uncalled bet is returned (`BetReturned`) and each pot is
-        credited share by share (`PotAwarded`).
+        Hands are shown in order starting left of the button (`HandShown`) and
+        evaluated together against one set of board triples; then the uncalled
+        bet is returned (`BetReturned`) and each pot is credited share by share
+        (`PotAwarded`).
         """
-        order = self._order_after(self.button)  # type: ignore[arg-type]
+        order = self._order
         seat_order = [p.seat for p in order]
         live = [p for p in order if not p.folded]
         showdown = len(live) >= 2
@@ -630,11 +680,14 @@ class Dealer:
         shown: dict[int, Hand] = {}
         ranks: dict[int, tuple[HighRank, Optional[LowRank]]] = {}
         if showdown:
+            hands = []
             for p in live:
                 cards = p.show_cards()
                 shown[p.seat] = cards  # type: ignore[index]
-                ranks[p.seat] = best_omaha(cards, self.board)  # type: ignore[index]
+                hands.append(cards)
                 self._emit(HandShown(p.seat, p.name, cards, p.stack))  # type: ignore[arg-type]
+            for p, rank in zip(live, best_omaha_many(hands, self.board)):
+                ranks[p.seat] = rank  # type: ignore[index]
 
         returned = self._return_uncalled()
 
@@ -708,10 +761,11 @@ class Dealer:
         self.rebuy_window = True
         try:
             for p in list(self.players):
-                if p.status is PlayerStatus.LEFT or p.leave_requested:
+                if p.status is _LEFT or p.leave_requested:
                     continue
-                agent = p.agent if p.agent is not None else _DEFAULT_AGENT
-                agent.on_hand_end(p, result)
+                agent = p.agent
+                if agent is not None:  # the default agent does nothing here
+                    agent.on_hand_end(p, result)
         finally:
             self.rebuy_window = False
             try:

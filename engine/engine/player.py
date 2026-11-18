@@ -187,15 +187,15 @@ class Player:
 
     @property
     def stack(self) -> float:
-        return to_bb(self._chips, self._chips_per_bb)
+        return self._chips / self._chips_per_bb
 
     @property
     def street_bet(self) -> float:
-        return to_bb(self.street_chips, self._chips_per_bb)
+        return self.street_chips / self._chips_per_bb
 
     @property
     def total_bet(self) -> float:
-        return to_bb(self.total_chips, self._chips_per_bb)
+        return self.total_chips / self._chips_per_bb
 
     @property
     def rebought(self) -> float:
