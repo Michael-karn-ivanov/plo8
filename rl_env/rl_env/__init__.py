@@ -20,6 +20,7 @@ from .actions import (
     mask_array,
     to_engine,
 )
+from .encoder import ENCODER_VERSION, OBS_DIM, OBS_LAYOUT, encode, encode_view
 from .stacks import HandSampler, HandSpec, StackConfig, draw_stacks
 from .tracker import HandTracker
 
@@ -42,4 +43,9 @@ __all__ = [
     "HandSampler",
     # observation
     "HandTracker",
+    "ENCODER_VERSION",
+    "OBS_DIM",
+    "OBS_LAYOUT",
+    "encode",
+    "encode_view",
 ]
