@@ -38,3 +38,12 @@ python_test(
     base_module = "rl_env_fuzz",
     deps = [":rl_env"],
 )
+
+# Rollout benchmark: buck2 run //rl_env:bench -- [options]
+python_binary(
+    name = "bench",
+    main = "bench/bench.py",
+    # Keep the tool out of the `rl_env` package namespace.
+    base_module = "rl_env_bench",
+    deps = [":rl_env"],
+)
