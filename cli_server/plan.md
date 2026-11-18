@@ -25,6 +25,11 @@ and `handle_join`. This project adds:
 - the e2e replay engine: case loader, stacked deck, scripted client processes and the
   checker.
 
+Two parts are libraries that other projects use without a server (see Reusable
+libraries): the wire protocol (`//cli_server:protocol`) and the recorded hands with
+their loader, seating and stacked deck (`//cli_server:e2e`). `plo8/rl_env` tests use
+both.
+
 ## Layout
 
 ```
@@ -43,8 +48,9 @@ cli_server/
     server.py        # GameServer: request listener, session registry, lobby, game loop
     e2e/
       __init__.py
-      case.py        # Case: load and validate a test-set file
-      deck.py        # StackedDeck: deals the case's cards in the engine's deal order
+      case.py        # Case: load and validate a test-set file          (library :e2e)
+      cases.py       # where the case files are; list / find / load them (library :e2e)
+      deck.py        # seating + StackedDeck in the engine's deal order  (library :e2e)
       expect.py      # builds what every client is expected to receive
       client.py      # the scripted client process (`python -m cli_server.e2e.client`)
       driver.py      # runs one case: server + client processes; runs all cases
@@ -59,32 +65,48 @@ cli_server/
     test_e2e_deck.py
     test_e2e_check.py
     test_e2e_cases.py  # runs every file in e2e_test_sets through the driver
+    test_libraries.py  # the library targets import and work on their own
 ```
 
 ## Build (buck2)
 
 `cli_server/BUCK`:
 - `python_library(name = "protocol", srcs = ["cli_server/__init__.py", "cli_server/protocol.py"],
-  base_module = "", deps = ["//engine:engine"], visibility = ["PUBLIC"])`. This is a
-  separate target so clients (e.g. `//cli_client`) can share the wire format without
-  depending on the server.
+  base_module = "", deps = ["//engine:engine", "//entities:entities"],
+  visibility = ["PUBLIC"])`. A separate target so clients (e.g. `//cli_client`) and
+  other projects' tests (e.g. `//rl_env`) can share the wire format without depending
+  on the server.
+- `python_library(name = "e2e", srcs = ["cli_server/e2e/__init__.py",
+  "cli_server/e2e/case.py", "cli_server/e2e/cases.py", "cli_server/e2e/deck.py"],
+  base_module = "", resources = glob(["e2e_test_sets/*.json"]),
+  deps = [":protocol", "//entities:entities"], visibility = ["PUBLIC"])`. The
+  recorded hands as a library: the case files, the loader / validator, the seating and
+  the stacked deck. It starts no server and no process. `:protocol` is a dependency only
+  because it owns the `cli_server/__init__.py` package file. The JSON files are
+  resources, so they sit next to the `cli_server` package in whatever binary or test
+  includes the target; `cases.py` finds them at
+  `Path(__file__).resolve().parents[2] / "e2e_test_sets"`.
+- `python_library(name = "e2e_runner", srcs = ["cli_server/e2e/expect.py",
+  "cli_server/e2e/client.py", "cli_server/e2e/driver.py", "cli_server/e2e/check.py"],
+  base_module = "", deps = [":e2e", ":protocol", "//engine:engine",
+  "//entities:entities"])`. The replay engine of the e2e mode. `driver.py` imports
+  `GameServer` lazily, inside the function that runs a case, so `:e2e_runner` does not
+  depend on `:cli_server_lib` at import time and there is no dependency cycle.
 - `python_library(name = "cli_server_lib", srcs = ["cli_server/session.py",
   "cli_server/server.py", "cli_server/main.py"], base_module = "",
-  deps = [":protocol", ":e2e", "//engine:engine"], visibility = ["//cli_client/..."])`. The
-  client's integration test runs an in-process `GameServer`.
-- `python_library(name = "e2e", srcs = glob(["cli_server/e2e/*.py"]), base_module = "",
-  resources = glob(["e2e_test_sets/*.json"]), deps = [":protocol", "//engine:engine",
-  "//entities:entities"])`. The JSON files are resources, so they sit next to the
-  `cli_server` package in the built binary. `driver.py` finds them at
-  `Path(__file__).resolve().parents[2] / "e2e_test_sets"`. `driver.py` imports
-  `GameServer` lazily, inside the function that runs a case, so `:e2e` does not depend on
-  `:cli_server_lib` at import time and there is no dependency cycle.
+  deps = [":protocol", ":e2e_runner", "//engine:engine"], visibility = ["//cli_client/..."])`.
+  The client's integration test runs an in-process `GameServer`.
 - `python_binary(name = "cli_server", main_module = "cli_server.main",
   deps = [":cli_server_lib"])`.
-- `python_test(name = "cli_server_test", srcs = glob(["tests/*.py"]),
+- `python_test(name = "cli_server_test", srcs = glob(["tests/*.py"],
+  exclude = ["tests/test_libraries.py"]),
   base_module = "cli_server_tests", deps = [":cli_server_lib"])`. Tests use `unittest`
   and the standard library only (`socket`, `socketserver`, `threading`, `json`,
   `subprocess`).
+- `python_test(name = "libraries_test", srcs = ["tests/test_libraries.py"],
+  base_module = "cli_server_tests", deps = [":protocol", ":e2e"])`. Builds against the
+  two library targets only, so a library that starts needing a server module fails
+  here (see Reusable libraries). It is excluded from the `glob` of `cli_server_test`.
 
 Run: `buck2 run //cli_server:cli_server -- --port 8008`,
 `buck2 run //cli_server:cli_server -- --e2e_test [--case NAME]`, `buck2 test //cli_server/...`.
@@ -252,6 +274,15 @@ a round trip.
   (`decode_*` returns small frozen dataclasses `Acting`, `LobbyStatus`), so Python
   clients do not parse them by hand.
 - Amounts are BB floats, as in the engine views.
+
+### Round trip is exact
+Decoding an encoded value gives a value equal (`==`) to the original, for every type
+above, including through a `json.dumps` / `json.loads` text round trip. In particular
+`decode_table_view(json.loads(json.dumps(encode_table_view(view))))` and the same for
+`LegalActions` give dataclasses equal to the originals: the same field values (BB
+floats come back unchanged, because JSON writes floats with `repr` precision), the
+same tuple / list shapes and the same enum members. Other projects rely on this (see
+Reusable libraries); `test_protocol` checks it on views taken from real hands.
 
 ## ClientSession (`session.py`)
 
@@ -502,6 +533,14 @@ recording: the deck is stacked. Afterwards the transcripts are checked against w
 the recording says every client must have seen. One case = one file = one hand,
 played on a fresh server.
 
+The package is split in two build targets:
+- `:e2e` (library, public): `case.py`, `cases.py`, `deck.py` and the case files. It is
+  everything needed to turn a recorded hand into a seated table with a stacked deck,
+  and nothing else: no server, no client process, no checker. Other projects replay
+  the recorded hands through their own tables with it (see Reusable libraries).
+- `:e2e_runner` (private to cli_server): `expect.py`, `client.py`, `driver.py`,
+  `check.py`, the replay through a real server.
+
 ### Case files (`e2e_test_sets/*.json`, `case.py`)
 A case is one recorded hand, as in `12_heads_up_three_raises_preflop_bb_scoops.json`:
 - `hand_id`, `description`: used only for logging and the report.
@@ -524,8 +563,8 @@ A case is one recorded hand, as in `12_heads_up_three_raises_preflop_bb_scoops.j
 
 `load_case(path) -> Case` parses the file into frozen dataclasses (`Case`,
 `CasePlayer`, `CaseStreet`, `CaseAction`, `CasePot`, `CaseResult`) and validates it.
-A file that fails validation is reported as an ERROR (a bad test, not a failed test)
-with the reason. Checks:
+A file that fails validation raises `CaseError` with the reason; the driver reports it
+as an ERROR (a bad test, not a failed test). Checks:
 - the game is the one the engine plays: `variant` `omaha_hi_lo_8`, `betting`
   `fixed_limit`, `unit` `chips`, `rake` 0, `sb * 2 == bb`, `small_bet == bb`,
   `big_bet == 2 * bb`, `cap_raises == 4` (read as the engine's cap of four bets per
@@ -542,48 +581,82 @@ with the reason. Checks:
   `pot_after`, the stacks, `net` and `final_stacks` (`final_stack = stack + net`, the
   nets sum to 0); for each pot `awards` sum to `amount`.
 
-### Seating: case seats → engine seats
-The engine numbers seats clockwise from 0 and has no gaps. The driver orders the case
-players clockwise by `seat`, starting with the button player. The k-th of them (k = 0
-is the button) gets engine seat k:
-- the button player joins first, at an empty table, and takes the button (engine
-  rule);
-- the second joins next and is seated after them (engine rule for a one-player
-  table);
-- the k-th (k ≥ 2) joins with `seat = k`, the offset "right of the button" with k
-  players seated, so it lands at the end of the clockwise list.
+`Case` also gives the lookups other code needs: `player(id)`, `hole_of(id)` (the
+known hole from `players` or `showdown`, or None), `board_of(street)`, the streets
+with their actions in order, and the module functions `clockwise_ids(case)`,
+`blind_ids(case)`, `returned_chips(case)`.
 
-The driver waits for each join response before starting the next client, so the join
-order is fixed. With `required_players = n` and `grace_period = 0`, the hand starts
-right after the last join, with the button on engine seat 0. The engine then picks the
-blinds: heads-up the button is SB, otherwise the next two players. Case validation
-checks that the `post_sb` / `post_bb` players agree.
+### Finding the case files (`cases.py`)
+- `E2E_DIR = Path(__file__).resolve().parents[2] / "e2e_test_sets"`: the directory
+  of the case files, in the source tree and in any built binary or test that includes
+  `:e2e` (the files are its resources).
+- `available_cases(directory=None) -> list[str]`: the names (file stems) of every
+  case, sorted.
+- `case_name(name)`: `NAME` or `NAME.json` → `NAME`.
+- `case_path(name, directory=None) -> Path`: the file of a case; raises
+  `UnknownCaseError` (a `KeyError`) listing the available cases when there is none.
+- `load_cases(names=None, directory=None) -> list[Case]`: loads the named cases (all
+  of them, sorted by name, when `names` is None). An invalid file raises `CaseError`
+  naming the file, so a test that iterates the cases fails loudly instead of skipping
+  one.
+
+`driver.py` imports these from `cases.py` (and `main.py` uses them for `--case`
+validation); they are not defined in the driver, so using them needs neither the
+server nor the runner.
+
+### Seating: case seats → engine seats (`deck.py`)
+The engine numbers seats clockwise from 0 and has no gaps. The case players are
+ordered clockwise by `seat`, starting with the button player. The k-th of them (k = 0
+is the button) gets engine seat k:
+- `seating(case) -> list[CasePlayer]`: the players in engine seat order (index =
+  engine seat, 0 = the button);
+- `engine_seats(case) -> dict[id, int]`;
+- `join_offset(k)`: the `seat` offset the k-th joiner sends so that it lands there
+  through joins: none for the first two (the button player joins first, at an empty
+  table, and takes the button; the second is seated after them — engine rules for an
+  empty and a one-player table), `k` for k ≥ 2 (the offset "right of the button" with
+  k players seated, i.e. the end of the clockwise list).
+
+The driver joins in this order and waits for each join response before starting the
+next client, so the join order is fixed. With `required_players = n` and
+`grace_period = 0`, the hand starts right after the last join, with the button on
+engine seat 0. The engine then picks the blinds: heads-up the button is SB, otherwise
+the next two players. Case validation checks that the `post_sb` / `post_bb` players
+agree.
+
+A user that builds its table directly (e.g. `Environment(players=..., button=0)` in
+seating order) gets the same seats without joins; `join_offset` is only for join-based
+seating.
 
 ### Stacked deck (`deck.py`)
-`StackedDeck(script: Sequence[Card | None], rng)` is an `entities.Deck` subclass. It
-is passed to the engine as `Environment(deck=...)`. `script` lists the cards in the
-order the dealer takes them from the deck, and `None` marks a card the case does not
-fix. `shuffle()` calls `Deck.shuffle()` and then puts the script on top with
-`Deck.put_on_top(...)` (see Required entities capabilities). Each `None` is replaced
-by the next shuffled card that the script does not use. Unknown cards are therefore
-random (seeded by `--seed`) but never duplicate a known card.
+`deal_script(case) -> list[Card | None]` lists the cards in the order the dealer takes
+them from the deck, and `None` marks a card the case does not fix.
+`StackedDeck(script: Sequence[Card | None], rng)` is an `entities.Deck` subclass,
+passed to the engine as `Environment(deck=...)`. `shuffle()` calls `Deck.shuffle()`
+and then puts the script on top with `Deck.put_on_top(...)` (see Required entities
+capabilities). Each `None` is replaced by the next shuffled card that the script does
+not use. Unknown cards are therefore random (seeded through `rng`, `--seed` in the
+e2e mode) but never duplicate a known card. Every shuffle (one per hand) restacks;
+`shuffles` counts them.
 
-The script follows the engine's documented deal order (engine plan, Dealer → Hand
-flow; no burn cards):
+The script follows the engine's documented deal order (engine plan, Dealer → Deck use
+and deal order (contract); no burn cards):
 1. hole cards: four rounds, one card per round to each participant, starting with the
    first player left of the button (engine seats 1, 2, …, n−1, 0);
 2. flop (3 cards), turn (1), river (1). A street the hand does not reach is `None`.
 
-If the engine's deal order ever changes, the `hole_cards` / `board_dealt` checks fail
-for every case, which makes the cause easy to see.
+The script assumes the seating above (button on engine seat 0, every case player dealt
+in). If the engine's deal order ever changes, the `hole_cards` / `board_dealt` checks
+fail for every case, which makes the cause easy to see.
 
 ### Units
-The engine runs with `chips_per_bb = case.game.blinds.bb`, so engine chips are case
-chips. Odd-chip splits then happen exactly as in the recording (with the default 100
-chips per BB a 1-chip odd chip of the case would be split differently). On the wire
+The engine runs with `chips_per_bb = case.game.bb`, so engine chips are case chips.
+Odd-chip splits then happen exactly as in the recording (with the default 100 chips
+per BB a 1-chip odd chip of the case would be split differently). On the wire
 everything is in BB, as usual: the driver joins with `stack_bb = stack / bb`. The
 checker converts every BB float it receives back to chips with `round(x * bb)` and
-compares integers.
+compares integers. Library users do the same: table at `chips_per_bb = case.game.bb`,
+stacks `stack / bb`, results compared in chips.
 
 ### Scripted client process (`client.py`)
 A very simple client (not `cli_client`), started as `python -m cli_server.e2e.client`
@@ -678,6 +751,48 @@ transcript with them.
 5. **Script fully played**: no client has `problems` or `unused_script`. No `action`
    request was rejected. Every client exited 0.
 
+## Reusable libraries
+
+Two targets are public for other projects' tests (spec: "the recorded hands are
+reusable by tests of other projects"). Today `plo8/rl_env` uses both: it replays every
+recorded hand through its own tables, and it round-trips table views and legal actions
+through the wire format.
+
+### `//cli_server:protocol`
+- Contents: `protocol.py` only. Imports: the standard library, `engine` and
+  `entities`; never `session`, `server`, `main` or `e2e`.
+- What users rely on: `encode_table_view` / `decode_table_view`, `encode_legal` /
+  `decode_legal` (and every other `encode_*` / `decode_*` pair), `encode_line` /
+  `decode_line`, `ProtocolError`, with the exact round trip of Wire protocol → Round
+  trip is exact. A change of these encodings is a protocol change: it must keep the
+  round trip, and `plo8/rl_env`'s server-path test is the external check.
+
+### `//cli_server:e2e`
+- Contents: `e2e/__init__.py`, `case.py`, `cases.py`, `deck.py`, and the case files as
+  resources. Imports: the standard library and `entities`; never `engine`, the server,
+  `subprocess` or the runner modules. Loading a case starts no server and no process.
+- What users rely on (the library's API, listed in each module's `__all__`):
+  - finding and loading: `E2E_DIR`, `available_cases`, `case_path`, `load_cases`,
+    `load_case`, `CaseError`, `UnknownCaseError`;
+  - the case: `Case` and its dataclasses, `player`, `hole_of`, `board_of`, the streets
+    and actions, `clockwise_ids`, `blind_ids`, `returned_chips`;
+  - the table setup: `seating` / `engine_seats` (button first, clockwise, engine seat
+    = index), `deal_script`, `StackedDeck`.
+- How a user replays a case without a server: build an engine table with
+  `chips_per_bb = case.game.bb`, the players of `seating(case)` in that order with
+  `stack / bb` BB each, the button on seat 0, and `deck = StackedDeck(deal_script(case),
+  Random(seed))`; then play the case's actions in order and compare the result in
+  chips with `case.pots` and `case.result`. The validation done by `load_case`
+  guarantees what such a replay needs: the blinds the engine will pick are the case's
+  `post_sb` / `post_bb` players, every showdown hole is known, and the numbers are
+  consistent. Seating players directly relies on the engine seating a stack of whole
+  chips exactly at any chip unit (engine spec, "starting stack ... kept exactly");
+  until that lands, `test_libraries` seats them through `Environment.join` with
+  `join_offset(k)` in seating order, which is already exact.
+- Adding, renaming or fixing a case file changes what the other projects' replays run.
+  A new case must pass `--e2e_test` here; other projects' tests (e.g. rl_env's, which
+  expects every case to replay) must then pass too.
+
 ## Required engine capabilities
 Used as they are: `Environment` (incl. `max_seats`, `action_timeout`,
 `active_players`, `can_start`, and for e2e mode `chips_per_bb` and `deck`),
@@ -719,7 +834,10 @@ Already in the engine and relied on:
   `TableEvent` type, `LegalActions`, `TableView`, `HandResult`, `TableSettings`
   (with and without max buy-in), `acting`, `lobby` (with null `starts_in`) and every
   request and message type; invalid JSON, missing `type` and unknown action names
-  raise `ProtocolError`.
+  raise `ProtocolError`. Exact round trip through JSON text: for every decision of a
+  few hands played by the engine (including side pots and odd BB amounts at
+  `chips_per_bb` other than 100), `decode(json.loads(json.dumps(encode(x)))) == x` for
+  the actor's `TableView` and `LegalActions`.
 - `test_session`: engine messages map to the right JSON lines; `turn` carries
   `timeout` and calls the `on_turn` hook after it is queued; `seated` / `sat_out` /
   `returned` / `left` call `on_status`; `joined` is captured, not forwarded, and calls
@@ -784,7 +902,10 @@ Already in the engine and relied on:
   are rejected with a clear reason: wrong variant / betting / blinds / bet sizes / cap,
   rake, duplicate card, unknown player in an action, showdown player with unknown hole,
   `players` and `showdown` holes that differ, inconsistent `pot_after` / `to` / `net` /
-  `final_stacks`.
+  `final_stacks`. `available_cases` lists every file sorted; `case_path` accepts
+  `NAME` and `NAME.json` and rejects unknown names and path separators; `load_cases()`
+  loads every file, and an invalid file in a temporary directory makes it raise
+  `CaseError` naming that file.
 - `test_e2e_deck`: the seating gives the button engine seat 0 and keeps the clockwise
   order, including seats with gaps (1, 4, 6) and a button that is not the lowest
   seat. The script puts the hole cards in the engine's round-robin order from the left
@@ -798,3 +919,15 @@ Already in the engine and relied on:
 - `test_e2e_cases`: `run_cases(None, seed=0, action_timeout=10)` over every file in
   `e2e_test_sets` returns 0. This makes the recorded hands part of `buck2 test`
   (server, wire protocol and engine together).
+- `test_libraries` (target `libraries_test`, built with `:protocol` and `:e2e` only):
+  - `cli_server.protocol` and `cli_server.e2e.{case,cases,deck}` import, and importing
+    them does not load `cli_server.server`, `cli_server.session`, `cli_server.main`,
+    `cli_server.e2e.driver` / `client` / `check` / `expect` or `subprocess`
+    (`sys.modules` checked after a fresh import in a child interpreter);
+  - `E2E_DIR` exists inside the built test and `load_cases()` loads every case file;
+  - for every case, a server-less replay as described in Reusable libraries (an engine
+    table built from `seating`, `StackedDeck(deal_script(case))`, the case's actions
+    played in order) gives the case's final stacks, net results and per-pot high / low
+    winners and amounts in chips. This is the same use other projects make of the
+    library, kept here so that a change to a case file or to the library is caught in
+    cli_server first.
