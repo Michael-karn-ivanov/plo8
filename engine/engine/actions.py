@@ -23,25 +23,39 @@ class ActionType(Enum):
 
 @dataclass(frozen=True)
 class Action:
-    """A player decision. There is no amount: limit bets and raises are one bet unit."""
+    """A player decision. There is no amount: limit bets and raises are one bet unit.
+
+    The four possible actions are module-level singletons: `Action.fold()`,
+    `Action.check()`, `Action.call()`, `Action.raise_()` and `Action.of(type)`
+    return them, so applying an action allocates nothing. `Action(type)` still
+    works and compares equal to the singleton.
+    """
 
     type: ActionType
 
     @classmethod
+    def of(cls, action_type: ActionType) -> "Action":
+        """The singleton `Action` of `action_type`."""
+        return _ACTIONS[action_type]
+
+    @classmethod
     def fold(cls) -> "Action":
-        return cls(ActionType.FOLD)
+        return _ACTIONS[ActionType.FOLD]
 
     @classmethod
     def check(cls) -> "Action":
-        return cls(ActionType.CHECK)
+        return _ACTIONS[ActionType.CHECK]
 
     @classmethod
     def call(cls) -> "Action":
-        return cls(ActionType.CALL)
+        return _ACTIONS[ActionType.CALL]
 
     @classmethod
     def raise_(cls) -> "Action":
-        return cls(ActionType.RAISE)
+        return _ACTIONS[ActionType.RAISE]
+
+
+_ACTIONS: dict[ActionType, Action] = {t: Action(t) for t in ActionType}
 
 
 @dataclass(frozen=True)
@@ -54,6 +68,8 @@ class LegalActions:
       bet unit, capped by the player's stack).
     - `raises_left`: bets/raises still allowed on this street, or None when the cap
       is lifted (only two players left in the hand).
+
+    `actions` (the legal `ActionType`s) is computed once, at construction.
     """
 
     can_check: bool
@@ -62,6 +78,10 @@ class LegalActions:
     raise_to: float
     bet_unit: float
     raises_left: Optional[int]
+
+    def __post_init__(self) -> None:
+        # Not a dataclass field: equality, repr and the field list are unchanged.
+        object.__setattr__(self, "_actions", tuple(t for t in ActionType if self.allows(t)))
 
     @property
     def can_call(self) -> bool:
@@ -73,11 +93,14 @@ class LegalActions:
         if action_type is ActionType.CHECK:
             return self.can_check
         if action_type is ActionType.CALL:
-            return self.can_call
+            return self.call_amount > 0
         if action_type is ActionType.RAISE:
             return self.can_raise
         return False
 
     @property
     def actions(self) -> tuple[ActionType, ...]:
-        return tuple(t for t in ActionType if self.allows(t))
+        try:
+            return self._actions  # type: ignore[attr-defined]
+        except AttributeError:  # e.g. unpickled from an older version
+            return tuple(t for t in ActionType if self.allows(t))

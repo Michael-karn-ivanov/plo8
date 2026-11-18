@@ -340,6 +340,8 @@ class ThreadedRemoteTest(unittest.TestCase):
         captured["reply"] = HandEndReply(5.0, True, False)
         for value in captured.values():
             self.assertEqual(pickle.loads(pickle.dumps(value)), value)
+        legal = pickle.loads(pickle.dumps(captured["legal"]))
+        self.assertEqual(legal.actions, captured["legal"].actions)
 
 
 class ThreadedJoinTest(unittest.TestCase):

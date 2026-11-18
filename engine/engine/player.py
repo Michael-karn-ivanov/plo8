@@ -212,7 +212,7 @@ class Player:
                 f"{action_type.value} is not legal now (legal: "
                 f"{', '.join(t.value for t in self._legal.actions)})"
             )
-        self._pending = Action(action_type)
+        self._pending = Action.of(action_type)
 
     # --- outside betting ---------------------------------------------------
 
