@@ -1,8 +1,8 @@
 # cli_server: a localhost TCP server hosting one fixed-limit Omaha Hi-Lo 8-or-better
 # table, played by clients in other processes over a JSON-lines protocol.
 
-# The wire format on its own, so clients (e.g. //cli_client) can share it without
-# depending on the server.
+# The wire format on its own, so clients (e.g. //cli_client) and other projects'
+# tests (e.g. //rl_env) can share it without depending on the server.
 python_library(
     name = "protocol",
     srcs = [
@@ -19,17 +19,43 @@ python_library(
     visibility = ["PUBLIC"],
 )
 
-# End-to-end test mode: case loader, stacked deck, scripted client process,
-# driver and checker. The recorded hands are resources, so they sit next to the
-# `cli_server` package in the built binary (driver.py finds them at
-# Path(__file__).resolve().parents[2] / "e2e_test_sets"). driver.py imports
-# GameServer lazily, so this library does not depend on :cli_server_lib.
+# The recorded hands as a library: the case files, the loader / validator, the
+# seating and the stacked deck. It starts no server and no process. :protocol is
+# a dependency only because it owns the `cli_server/__init__.py` package file.
+# The JSON files are resources, so they sit next to the `cli_server` package in
+# whatever binary or test includes this target (cases.py finds them at
+# Path(__file__).resolve().parents[2] / "e2e_test_sets").
 python_library(
     name = "e2e",
-    srcs = glob(["cli_server/e2e/*.py"]),
+    srcs = [
+        "cli_server/e2e/__init__.py",
+        "cli_server/e2e/case.py",
+        "cli_server/e2e/cases.py",
+        "cli_server/e2e/deck.py",
+    ],
     base_module = "",
     resources = glob(["e2e_test_sets/*.json"]),
     deps = [
+        ":protocol",
+        "//entities:entities",
+    ],
+    visibility = ["PUBLIC"],
+)
+
+# The replay engine of the e2e mode: expectations, scripted client process,
+# driver and checker. driver.py imports GameServer lazily, so this library does
+# not depend on :cli_server_lib and there is no dependency cycle.
+python_library(
+    name = "e2e_runner",
+    srcs = [
+        "cli_server/e2e/check.py",
+        "cli_server/e2e/client.py",
+        "cli_server/e2e/driver.py",
+        "cli_server/e2e/expect.py",
+    ],
+    base_module = "",
+    deps = [
+        ":e2e",
         ":protocol",
         "//engine:engine",
         "//entities:entities",
@@ -45,7 +71,7 @@ python_library(
     ],
     base_module = "",
     deps = [
-        ":e2e",
+        ":e2e_runner",
         ":protocol",
         "//engine:engine",
     ],
@@ -63,7 +89,22 @@ python_binary(
 
 python_test(
     name = "cli_server_test",
-    srcs = glob(["tests/*.py"]),
+    srcs = glob(
+        ["tests/*.py"],
+        exclude = ["tests/test_libraries.py"],
+    ),
     base_module = "cli_server_tests",
     deps = [":cli_server_lib"],
+)
+
+# Built against the two library targets only: a library that starts needing a
+# server or runner module fails here.
+python_test(
+    name = "libraries_test",
+    srcs = ["tests/test_libraries.py"],
+    base_module = "cli_server_tests",
+    deps = [
+        ":e2e",
+        ":protocol",
+    ],
 )
