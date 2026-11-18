@@ -43,6 +43,7 @@ __all__ = [
     "rank_high",
     "rank_low",
     "best_omaha",
+    "best_omaha_many",
 ]
 
 HIGH_CARD = 0
@@ -231,6 +232,85 @@ def rank_low(cards: Iterable[Card]) -> Optional[LowRank]:
     return DECODE_LOW.get(mask)
 
 
+_Triples = tuple[list[int], dict[int, list[int]], list[int]]
+
+
+def _triples(idx: Sequence[int]) -> _Triples:
+    """Board triples: all rank products, the products per flush suit, and the
+    low masks of the triples with three distinct low values."""
+    prods: list[int] = []
+    flush: dict[int, list[int]] = {}
+    lows: list[int] = []
+    for a, b, c in combinations(idx, 3):
+        p = PRIME[a] * PRIME[b] * PRIME[c]
+        prods.append(p)
+        s = SUIT[a]
+        if SUIT[b] == s and SUIT[c] == s:
+            flush.setdefault(s, []).append(p)
+        m = LOWBIT[a] | LOWBIT[b] | LOWBIT[c]
+        if bin(m).count("1") == 3:
+            lows.append(m)
+    return prods, flush, lows
+
+
+def _best(hole: Sequence[int], triples: _Triples) -> tuple[HighRank, Optional[LowRank]]:
+    prods, flush, lows = triples
+    H = HIGH_INT
+    F = FLUSH_INT
+    best = 0
+    lo = _NO_LOW
+    for a, b in combinations(hole, 2):
+        pp = PRIME[a] * PRIME[b]
+        for tp in prods:
+            v = H[pp * tp]
+            if v > best:
+                best = v
+        sa = SUIT[a]
+        if sa == SUIT[b]:
+            fl = flush.get(sa)
+            if fl:
+                for tp in fl:
+                    v = F[pp * tp]
+                    if v > best:
+                        best = v
+        la = LOWBIT[a]
+        lb = LOWBIT[b]
+        if la and lb and la != lb:
+            pm = la | lb
+            for tm in lows:
+                if not pm & tm:
+                    m = pm | tm
+                    if m < lo:
+                        lo = m
+    return DECODE_HIGH[best], DECODE_LOW.get(lo)
+
+
+def _slow_omaha(
+    hole: Sequence[Card], community: Sequence[Card]
+) -> tuple[HighRank, Optional[LowRank]]:
+    """The original algorithm, for input the tables do not cover (repeated cards)."""
+    best_hi: Optional[HighRank] = None
+    best_lo: Optional[LowRank] = None
+    for two in combinations(hole, 2):
+        for three in combinations(community, 3):
+            five = two + three
+            hi = _slow_high(five)
+            if best_hi is None or hi > best_hi:
+                best_hi = hi
+            lo = _slow_low(five)
+            if lo is not None and (best_lo is None or lo < best_lo):
+                best_lo = lo
+    assert best_hi is not None
+    return best_hi, best_lo
+
+
+def _check(hole: tuple, community: tuple) -> None:
+    if len(hole) != 4:
+        raise ValueError(f"an Omaha hand has 4 hole cards, got {len(hole)}")
+    if len(community) < 3:
+        raise ValueError(f"at least 3 board cards are needed, got {len(community)}")
+
+
 def best_omaha(hand: Hand, board: Board) -> tuple[HighRank, Optional[LowRank]]:
     """Best Omaha high and low using exactly two hole cards and exactly three board cards.
 
@@ -238,21 +318,27 @@ def best_omaha(hand: Hand, board: Board) -> tuple[HighRank, Optional[LowRank]]:
     """
     hole = tuple(hand)
     community = tuple(board)
-    if len(hole) != 4:
-        raise ValueError(f"an Omaha hand has 4 hole cards, got {len(hole)}")
-    if len(community) < 3:
-        raise ValueError(f"at least 3 board cards are needed, got {len(community)}")
+    _check(hole, community)
+    try:
+        return _best([c.index for c in hole], _triples([c.index for c in community]))
+    except KeyError:  # repeated cards
+        return _slow_omaha(hole, community)
 
-    best_hi: Optional[HighRank] = None
-    best_lo: Optional[LowRank] = None
-    for two in combinations(hole, 2):
-        for three in combinations(community, 3):
-            five = two + three
-            hi = rank_high(five)
-            if best_hi is None or hi > best_hi:
-                best_hi = hi
-            lo = rank_low(five)
-            if lo is not None and (best_lo is None or lo < best_lo):
-                best_lo = lo
-    assert best_hi is not None
-    return best_hi, best_lo
+
+def best_omaha_many(
+    hands: Iterable[Hand], board: Board
+) -> list[tuple[HighRank, Optional[LowRank]]]:
+    """`best_omaha` for several hands on one board; the board triples are built once."""
+    community = tuple(board)
+    triples: Optional[_Triples] = None
+    out = []
+    for hand in hands:
+        hole = tuple(hand)
+        _check(hole, community)
+        if triples is None:
+            triples = _triples([c.index for c in community])
+        try:
+            out.append(_best([c.index for c in hole], triples))
+        except KeyError:  # repeated cards
+            out.append(_slow_omaha(hole, community))
+    return out

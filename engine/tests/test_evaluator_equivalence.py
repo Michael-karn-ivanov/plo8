@@ -7,7 +7,8 @@ from collections import Counter
 from itertools import combinations, combinations_with_replacement
 
 from entities import Board, Card, Hand, Rank, Suit
-from engine import rank_high, rank_low
+from engine import best_omaha, rank_high, rank_low
+from engine.evaluator import best_omaha_many
 
 try:
     from . import reference_evaluator as ref
@@ -97,6 +98,70 @@ class FiveCardTest(unittest.TestCase):
                 with self.assertRaises(ValueError) as slow_error:
                     slow(cards)
                 self.assertEqual(str(fast_error.exception), str(slow_error.exception))
+
+
+class OmahaTest(unittest.TestCase):
+    def check(self, hand, board):
+        fast = best_omaha(hand, board)
+        slow = ref.best_omaha(hand, board)
+        self.assertEqual(fast, slow, (hand, board))
+        return fast, slow
+
+    def run_random(self, n_boards, board_size, seed):
+        rng = random.Random(seed)
+        for _ in range(n_boards):
+            cards = rng.sample(ALL, 8 + board_size)
+            board = board_of(cards[8:])
+            hands = [Hand(cards[0:4]), Hand(cards[4:8])]
+            (f1, s1), (f2, s2) = (self.check(h, board) for h in hands)
+            # The same winner of each half, whichever evaluator decides.
+            self.assertEqual(cmp(f1[0], f2[0]), cmp(s1[0], s2[0]))
+            self.assertEqual(cmp_low(f1[1], f2[1]), cmp_low(s1[1], s2[1]))
+            self.assertEqual(best_omaha_many(hands, board), [f1, f2])
+
+    def test_random_five_card_boards(self):
+        self.run_random(50_000, 5, seed=10)  # 100,000 (hand, board) pairs
+
+    def test_random_flops(self):
+        self.run_random(5_000, 3, seed=11)  # 10,000 pairs
+
+    def test_random_turns(self):
+        self.run_random(5_000, 4, seed=12)  # 10,000 pairs
+
+    def test_exactly_two_hole_cards(self):
+        # Four hearts on the board and one in hand: no flush with exactly 2 + 3.
+        hand = Hand.parse("Ah2c3d9s")
+        board = Board.parse("Kh Qh 7h 4h 9c")
+        fast, _ = self.check(hand, board)
+        self.assertNotEqual(fast[0][0], 5)
+
+    def test_wrong_card_counts(self):
+        rng = random.Random(4)
+        cards = rng.sample(ALL, 9)
+
+        class Loose:
+            """An iterable of cards of any length (Hand insists on 4)."""
+
+            def __init__(self, cards):
+                self.cards = tuple(cards)
+
+            def __iter__(self):
+                return iter(self.cards)
+
+        cases = [
+            (Loose(cards[:3]), board_of(cards[4:9])),
+            (Loose(cards[:5]), board_of(cards[5:8])),
+            (Hand(cards[:4]), Board()),
+            (Hand(cards[:4]), Loose(cards[4:6])),
+        ]
+        for hand, board in cases:
+            with self.assertRaises(ValueError) as fast_error:
+                best_omaha(hand, board)
+            with self.assertRaises(ValueError) as slow_error:
+                ref.best_omaha(hand, board)
+            self.assertEqual(str(fast_error.exception), str(slow_error.exception))
+            with self.assertRaises(ValueError):
+                best_omaha_many([hand], board)
 
 
 if __name__ == "__main__":
