@@ -29,6 +29,13 @@ for `i < 4n` goes to participant `i % n` as hole card `i // n`; cards `4n`,
 `4n+1`, `4n+2` are the flop, `4n+3` the turn and `4n+4` the river.
 
 Changing this order is a breaking change for callers that stack decks.
+
+One hand flow, two drivers
+--------------------------
+The whole hand is one generator, `_hand_steps()`: it runs until a player has
+to decide, yields `(player, legal)` and waits for the answer `(action,
+reason)`; when the hand is settled it returns the `HandResult`. The callback
+driver (`play_hand()`) answers through the agent's `on_turn`.
 """
 
 from __future__ import annotations
@@ -36,7 +43,7 @@ from __future__ import annotations
 import functools
 import random
 import threading
-from typing import Callable, Iterable, Optional
+from typing import Callable, Generator, Iterable, Optional
 
 from entities import Board, Card, Deck, Hand, Street
 
@@ -78,6 +85,11 @@ _FOLD_TYPE = ActionType.FOLD
 _CALL_TYPE = ActionType.CALL
 _RAISE_TYPE = ActionType.RAISE
 _LEFT = PlayerStatus.LEFT
+
+# What the hand generator yields (a decision) and is sent back (the answer).
+_Request = tuple[Player, LegalActions]
+_Answer = tuple[Action, Optional[str]]
+_HandSteps = Generator[_Request, _Answer, HandResult]
 
 
 class NotEnoughPlayersError(RuntimeError):
@@ -305,22 +317,57 @@ class Dealer:
         elif p.chips > 0:
             self._set_active(p)
 
-    # --- hand flow ---------------------------------------------------------
+    # --- callback driver ---------------------------------------------------
 
     def play_hand(self) -> HandResult:
-        """Play one complete hand and return its result."""
+        """Play one complete hand in callback mode and return its result."""
         self.start_hand()
+        steps = self._hand_steps()
         try:
-            self._emit(self._hand_started())
-            self.post_blinds()
-            self.deal_hole_cards()
-            self._play_streets()
-            result = self._settle()
+            answer: Optional[_Answer] = None
+            while True:
+                try:
+                    p, legal = steps.send(answer)  # type: ignore[arg-type]
+                except StopIteration as stop:
+                    result: HandResult = stop.value
+                    break
+                answer = self._callback_turn(p, legal)
         except BaseException:
+            steps.close()
             self._abort_hand()
             raise
         self._end_hand(result)
         return result
+
+    def _callback_turn(self, p: Player, legal: LegalActions) -> _Answer:
+        """Ask `p`'s agent for an action (callback mode).
+
+        The default agent (no agent) is answered with `fallback_action` without
+        building a view. A leave() from inside on_turn is a fold. A turn that ends
+        without a valid action folds the hand, and the player sits out from the
+        next hand.
+        """
+        agent = p.agent
+        if agent is None:
+            if p.leave_requested:
+                return _FOLD, FOLD_LEAVE
+            return fallback_action(legal), None
+        view = self.table_view(p)
+        p._begin_turn(legal)
+        try:
+            agent.on_turn(p, view, legal)
+        except IllegalActionError:
+            pass  # an uncaught illegal action counts as no action
+        finally:
+            action = p._end_turn()
+        if p.leave_requested:
+            return _FOLD, FOLD_LEAVE
+        if action is None or not legal.allows(action.type):
+            p.missed_turn = True
+            return _FOLD, FOLD_TIMEOUT
+        return action, None
+
+    # --- hand flow ---------------------------------------------------------
 
     def start_hand(self) -> None:
         """Prepare the deck (one `reset()` then one `shuffle()`, see the module
@@ -358,15 +405,22 @@ class Dealer:
             self.hand_number += 1
             self.in_hand = True
 
-    def _play_streets(self) -> None:
+    def _hand_steps(self) -> _HandSteps:
+        """The whole hand, from `HandStarted` to the settlement: yields each
+        decision `(player, legal)` and takes the answer `(action, reason)`;
+        returns the `HandResult`. Shared by both drivers."""
+        self._emit(self._hand_started())
+        self.post_blinds()
+        self.deal_hole_cards()
         # Preflop action starts left of the big blind (heads-up: the button/SB).
-        self._betting_round(self._preflop_order)
+        yield from self._betting_round(self._preflop_order)
         for street in (Street.FLOP, Street.TURN, Street.RIVER):
             if self._n_live < 2:
-                return  # hand is over, remaining streets are skipped
+                break  # hand is over, remaining streets are skipped
             self._deal_board(street)
             self._start_street()
-            self._betting_round(self._order)
+            yield from self._betting_round(self._order)
+        return self._settle()
 
     def _blind_players(self) -> tuple[Player, Player]:
         """SB/BB are the first and second participants clockwise from the button
@@ -464,7 +518,9 @@ class Dealer:
             return False
         return not p.has_acted or p.street_chips < self._current_bet
 
-    def _betting_round(self, order: list[Player]) -> None:
+    def _betting_round(self, order: list[Player]) -> Generator[_Request, _Answer, None]:
+        """One betting round (generator): yields each decision and applies the
+        answer. A player who asked to leave is folded without a decision."""
         n = len(order)
         i = 0
         while True:
@@ -479,8 +535,12 @@ class Dealer:
                 return  # everyone acted and matched the current bet
             if self._n_can_act == 1 and p.street_chips >= current:
                 return  # nobody left to bet against
-            self._take_turn(p)
             i = (i + k + 1) % n
+            if p.leave_requested:
+                self._apply(p, _FOLD, FOLD_LEAVE)
+                continue
+            action, reason = yield p, self.legal_actions(p)
+            self._apply(p, action, reason)
 
     def legal_actions(self, p: Player) -> LegalActions:
         """Legal actions for `p` in the current betting state.
@@ -522,39 +582,6 @@ class Dealer:
             bet_unit=unit / cpb,
             raises_left=raises_left,
         )
-
-    def _take_turn(self, p: Player) -> None:
-        """Ask `p`'s agent for an action.
-
-        A player who asked to leave is folded without asking the agent (a leave()
-        from inside on_turn is also a fold). The default agent (no agent) is
-        answered with `fallback_action` without building a view. A turn that ends
-        without a valid action folds the hand, and the player sits out from the
-        next hand.
-        """
-        if p.leave_requested:
-            self._apply(p, _FOLD, FOLD_LEAVE)
-            return
-        legal = self.legal_actions(p)
-        agent = p.agent
-        if agent is None:
-            self._apply(p, fallback_action(legal))
-            return
-        view = self.table_view(p)
-        p._begin_turn(legal)
-        try:
-            agent.on_turn(p, view, legal)
-        except IllegalActionError:
-            pass  # an uncaught illegal action counts as no action
-        finally:
-            action = p._end_turn()
-        reason = None
-        if p.leave_requested:
-            action, reason = _FOLD, FOLD_LEAVE
-        elif action is None or not legal.allows(action.type):
-            p.missed_turn = True
-            action, reason = _FOLD, FOLD_TIMEOUT
-        self._apply(p, action, reason)
 
     def _apply(self, p: Player, action: Action, reason: Optional[str] = None) -> None:
         t = action.type
