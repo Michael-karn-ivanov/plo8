@@ -28,14 +28,17 @@ first left of the button, n-1 = the button), deck card `i` (0-based, top first)
 for `i < 4n` goes to participant `i % n` as hole card `i // n`; cards `4n`,
 `4n+1`, `4n+2` are the flop, `4n+3` the turn and `4n+4` the river.
 
-Changing this order is a breaking change for callers that stack decks.
+The same in callback mode and in step mode. Changing this order is a breaking
+change for callers that stack decks.
 
 One hand flow, two drivers
 --------------------------
 The whole hand is one generator, `_hand_steps()`: it runs until a player has
 to decide, yields `(player, legal)` and waits for the answer `(action,
 reason)`; when the hand is settled it returns the `HandResult`. The callback
-driver (`play_hand()`) answers through the agent's `on_turn`.
+driver (`play_hand()`) answers through the agent's `on_turn`; the step driver
+(`begin_step_hand()` / `submit()`) answers with the caller's action. Both run
+the same end-of-hand processing, so they produce identical hands.
 """
 
 from __future__ import annotations
@@ -43,7 +46,7 @@ from __future__ import annotations
 import functools
 import random
 import threading
-from typing import Callable, Generator, Iterable, Optional
+from typing import Callable, Generator, Iterable, Optional, Union
 
 from entities import Board, Card, Deck, Hand, Street
 
@@ -73,6 +76,7 @@ from .player import (
     to_chips,
 )
 from .pots import build_pots, split_pot
+from .step import HandInProgressError, NoDecisionError
 from .views import HandResult, PotResult, PotView, SeatView, TableView
 
 __all__ = ["Dealer", "MAX_BETS_PER_STREET", "NotEnoughPlayersError"]
@@ -109,10 +113,11 @@ class Dealer:
     The dealer sees all seated players (active and sitting out) but deals in only
     the active ones; the participants of a hand are fixed when it starts. `in_hand`
     is true from the start of a hand until its end-of-hand processing (rebuy
-    callbacks, status updates, button move) is done; rebuys / sit-ins are allowed
-    inside that processing through `rebuy_window`. When the hand is over,
-    `after_hand` (if set) is called under `lock` — the environment uses it to
-    remove leavers and seat queued joiners.
+    callbacks, status updates, button move) is done - in step mode also while a
+    decision is pending; rebuys / sit-ins are allowed inside that processing
+    through `rebuy_window`. When the hand is over, `after_hand` (if set) is called
+    under `lock` — the environment uses it to remove leavers and seat queued
+    joiners.
 
     Public events go through `broadcast(event)` and other agent notifications
     through `schedule(fn)`; both are replaced by the environment (which owns the
@@ -184,6 +189,10 @@ class Dealer:
         self._n_live = 0  # participants that have not folded
         self._n_can_act = 0  # participants that have not folded and are not all-in
         self._start_chips: dict[int, int] = {}
+
+        # Step mode: the running hand generator and the pending decision.
+        self._steps: Optional[_HandSteps] = None
+        self.pending: Optional[_Request] = None
 
         for seat, p in enumerate(players):
             p._attach(seat, self)
@@ -367,6 +376,70 @@ class Dealer:
             return _FOLD, FOLD_TIMEOUT
         return action, None
 
+    # --- step driver -------------------------------------------------------
+
+    def begin_step_hand(self) -> Optional[_Request]:
+        """Start a hand in step mode and run it to its first decision.
+
+        Returns the pending `(player, legal)`, or None if the hand needed no
+        decision at all (it has then been played to the end, including the
+        end-of-hand processing, and `last_result` holds its result).
+        """
+        self.start_hand()
+        self._steps = self._hand_steps()
+        return self._advance(None)
+
+    def submit(self, action: Union[Action, ActionType]) -> Optional[_Request]:
+        """Answer the pending step-mode decision.
+
+        Everything is validated before anything changes: a rejected action
+        (`NoDecisionError` / `IllegalActionError`) leaves the hand exactly as it
+        was. A player who asked to leave while the decision was pending is folded
+        (`reason="leave"`), whatever legal action is submitted. Returns the next
+        decision, or None when the hand is over.
+        """
+        pending = self.pending
+        if pending is None:
+            raise NoDecisionError("no decision is pending")
+        if isinstance(action, ActionType):
+            action_type = action
+        elif isinstance(action, Action):
+            action_type = action.type
+        else:
+            raise IllegalActionError(f"not an Action or ActionType: {action!r}")
+        p, legal = pending
+        if not legal.allows(action_type):
+            raise IllegalActionError(
+                f"{getattr(action_type, 'value', action_type)} is not legal now (legal: "
+                f"{', '.join(t.value for t in legal.actions)})"
+            )
+        if p.leave_requested:
+            answer: _Answer = (_FOLD, FOLD_LEAVE)
+        else:
+            answer = (Action.of(action_type), None)
+        return self._advance(answer)
+
+    def _advance(self, answer: Optional[_Answer]) -> Optional[_Request]:
+        """Run the step-mode hand to its next decision (stored in `pending`) or to
+        its end (end-of-hand processing done). Any exception aborts the hand."""
+        steps = self._steps
+        assert steps is not None
+        self.pending = None
+        try:
+            request = steps.send(answer)  # type: ignore[arg-type]
+        except StopIteration as stop:
+            result: HandResult = stop.value
+        except BaseException:
+            self._steps = None
+            self._abort_hand()
+            raise
+        else:
+            self.pending = request
+            return request
+        self._steps = None
+        self._end_hand(result)
+        return None
+
     # --- hand flow ---------------------------------------------------------
 
     def start_hand(self) -> None:
@@ -375,7 +448,7 @@ class Dealer:
         state; fix the participants, the button and the blind seats."""
         with self.lock:
             if self.in_hand:
-                raise RuntimeError("a hand is already in progress")
+                raise HandInProgressError("a hand is already in progress")
             if len(self.ready_players()) < 2:
                 raise NotEnoughPlayersError(
                     "at least two active players with chips are needed to start a hand"
@@ -402,6 +475,7 @@ class Dealer:
             self.sb_seat, self.bb_seat = sb.seat, bb.seat
             self._preflop_order = self._order_after(bb.seat)  # type: ignore[arg-type]
             self._n_live = self._n_can_act = len(self._active)
+            self.pending = None
             self.hand_number += 1
             self.in_hand = True
 
@@ -629,7 +703,7 @@ class Dealer:
         """Snapshot for `p`: public table state plus only p's own hole cards.
 
         The only place views are built; it is called only when a view is consumed
-        (an agent callback that receives it)."""
+        (an agent callback that receives it, or `Environment.view()`)."""
         pots = build_pots(self._active) if self.in_hand else []
         pot = sum(q.total_chips for q in self._active) if self.in_hand else 0
         return TableView(
@@ -774,7 +848,7 @@ class Dealer:
         )
 
     def _end_hand(self, result: HandResult) -> None:
-        """End-of-hand processing, in order:
+        """End-of-hand processing (identical in both modes), in order:
 
         1. `on_hand_end` for every seated player that is not leaving — participants
            and sitting-out players (rebuy / sit-in / leave window). Players who
@@ -836,6 +910,8 @@ class Dealer:
 
     def _finish_hand(self) -> None:
         """Leave the hand and let the environment remove leavers / seat joiners."""
+        self.pending = None
+        self._steps = None
         with self.lock:
             self.in_hand = False
             if self.after_hand is not None:

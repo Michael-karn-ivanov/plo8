@@ -1,4 +1,9 @@
-"""Environment: a table of players with a dealer; players joining and leaving it."""
+"""Environment: a table of players with a dealer; players joining and leaving it.
+
+A hand is played either in callback mode (`start_round()`: agents act through
+`on_turn`) or in step mode (`start_hand()` / `step()`: the caller answers each
+decision). Both run the same hand code (see `engine.dealer`).
+"""
 
 from __future__ import annotations
 
@@ -7,19 +12,23 @@ import random
 import threading
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional, Union
 
 from entities import Deck
 
+from .actions import Action, ActionType
 from .dealer import Dealer, NotEnoughPlayersError
 from .events import PlayerJoined, PlayerLeft, TableEvent
 from .player import CHIPS_PER_BB, Player, PlayerStatus, call_safely
-from .views import HandResult
+from .step import Decision, HandInProgressError, NoDecisionError
+from .views import HandResult, TableView
 
 __all__ = [
     "Environment",
     "TableFullError",
     "NotEnoughPlayersError",
+    "HandInProgressError",
+    "NoDecisionError",
     "MIN_PLAYERS",
     "MAX_PLAYERS",
     "DEFAULT_ACTION_TIMEOUT",
@@ -73,6 +82,11 @@ class Environment:
     `seq` of the table and is delivered to all seated players in seat order.
     Agent notifications (events, `on_seated`, `on_left`, ...) are queued under
     the table lock and delivered outside it, in order, by `_flush()`.
+
+    Step mode: `start_hand()` starts a hand and returns its first `Decision`;
+    `step(action)` answers it and returns the next one (None when the hand is
+    over, `last_result` then holds its result); `view()` gives the acting
+    player's `TableView` on request.
     """
 
     def __init__(
@@ -135,6 +149,9 @@ class Environment:
         # Seated players whose agent has on_event, with the callback (None: to be
         # rebuilt; invalidated when seats change or an agent is replaced).
         self._listeners: Optional[list[tuple[Player, Callable[..., Any]]]] = None
+        # Step mode: the pending decision and its cached view.
+        self._decision: Optional[Decision] = None
+        self._view: Optional[TableView] = None
         self.rng = random.Random(seed)
         self.dealer = Dealer(
             players,
@@ -190,6 +207,17 @@ class Environment:
     @property
     def max_buy_in(self) -> Optional[float]:
         return self.dealer.max_buy_in
+
+    @property
+    def last_result(self) -> Optional[HandResult]:
+        """Result of the last finished hand (either mode); None before the first."""
+        return self.dealer.last_result
+
+    @property
+    def hand_in_progress(self) -> bool:
+        """True from the start of a hand until its end-of-hand processing is done
+        (in step mode also while a decision is pending)."""
+        return self.dealer.in_hand
 
     def can_start(self) -> bool:
         return len(self.dealer.ready_players()) >= MIN_PLAYERS
@@ -266,17 +294,19 @@ class Environment:
                     fn = self._outbox.popleft()
                 fn()
 
-    # --- hands ---------------------------------------------------------------
+    # --- hands: callback mode --------------------------------------------------
 
     def start_round(self) -> HandResult:
-        """Start and play a new hand.
+        """Start and play a new hand (callback mode).
 
         The deck is reset and shuffled (once each, see `engine.dealer`), hole
         cards, per-hand player state and the hand's event history are cleared,
         the board and pots are emptied, the SB and BB players post the blinds, and
         the dealer runs the hand with the active players. Afterwards players who
         asked to leave are removed and queued joiners are seated. Raises
-        NotEnoughPlayersError with fewer than two active players.
+        NotEnoughPlayersError with fewer than two active players and
+        HandInProgressError while another hand (e.g. a step-mode hand) is in
+        progress.
         """
         return self.dealer.play_hand()
 
@@ -288,6 +318,72 @@ class Environment:
                 break
             results.append(self.start_round())
         return results
+
+    # --- hands: step mode -------------------------------------------------------
+
+    def _set_decision(self, request: Optional[tuple[Player, Any]]) -> Optional[Decision]:
+        self._view = None
+        if request is None:
+            self._decision = None
+        else:
+            p, legal = request
+            self._decision = Decision(
+                hand_number=self.dealer.hand_number,
+                seat=p.seat,  # type: ignore[arg-type]
+                name=p.name,  # type: ignore[arg-type]
+                player=p,
+                legal=legal,
+            )
+        return self._decision
+
+    def start_hand(self) -> Optional[Decision]:
+        """Start a hand in step mode and return its first decision.
+
+        Does everything `start_round()` does at the start (deck reset + shuffle,
+        `HandStarted`, blinds, deal, `on_hole_cards`), then runs to the first
+        decision. Returns None if the hand needed no decision at all (e.g.
+        everyone left in it is all-in after the blinds): it has then been played
+        to the end, including end-of-hand processing, and `last_result` holds its
+        result. Raises HandInProgressError / NotEnoughPlayersError like
+        `start_round()`.
+        """
+        request = self.dealer.begin_step_hand()
+        return self._set_decision(request)
+
+    def step(self, action: Union[Action, ActionType]) -> Optional[Decision]:
+        """Answer the pending decision with `action` (an `Action` or `ActionType`).
+
+        Validated before anything changes: `NoDecisionError` if no decision is
+        pending, `IllegalActionError` for anything that is not an action or not
+        legal now; the hand is then left exactly as it was. On success the action
+        is applied and the hand runs on to the next decision (returned) or to its
+        end (end-of-hand processing done, `last_result` set; returns None).
+        """
+        try:
+            request = self.dealer.submit(action)
+        except BaseException:
+            if self.dealer.pending is None:  # the hand ended or was aborted
+                self._decision = None
+                self._view = None
+            raise
+        return self._set_decision(request)
+
+    @property
+    def decision(self) -> Optional[Decision]:
+        """The pending step-mode decision, or None."""
+        return self._decision
+
+    def view(self) -> TableView:
+        """The acting player's table view for the pending decision (only their
+        hole cards). Built on the first call, cached until the decision is
+        answered."""
+        decision = self._decision
+        if decision is None:
+            raise NoDecisionError("no decision is pending")
+        view = self._view
+        if view is None:
+            view = self._view = self.dealer.table_view(decision.player)
+        return view
 
     # --- joining -------------------------------------------------------------
 
@@ -305,10 +401,10 @@ class Environment:
         None joins as big blind. At an empty / one-active-player table `seat` is
         ignored: the first joiner takes the button (SB heads-up) and the next one
         sits after them as BB. Between hands the player is seated at once; during a
-        hand he is queued and seated when the hand is over (relative to the new
-        button). Either way, if this does not raise the player is dealt into the
-        next hand. The agent receives its `Player` through `on_seated` and the
-        later callbacks. Thread-safe.
+        hand (either mode) he is queued and seated when the hand is over (relative
+        to the new button). Either way, if this does not raise the player is dealt
+        into the next hand. The agent receives its `Player` through `on_seated`
+        and the later callbacks. Thread-safe.
         """
         self._join(stack_bb, seat=seat, name=name, agent=agent)
 
@@ -426,11 +522,12 @@ class Environment:
 
         A waiting player is dropped from the join queue. Between hands a seated
         player is removed at once (a leaving button passes to the next active
-        player). During a hand the removal is deferred to its end: a participant
-        still in the hand is folded at his next turn (an all-in one stays in and is
-        paid normally). On removal `on_left(player, final_stack_bb)` is called and
-        `PlayerLeft` is broadcast to the remaining players. Leaving twice is a
-        no-op. Thread-safe.
+        player). During a hand (either mode) the removal is deferred to its end: a
+        participant still in the hand is folded at his next turn - in step mode
+        by the `step()` answering his pending decision - (an all-in one stays in
+        and is paid normally). On removal `on_left(player, final_stack_bb)` is
+        called and `PlayerLeft` is broadcast to the remaining players. Leaving
+        twice is a no-op. Thread-safe.
         """
         with self._lock:
             if player.status is PlayerStatus.LEFT:

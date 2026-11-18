@@ -72,6 +72,9 @@ class Agent(Protocol):
     `on_seated(player, view)`, `on_sit_out(player)`, `on_return(player)` and
     `on_left(player, final_stack_bb)`. Exceptions raised by these are logged
     and ignored.
+
+    In step mode `on_turn` is never called (the step-mode caller decides); the
+    other callbacks are called as in callback mode.
     """
 
     def on_turn(self, player: "Player", view: "TableView", legal: LegalActions) -> None:
@@ -229,6 +232,9 @@ class Player:
         self._record(action.type)
 
     def _record(self, action_type: ActionType) -> None:
+        """Record the action of a callback-mode turn. Outside such a turn (in
+        particular in step mode, where actions go through `Environment.step()`)
+        this raises `IllegalActionError`."""
         if self._legal is None:
             raise IllegalActionError(f"it is not {self.name}'s turn")
         if self.leave_requested:
@@ -255,7 +261,8 @@ class Player:
             dealer.flush()
 
     def _check_can_manage_seat(self, what: str) -> None:
-        """rebuy()/sit_in() are only for seated players, outside betting."""
+        """rebuy()/sit_in() are only for seated players, outside betting (in step
+        mode also not while a decision is pending)."""
         if self.status is PlayerStatus.WAITING:
             raise IllegalActionError(f"cannot {what} while waiting to be seated")
         if self.status is PlayerStatus.LEFT:
