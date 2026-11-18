@@ -20,6 +20,7 @@ from .actions import (
     mask_array,
     to_engine,
 )
+from .stacks import HandSampler, HandSpec, StackConfig, draw_stacks
 
 __all__ = [
     # actions
@@ -33,4 +34,9 @@ __all__ = [
     "mask_array",
     "to_engine",
     "action_kind",
+    # stacks
+    "StackConfig",
+    "draw_stacks",
+    "HandSpec",
+    "HandSampler",
 ]
