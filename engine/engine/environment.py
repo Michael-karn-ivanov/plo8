@@ -14,13 +14,13 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Optional, Union
 
-from entities import Deck
+from entities import Deck, Hand
 
 from .actions import Action, ActionType
 from .dealer import Dealer, NotEnoughPlayersError
 from .events import PlayerJoined, PlayerLeft, TableEvent
 from .player import CHIPS_PER_BB, Player, PlayerStatus, call_safely
-from .step import Decision, HandInProgressError, NoDecisionError
+from .step import Decision, HandHistory, HandInProgressError, NoDecisionError
 from .views import HandResult, TableView
 
 __all__ = [
@@ -86,7 +86,8 @@ class Environment:
     Step mode: `start_hand()` starts a hand and returns its first `Decision`;
     `step(action)` answers it and returns the next one (None when the hand is
     over, `last_result` then holds its result); `view()` gives the acting
-    player's `TableView` on request.
+    player's `TableView` on request. `history` and `hole_cards()` read the
+    hand without building a view.
     """
 
     def __init__(
@@ -384,6 +385,28 @@ class Environment:
         if view is None:
             view = self._view = self.dealer.table_view(decision.player)
         return view
+
+    # --- view-free reads (step mode) -------------------------------------------
+
+    @property
+    def history(self) -> HandHistory:
+        """Public events of the current hand so far (the same as
+        `view().history`), as a read-only live window - not a copy, and no view
+        is built. After the hand it shows that hand's events (equal to
+        `last_result.history`) until the next hand starts; empty before the
+        first hand. Read new events with a cursor:
+        `new = env.history[seen:]; seen = len(env.history)` (reset `seen` to 0
+        when `decision.hand_number` changes)."""
+        return self.dealer.history_view
+
+    def hole_cards(self) -> Hand:
+        """The acting player's own hole cards for the pending decision (the same
+        as `view().hole_cards`, without building a view). `NoDecisionError` if no
+        decision is pending."""
+        decision = self._decision
+        if decision is None:
+            raise NoDecisionError("no decision is pending")
+        return decision.player.hole_cards  # type: ignore[return-value]
 
     # --- joining -------------------------------------------------------------
 

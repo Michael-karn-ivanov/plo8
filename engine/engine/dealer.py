@@ -76,7 +76,7 @@ from .player import (
     to_chips,
 )
 from .pots import build_pots, split_pot
-from .step import HandInProgressError, NoDecisionError
+from .step import HandHistory, HandInProgressError, NoDecisionError
 from .views import HandResult, PotResult, PotView, SeatView, TableView
 
 __all__ = ["Dealer", "MAX_BETS_PER_STREET", "NotEnoughPlayersError"]
@@ -123,6 +123,11 @@ class Dealer:
     through `schedule(fn)`; both are replaced by the environment (which owns the
     `seq` counter and delivers outside its lock). `flush()` delivers anything
     queued while the lock was held. The defaults deliver at once.
+
+    `history` is the list of public events of the current hand (a fresh list per
+    hand); `history_view` is a read-only `HandHistory` window over it, created
+    with it, which keeps showing exactly the hand's events (those in its
+    `HandResult`) after the hand is over.
     """
 
     def __init__(
@@ -168,6 +173,7 @@ class Dealer:
         self.rebuy_window = False
         self.hand_number = 0
         self.history: list[TableEvent] = []  # public events of the current hand
+        self.history_view = HandHistory(self.history)
         self.last_result: Optional[HandResult] = None
         self.lock = lock if lock is not None else threading.RLock()
         self.after_hand: Optional[Callable[[], None]] = None
@@ -462,6 +468,7 @@ class Dealer:
             self.deck.shuffle()
             self.board = Board.empty()
             self.history = []
+            self.history_view = HandHistory(self.history)
             self._current_bet = 0
             self._bets = 0
             self._unit = self.big_blind
@@ -859,6 +866,9 @@ class Dealer:
         4. `in_hand` is cleared and the environment removes leavers and seats joiners.
         """
         self.last_result = result
+        # `history_view` keeps the hand's own events (those of `result.history`);
+        # events of the end-of-hand processing go to a copy.
+        self.history = list(self.history)
         self.rebuy_window = True
         try:
             for p in list(self.players):
