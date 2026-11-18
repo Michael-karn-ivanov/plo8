@@ -1,6 +1,7 @@
 import dataclasses
 import io
 import json
+import random
 import unittest
 
 from entities import Board, Card, Hand, Street
@@ -81,6 +82,35 @@ def play_hands(n=4, seed=3):
     env = Environment(players, seed=seed)
     env.run(n)
     return agents
+
+
+def step_decisions(chips_per_bb, stacks_chips, seed, max_hands=20):
+    """Play hands in step mode at `chips_per_bb` with players joining with the
+    given stacks (in chips); returns (TableView, LegalActions) of every decision.
+    Aggressive play with short stacks, so all-ins and side pots happen."""
+    env = Environment(chips_per_bb=chips_per_bb, seed=seed)
+    for k, chips in enumerate(stacks_chips):
+        env.join(chips / chips_per_bb, name=f"P{k}")
+    rng = random.Random(seed)
+    out = []
+    for _ in range(max_hands):
+        if not env.can_start():
+            break
+        decision = env.start_hand()
+        while decision is not None:
+            legal = decision.legal
+            out.append((env.view(), legal))
+            r = rng.random()
+            if legal.can_raise and r < 0.6:
+                action = ActionType.RAISE
+            elif legal.can_check:
+                action = ActionType.CHECK
+            elif r < 0.9:
+                action = ActionType.CALL
+            else:
+                action = ActionType.FOLD
+            decision = env.step(action)
+    return out
 
 
 BOARD = Board.parse("Ah7d2c 9s Td")
@@ -349,6 +379,44 @@ class EngineTypesTest(unittest.TestCase):
         for result in a.results:
             self.assertEqual(p.decode_hand_result(through_json(p.encode_hand_result(result))), result)
         self.assertTrue(any(r.showdown for r in a.results))
+
+
+class ExactRoundTripTest(unittest.TestCase):
+    """Wire protocol -> Round trip is exact: other projects (e.g. rl_env) rely on
+    `decode(json.loads(json.dumps(encode(x)))) == x` for the actor's view and
+    legal actions, at any chip unit."""
+
+    # (chips_per_bb, stacks in chips): short and uneven stacks give all-ins,
+    # side pots and BB amounts that are not multiples of 0.5.
+    TABLES = (
+        (6, (13, 25, 40, 100)),
+        (2, (7, 15, 31, 60, 9)),
+        (100, (133, 457, 1001)),
+    )
+
+    def test_actor_views_and_legal_actions_round_trip_exactly(self):
+        decisions = []
+        for chips_per_bb, stacks in self.TABLES:
+            for seed in range(6):
+                decisions += step_decisions(chips_per_bb, stacks, seed)
+        self.assertTrue(decisions)
+        for view, legal in decisions:
+            view_back = p.decode_table_view(json.loads(json.dumps(p.encode_table_view(view))))
+            legal_back = p.decode_legal(json.loads(json.dumps(p.encode_legal(legal))))
+            self.assertEqual(view_back, view)
+            self.assertEqual(legal_back, legal)
+            self.assertIs(type(view_back.seats), type(view.seats))
+            self.assertIs(type(view_back.side_pots), type(view.side_pots))
+            self.assertIs(view_back.street, view.street)
+            for got, want in zip(view_back.seats, view.seats):
+                self.assertIs(got.status, want.status)
+                self.assertEqual(got.stack, want.stack)
+        # The hands covered what matters: side pots and odd BB amounts.
+        self.assertTrue(any(len(v.side_pots) > 1 for v, _ in decisions), "no side pot was played")
+        self.assertTrue(
+            any((s.stack * 2) % 1 for v, _ in decisions for s in v.seats),
+            "no stack that is not a multiple of 0.5 BB",
+        )
 
 
 class MessagesTest(unittest.TestCase):
