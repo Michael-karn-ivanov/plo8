@@ -85,6 +85,10 @@ def player_actions(result, seat):
     return [e.action for e in acted(result, seat)]
 
 
+def passive(decision):
+    return ActionType.CHECK if decision.legal.can_check else ActionType.CALL
+
+
 class LeaveBetweenHandsTest(unittest.TestCase):
     def test_leave_empties_seat_and_renumbers(self):
         env, players, agents = make_env(4)
@@ -376,6 +380,64 @@ class LeaveDuringHandTest(unittest.TestCase):
         self.assertTrue(all(result.dealt_in.values()))
         new = [p for p in env.players if p.name == "new"][0]
         self.assertEqual(result.bb_seat, new.seat)
+
+
+class StepModeLeaveTest(unittest.TestCase):
+    def test_acting_player_leaving_makes_next_step_a_leave_fold(self):
+        env, players, agents = make_env(3)
+        d = env.start_hand()
+        self.assertIs(d.player, players[0])  # first to act, left of the BB
+        players[0].leave()
+        self.assertTrue(players[0].leave_requested)
+        self.assertIs(players[0].status, PlayerStatus.ACTIVE)
+        # The same decision is still pending; whatever legal action is submitted
+        # is applied as a fold with reason "leave".
+        self.assertIs(env.decision, d)
+        d = env.step(ActionType.CALL)
+        self.assertIsNot(d.player, players[0])
+        last = env.dealer.history[-1]
+        self.assertIsInstance(last, PlayerActed)
+        self.assertEqual((last.seat, last.action, last.reason), (0, ActionType.FOLD, "leave"))
+        while d is not None:
+            d = env.step(passive(d))
+        result = env.last_result
+        self.assertEqual(player_actions(result, 0), [ActionType.FOLD])
+        self.assertIs(players[0].status, PlayerStatus.LEFT)
+        self.assertEqual(agents[0].left, [100.0])
+        self.assertEqual(agents[0].hand_ends, [])
+        self.assertEqual([p.name for p in env.players], ["p1", "p2"])
+        self.assertEqual(sum(a.turns for a in agents), 0)  # on_turn is never called
+
+    def test_illegal_step_after_leave_is_still_rejected(self):
+        env, players, _ = make_env(3)
+        d = env.start_hand()
+        players[0].leave()
+        with self.assertRaises(IllegalActionError):
+            env.step(ActionType.CHECK)  # facing the big blind: not legal
+        self.assertIs(env.decision, d)
+        env.step(ActionType.FOLD)
+        last = env.dealer.history[-1]
+        self.assertEqual((last.seat, last.action, last.reason), (0, ActionType.FOLD, "leave"))
+
+    def test_other_players_leave_folds_them_without_a_decision(self):
+        env, players, agents = make_env(3)
+        d = env.start_hand()
+        self.assertIs(d.player, players[0])
+        players[2].leave()  # the big blind, not the acting player
+        seen = [d.player]
+        d = env.step(ActionType.CALL)
+        while d is not None:
+            seen.append(d.player)
+            d = env.step(passive(d))
+        result = env.last_result
+        self.assertNotIn(players[2], seen)  # never asked to decide
+        folds = acted(result, 2)
+        self.assertEqual([(e.action, e.reason) for e in folds], [(ActionType.FOLD, "leave")])
+        self.assertEqual(result.net[2], -1.0)
+        self.assertIs(players[2].status, PlayerStatus.LEFT)
+        self.assertEqual(agents[2].left, [99.0])
+        self.assertEqual(len(env.players), 2)
+        self.assertEqual(sum(a.turns for a in agents), 0)
 
 
 if __name__ == "__main__":

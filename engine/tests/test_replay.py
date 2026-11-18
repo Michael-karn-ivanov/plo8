@@ -7,6 +7,7 @@ import unittest
 
 from entities import Board, Card, Deck, Hand
 from engine import (
+    Action,
     ActionType,
     BlindPosted,
     BoardDealt,
@@ -136,6 +137,19 @@ class RecordingDeck(Deck):
             return super().remaining()
 
 
+class RecordingStackedDeck(RecordingDeck):
+    """A recording deck whose `shuffle()` stacks `script` on top every hand."""
+
+    def __init__(self, script, seed=0):
+        super().__init__(seed)
+        self.script = list(script)
+
+    def shuffle(self):
+        with self._call("shuffle"):
+            Deck.shuffle(self)
+            self.put_on_top(self.script)
+
+
 def make_env(agents, stacks=None, button=0, deck=None, chips_per_bb=100):
     stacks = stacks or [100] * len(agents)
     players = [Player(f"p{i}", s, a) for i, (s, a) in enumerate(zip(stacks, agents))]
@@ -157,6 +171,25 @@ def expected_deal(script, result, n_seats):
     b = script[4 * n : 4 * n + 5]
     board = Board(flop=tuple(b[:3]), turn=b[3], river=b[4])
     return hands, board
+
+
+def policy(seat, legal):
+    """A fixed, rng-free choice used in both modes: seat 1 raises whenever it
+    can, seat 3 folds to any bet, the others check / call."""
+    if seat == 1 and legal.can_raise:
+        return ActionType.RAISE
+    if legal.can_check:
+        return ActionType.CHECK
+    if seat == 3:
+        return ActionType.FOLD
+    return ActionType.CALL
+
+
+class PolicyAgent(Recorder):
+    """Callback-mode player of `policy`."""
+
+    def on_turn(self, player, view, legal):
+        player.act(Action.of(policy(player.seat, legal)))
 
 
 class DeckContractTest(unittest.TestCase):
@@ -186,6 +219,23 @@ class DeckContractTest(unittest.TestCase):
             start = len(deck.calls)
         self.assertEqual(deck.calls.count("reset"), 3)
         self.assertEqual(deck.calls.count("shuffle"), 3)
+
+    def test_step_mode_uses_the_deck_the_same_way(self):
+        deck = RecordingDeck()
+        env, players = make_env([None, None, None], deck=deck)
+        start = 0
+        for hand in range(3):
+            d = env.start_hand()
+            self.assertEqual(deck.calls[start : start + 2], ["reset", "shuffle"])
+            while d is not None:
+                d = env.step(ActionType.CHECK if d.legal.can_check else ActionType.CALL)
+            result = env.last_result
+            self.assertIs(env.dealer.deck, deck)
+            calls = deck.calls[start:]
+            self.assertEqual(calls[:2], ["reset", "shuffle"])
+            self.assertEqual(set(calls[2:]), {"deal_one"})
+            self.assertEqual(len(calls) - 2, 4 * 3 + len(result.board))
+            start = len(deck.calls)
 
     def test_seed_not_used_with_supplied_deck(self):
         def play(seed):
@@ -298,6 +348,16 @@ class StackedDeckTest(unittest.TestCase):
             self.assertEqual(result.button, k)
             self.assert_dealt(env, players, scripts[k], result)
         self.assertEqual(deck.shuffles, 3)
+
+    def test_step_mode_deals_the_script(self):
+        script = random_script(7)
+        env, players = make_env([None] * 6, button=3, deck=StackedDeck([script]))
+        d = env.start_hand()
+        while d is not None:
+            d = env.step(ActionType.CHECK if d.legal.can_check else ActionType.CALL)
+        result = env.last_result
+        self.assertTrue(result.showdown)
+        self.assert_dealt(env, players, script, result)
 
 
 # Pot of 7 chips at chips_per_bb=2: seat 1 (SB) posts 1 chip and folds, the other
@@ -431,6 +491,40 @@ class ReplayDeterminismTest(unittest.TestCase):
         self.assertTrue(events_a)
         self.assertEqual(events_a, events_b)
         self.assertEqual(result_a, result_b)
+
+    def _replay(self, script, step_mode):
+        """One scripted hand played with `policy`; returns (events, result, deck calls)."""
+        deck = RecordingStackedDeck(script, seed=random.randrange(1 << 30))
+        recorder = PolicyAgent()
+        agents = [recorder, PolicyAgent(), PolicyAgent(), PolicyAgent()]
+        env, _ = make_env(agents, stacks=[30, 25, 40, 10], button=1, deck=deck, chips_per_bb=2)
+        if step_mode:
+            d = env.start_hand()
+            while d is not None:
+                d = env.step(policy(d.seat, d.legal))
+            result = env.last_result
+        else:
+            result = env.start_round()
+        return recorder.events, result, list(deck.calls)
+
+    def test_same_script_same_hand_in_step_mode(self):
+        script = random_script(43)
+        events_a, result_a, calls_a = self._replay(script, step_mode=True)
+        events_b, result_b, calls_b = self._replay(script, step_mode=True)
+        self.assertTrue(events_a)
+        self.assertEqual(events_a, events_b)
+        self.assertEqual(result_a, result_b)
+        self.assertEqual(calls_a, calls_b)
+        # ... and the same as the callback-mode replay, deck calls included.
+        events_c, result_c, calls_c = self._replay(script, step_mode=False)
+        self.assertEqual(events_a, events_c)
+        self.assertEqual(result_a, result_c)
+        self.assertEqual(calls_a, calls_c)
+        self.assertEqual(calls_a[:2], ["reset", "shuffle"])
+        self.assertEqual(set(calls_a[2:]), {"deal_one"})
+        self.assertTrue(
+            any(isinstance(e, PlayerActed) and e.action is ActionType.RAISE for e in events_a)
+        )
 
 
 if __name__ == "__main__":

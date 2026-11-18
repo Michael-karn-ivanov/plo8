@@ -2,6 +2,7 @@ import threading
 import unittest
 
 from engine import (
+    ActionType,
     Environment,
     IllegalActionError,
     Player,
@@ -418,6 +419,48 @@ class JoinDuringHandTest(unittest.TestCase):
         self.assertIs(holder["status"], PlayerStatus.WAITING)
         self.assertIs(holder["player"].status, PlayerStatus.ACTIVE)
         self.assertEqual(len(env.players), 3)
+
+
+class JoinStepModeTest(unittest.TestCase):
+    def test_join_while_decision_pending_is_queued_until_hand_ends(self):
+        env, players, agents = make_env(3)
+        d = env.start_hand()
+        self.assertIsNotNone(d)
+        late_agent = Passive()
+        self.assertIsNone(env.join(50, name="late", agent=late_agent))
+        late = by_name(env, "late")
+        self.assertIs(late.status, PlayerStatus.WAITING)
+        self.assertEqual(env.waiting, [late])
+        self.assertEqual(len(env.players), 3)
+        self.assertEqual(env.view().waiting, ("late",))
+        with self.assertRaises(IllegalActionError):
+            late.rebuy(5)  # waiting players cannot rebuy
+        while True:
+            nxt = env.step(ActionType.CHECK if d.legal.can_check else ActionType.CALL)
+            if nxt is None:
+                break
+            self.assertIs(late.status, PlayerStatus.WAITING)  # until the last step
+            d = nxt
+        first = env.last_result
+        self.assertNotIn("late", first.names.values())
+        self.assertEqual(late_agent.hand_ends, [])
+        self.assertFalse(any(e.hand_no == 1 for e in late_agent.events))
+        # Seated by the final step(), relative to the moved button, as big blind.
+        self.assertIs(late.status, PlayerStatus.ACTIVE)
+        self.assertEqual(env.waiting, [])
+        self.assertEqual(env.button, 1)
+        self.assertEqual(offset(env, late), 2)
+        self.assertEqual(late_agent.log[:1], [("seated", 1)])
+
+        d = env.start_hand()
+        while d is not None:
+            d = env.step(ActionType.CHECK if d.legal.can_check else ActionType.CALL)
+        second = env.last_result
+        self.assertEqual(second.bb_seat, late.seat)
+        self.assertTrue(second.dealt_in[late.seat])
+        self.assertEqual(late_agent.dealt[2], late.hole_cards)
+        self.assertEqual(late_agent.turns, 0)  # step mode: no on_turn
+        self.assertEqual(late_agent.hand_ends, [2])
 
 
 class JoinValidationTest(unittest.TestCase):

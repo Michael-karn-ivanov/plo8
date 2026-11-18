@@ -95,6 +95,18 @@ def events_of(agent, event_type):
     return [e for e in agent.events if isinstance(e, event_type)]
 
 
+def passive(decision):
+    return ActionType.CHECK if decision.legal.can_check else ActionType.CALL
+
+
+def play_step_hand(env, choose=passive):
+    """Play one step-mode hand to the end; returns its result."""
+    d = env.start_hand()
+    while d is not None:
+        d = env.step(choose(d))
+    return env.last_result
+
+
 class BustedTest(unittest.TestCase):
     def test_busted_player_sits_out(self):
         env, players, agents = bust_env(Bot())
@@ -302,6 +314,50 @@ class RunTest(unittest.TestCase):
         results = env.run(3)
         self.assertEqual(len(results), 3)
         self.assertEqual([r.dealt_in[2] for r in results], [True, False, True])
+
+
+class StepModeSitOutTest(unittest.TestCase):
+    def test_busted_player_sits_out_in_step_mode(self):
+        env, players, agents = bust_env(Bot(rebuy_at={2: 50}))
+        p2 = players[2]
+        first = play_step_hand(env)
+        self.assertEqual(first.stacks[2], 0.0)
+        self.assertIs(p2.status, PlayerStatus.SITTING_OUT)
+        self.assertEqual(agents[2].sat_out, 1)
+        self.assertEqual([(e.name, e.seat) for e in events_of(agents[0], PlayerSatOut)], [("p2", 2)])
+        self.assertEqual(env.button, 1)
+
+        second = play_step_hand(env)
+        self.assertEqual(second.dealt_in, {0: True, 1: True, 2: False})
+        self.assertIsNone(p2.hole_cards)
+        self.assertFalse(any(getattr(e, "seat", None) == 2 for e in second.history))
+        # The rebuy window of hand 2 brings it back for hand 3.
+        self.assertIs(p2.status, PlayerStatus.ACTIVE)
+        self.assertEqual(agents[2].returned, 1)
+        third = play_step_hand(env)
+        self.assertTrue(third.dealt_in[2])
+        self.assertEqual(agents[2].hand_ends, [(1, True), (2, False), (3, True)])
+        self.assertEqual(sum(a.turns.__len__() for a in agents), 0)  # no on_turn in step mode
+
+    def test_illegal_step_never_makes_anyone_sit_out(self):
+        players = [Player(f"p{i}", 100, Bot()) for i in range(3)]
+        env = Environment(players, seed=3)
+        for _ in range(3):
+            d = env.start_hand()
+            while d is not None:
+                illegal = [t for t in ActionType if not d.legal.allows(t)]
+                for t in illegal:
+                    with self.assertRaises(IllegalActionError):
+                        env.step(t)
+                with self.assertRaises(IllegalActionError):
+                    env.step("call")
+                d = env.step(passive(d))
+            result = env.last_result
+            self.assertFalse(
+                any(isinstance(e, PlayerActed) and e.reason is not None for e in result.history)
+            )
+            self.assertTrue(all(p.status is PlayerStatus.ACTIVE for p in players))
+            self.assertEqual(sum(a.sat_out for a in (p.agent for p in players)), 0)
 
 
 if __name__ == "__main__":

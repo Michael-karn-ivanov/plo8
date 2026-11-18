@@ -563,5 +563,25 @@ class ProcessRemoteTest(unittest.TestCase):
         self.assertEqual(state["proc"].exitcode, 0)
 
 
+class StepModeRemoteTest(unittest.TestCase):
+    def test_remote_agent_gets_notifications_but_no_turns_in_step_mode(self):
+        local = PassiveLocal()
+        remote, t, _ = _threaded_remote(local)
+        players = [Player("remote", 100, remote), Player("b", 100), Player("c", 100)]
+        env = Environment(players, seed=2)
+        try:
+            d = env.start_hand()
+            while d is not None:
+                d = env.step(ActionType.CHECK if d.legal.can_check else ActionType.CALL)
+            result = env.last_result
+        finally:
+            remote.close()
+            t.join(5)
+        self.assertEqual(local.results, 1)  # on_hand_end went through the pipe
+        self.assertEqual(local.hole_notified[1], players[0].hole_cards)
+        self.assertNotIn(("turn", 1), local.log)  # on_turn is never called
+        self.assertEqual(len(local.event_seqs), len(result.history))
+
+
 if __name__ == "__main__":
     unittest.main()
