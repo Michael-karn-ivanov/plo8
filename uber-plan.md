@@ -24,7 +24,7 @@ the engine and server as they are today.
 | 3 | Own card numbering `id = rank*4 + suit` | `entities.Card.index` = `(rank-2)*4 + suit_index`, `0..51`, plus `Card.from_index` | Use `Card.index` everywhere; no second numbering |
 | 4 | "Add a test that deck order depends only on the seed, if your engine draws lazily" | Deal order is a **documented contract** (`engine/plan.md`, "Deck use and deal order"), covered by `test_replay`; `Environment(deck=...)` takes any `Deck`; `cli_server` already has a `StackedDeck` | Duplicate deals = a fresh `Deck(random.Random(seed))` per rotation. Nothing new is needed in the engine |
 | 5 | Adapter returns chip results; reward in "big bets" | Engine amounts are in **BB** (floats over integer chips), `HandResult.net[seat]`; limit structure is fixed: SB 0.5, BB 1, small bet 1 BB, big bet **2 BB** | `return = HandResult.net[seat] / 2` |
-| 6 | 3-action legal mask from the adapter | `LegalActions(can_check, call_amount, can_raise, raise_to, bet_unit, raises_left)`; the engine allows folding when checking is free | `legal_mask(legal)` = `[not can_check, True, can_raise]` (fold masked when check is free) |
+| 6 | 3-action legal mask from the adapter | `LegalActions(can_check, call_amount, can_raise, raise_to, bet_unit, raises_left)`; the engine allows folding when checking is free | `action_mask(legal)` = `[not can_check, True, can_raise]` (fold masked when check is free) |
 | 7 | Encoder "raises this street, one-hot 0–4" | 4-bet cap, **lifted heads-up** (`raises_left = None`) | Last bucket is "4 or more" |
 | 8 | Encoder has no stack features | Real games through `cli_server` have any buy-in; short stacks go all-in, side pots exist | Add my stack and per-seat stacks (in big bets, clipped). Train mostly deep, sometimes short (Phase 3) |
 | 9 | A second adapter `seat_view_from_server(msg)` for the bot client, plus a test that it matches the engine path | `cli_server.protocol` already decodes `turn` messages into the engine's own `TableView` and `LegalActions` dataclasses | The encoder takes `TableView` + `LegalActions`, so the server path needs no new adapter. The parity test becomes a protocol round-trip test plus replaying `e2e_test_sets` |
@@ -55,7 +55,7 @@ silent, and those tests are how you catch them.
 What you end up with:
 
 - **`//engine` with step mode**: the same rules, now drivable one decision at a time.
-- **`//rl_env`**: the RL view of the engine. It has the table adapter, the observation
+- **`//rl_env`**: the RL view of the engine. It has the step-mode table, the observation
   encoder, `TableBatch` (hundreds of tables in one process) and the benchmark. Needs numpy only.
 - **`//arena`**: baseline bots and the duplicate-match evaluator (bb/100 with a
   confidence interval). Needs numpy only.
@@ -220,16 +220,22 @@ plo8/
   uber-plan.md                 # this file
   requirements-rl.txt          # pinned third-party deps for the RL projects (numpy, torch, ray, onnx, ...)
   entities/                    # existing: Card (index 0..51), Hand, Board, Street, Deck (+ put_on_top)
-  engine/                      # existing + Phase 1A: step mode, speed, tools/bench.py (engine-only)
+  engine/                      # existing + Phase 1A: step mode, speed, bench/bench.py (engine-only)
   cli_server/                  # existing: TCP server, protocol, e2e mode + e2e_test_sets/
   cli_client/                  # existing: curses client
   rl_env/                      # created in Phase 1B — deps: //engine, numpy
     rl_env/
-      adapter.py               # EngineTable: one step-mode Environment per table, Act enum, legal_mask
-      encoding.py              # encode_obs(view, legal), encode_priv(...); OBS_DIM, PRIV_DIM, ENCODER_VERSION
-      tables.py                # TableBatch: N tables, pending decisions grouped by controller, results
-      controller.py            # Controller protocol (batched act)
-    tools/bench.py             # decisions/s with encoder + mask over TableBatch
+      actions.py               # FOLD / CHECK_CALL / BET_RAISE, action_mask, mask_array, to_engine
+      table.py                 # Table: one step-mode Environment per hand
+      stacks.py                # StackConfig, HandSpec, HandSampler
+      tracker.py               # HandTracker: public state of a hand from engine events
+      hints.py                 # hand-strength hints (engine evaluator), cached per street
+      encoder.py               # encode_view(view, legal); OBS_DIM, OBS_LAYOUT, ENCODER_VERSION
+      critic.py                # critic_cards, expand_critic, PRIV_DIM (critic only)
+      batch.py                 # TableBatch, DecisionBatch, FinishedHand, Controller protocol
+      controllers.py           # RandomController
+      recorder.py              # Recorder, TrainingRecords (obs, mask, action, logp, critic, reward)
+    bench/bench.py             # decisions/s with encoder + mask over TableBatch
     tests/
   arena/                       # created in Phase 2 — deps: //rl_env
     arena/
@@ -373,18 +379,19 @@ Implementation sketch, for the planner:
   each `TurnRequest` it builds the view, calls `agent.on_turn` exactly as today and sends
   the action back. Timeouts, leave-as-fold and `IllegalActionError` handling stay in this
   driver, so the server's behaviour doesn't change.
-- Public step API on `Environment` (names are a suggestion):
+- Public step API on `Environment` (as built):
 
   ```python
-  turn = env.begin_hand()     # -> Turn | None. Like start_round(), but stops at the first decision
-  while turn is not None:
-      turn.player, turn.legal  # Player, LegalActions
-      view = turn.view()       # TableView, built only when asked (lazy)
-      turn = env.submit(Action(ActionType.CALL))   # applies, runs to the next decision or the end
+  d = env.start_hand()        # -> Decision | None. Like start_round(), but stops at the first decision
+  while d is not None:
+      d.seat, d.legal          # Decision(hand_number, seat, name, player, legal)
+      view = env.view()        # TableView of the acting player, built only when asked (lazy)
+      d = env.step(ActionType.CALL)   # Action or ActionType; runs to the next decision or the end
   result = env.last_result    # HandResult; end-of-hand processing (on_hand_end, button move) done
   ```
 
-  An illegal action in `submit` raises `IllegalActionError` and leaves the hand
+  `env.decision` is the pending decision. An illegal action in `step` raises
+  `IllegalActionError` and leaves the hand
   unchanged. The engine never sits a player out for this in step mode, because the
   caller is in control.
 - Locks: the generator must not yield while holding the table lock.
@@ -397,9 +404,10 @@ Tests (`engine/tests/test_step.py`):
   mode and step mode produce identical event streams (ignoring nothing but object
   identity), identical `HandResult`s and identical final stacks.
 - The step-mode legal actions equal the ones callback mode passes to `on_turn`.
-- An illegal `submit` raises and doesn't change the state.
-- `begin_hand` during a hand raises. A hand where no decision is possible (for example
-  both blinds all-in) returns `None` from `begin_hand` with a complete result.
+- An illegal `step` raises and doesn't change the state.
+- `start_hand` during a hand raises (`HandInProgressError`). A hand where no decision is
+  possible (for example both blinds all-in) returns `None` from `start_hand` with a
+  complete result.
 - Everything existing still passes: `buck2 test //engine/...`, plus
   `//cli_server` and `//cli_client` tests and `cli_server --e2e_test` (all 26 cases).
 
@@ -420,12 +428,12 @@ Measured baseline (this Mac, Python 3.14, random agents, callback mode, no encod
 
 At 6-max, `best_omaha` (≈36%) and `table_view` (≈33%) dominate. In order:
 
-1. **Benchmark first:** `engine/tools/bench.py` (a `python_binary` in `engine/BUCK`,
+1. **Benchmark first:** `engine/bench/bench.py` (`//engine:bench`, a `python_binary`,
    standard library only). It plays random legal actions on 512 tables in step mode in
    one process and reports hands/s and decisions/s at 2, 6 and 9 players. Run it under
    py-spy. Record the numbers in `engine/plan.md` before and after each change.
 2. **Lazy views** (mostly already done by 1A.1): step mode builds a view only when
-   `turn.view()` is called, and callback mode only for callbacks that exist.
+   `env.view()` is called, and callback mode only for callbacks that exist.
 3. **A faster evaluator** inside `//engine`, keeping `rank_high` / `rank_low` /
    `best_omaha` and their tests as the oracle. Work on card indices instead of
    `Card`/`Counter`/enum hashing, use a rank bitmask for lows, and reuse the 10 board
@@ -456,148 +464,198 @@ written down in `engine/plan.md` with the next step chosen.
 
 **Goal:** a fast, well-tested layer between the engine and everything else. Mistakes
 here are invisible later: the bot still trains, it just learns the wrong thing. This
-phase creates `rl_env/` with its first `spec.md`, which covers the adapter, the
-encoder, `TableBatch`, the `Controller` protocol and the benchmark. It depends only on
+phase creates `rl_env/` with its first `spec.md` and `plan.md`, which cover the table,
+the observation, `TableBatch`, the `Controller` protocol, the training records and the
+benchmark. It depends only on
 `//engine` (step mode from 1A) and numpy from the venv.
 
-### 1B.1 The adapter (`//rl_env/adapter.py`)
+### 1B.1 Actions and one table (`rl_env/actions.py`, `rl_env/table.py`)
 
-The only module in the RL stack that drives the engine. One instance is one table.
+The only modules in the RL stack that drive the engine. A `Table` is one engine
+`Environment` in step mode, rebuilt for each hand. (`rl_env/plan.md` is the authoritative
+design; the code below shows its shape.)
 
 ```python
-from enum import IntEnum
-import random
-import numpy as np
-from engine import Action, ActionType, Deck, Environment, LegalActions, Player, TableView
+# rl_env/actions.py
+FOLD, CHECK_CALL, BET_RAISE = 0, 1, 2
+N_ACTIONS = 3
 
-class Act(IntEnum):
-    FOLD = 0
-    CALL = 1    # check or call
-    RAISE = 2   # bet or raise
-
-def legal_mask(legal: LegalActions) -> np.ndarray:
+def action_mask(legal: LegalActions) -> tuple[bool, bool, bool]:
     # Folding when you could check is never correct, so it is masked out.
-    return np.array([not legal.can_check, True, legal.can_raise], dtype=bool)
+    return (not legal.can_check, True, legal.can_raise)
 
-def to_engine(act: Act, legal: LegalActions) -> Action:
-    if act is Act.FOLD:  return Action.fold()
-    if act is Act.CALL:  return Action.check() if legal.can_check else Action.call()
-    return Action.raise_()
+def mask_array(legal: LegalActions) -> np.ndarray: ...       # the same as a bool row, shape (3,)
 
-class EngineTable:
-    def new_hand(self, stacks_bb: list[float], button: int, deck_seed: int) -> None:
+def to_engine(action: int, legal: LegalActions) -> ActionType:
+    # FOLD -> FOLD, CHECK_CALL -> CHECK or CALL, BET_RAISE -> RAISE.
+    # An action outside the mask raises IllegalMaskedActionError before the engine is touched.
+
+# rl_env/table.py
+class Table:
+    def __init__(self, chips_per_bb: int = 100): ...
+    def start_hand(self, n_seats, stacks_bb, button, deck_seed, *, deck=None) -> bool:
         self.env = Environment(
-            players=[Player(name=f"s{i}", stack=s) for i, s in enumerate(stacks_bb)],
-            button=button,
-            deck=Deck(random.Random(deck_seed)),   # deal order is an engine contract -> duplicate-safe
+            players=[Player(f"s{i}", stacks_bb[i]) for i in range(n_seats)],
+            button=button, chips_per_bb=self.chips_per_bb,
+            seed=deck_seed,                 # deal order is an engine contract -> duplicate-safe
+            deck=deck,                      # tests / recorded-hand replays only
             action_timeout=None,
         )
-        self.turn = self.env.begin_hand()
-    def to_act(self) -> int | None:          return None if self.turn is None else self.turn.player.seat
-    def legal(self) -> LegalActions:         return self.turn.legal
-    def view(self) -> TableView:             return self.turn.view()      # only the acting seat's cards
-    def apply(self, act: Act) -> None:       self.turn = self.env.submit(to_engine(act, self.turn.legal))
-    def hole_cards(self, seat) -> list[int]: return [c.index for c in self.env.players[seat].hole_cards]  # critic only
-    def results_bb(self) -> dict[int, float]: return self.env.last_result.net
+        return self.env.start_hand() is not None   # False: the hand needed no decision
+    # during a hand
+    decision_pending: bool; seat_to_act: int; legal: LegalActions; mask: tuple[bool, bool, bool]
+    def view(self) -> TableView: ...                # env.view(), only when asked
+    def observation(self, out=None) -> np.ndarray: ...   # training path, no view built (1B.2)
+    def act(self, action: int) -> None: ...         # to_engine + env.step()
+    # after the hand
+    hand_over: bool; result: HandResult; net_bb: np.ndarray; rewards: np.ndarray   # rewards = net_bb / 2
 ```
 
 Notes:
 - A fresh `Environment` per hand is the simplest way to vary table size and stacks. It
-  needs no rebuys, sit-outs or joins. Measure its cost in the benchmark; if it shows up,
-  reuse one environment per table size and reset stacks between hands.
-- Stacks: mostly 50 big bets (100 BB) each, since in limit that is effectively deep.
-  Also a share of hands (say 20%) with random stacks from 5 to 150 BB, so all-ins and
-  side pots appear in training. The engine already handles them.
+  needs no rebuys, sit-outs or joins. The benchmark profile shows its cost; if it goes
+  above ~10%, reuse one environment per table size.
+- Stacks (`rl_env/stacks.py`: `StackConfig`, `draw_stacks`, `HandSpec`, `HandSampler`):
+  80% of hands start everyone at 100 BB (50 big bets, effectively deep in limit); the
+  rest give each seat a random stack from 5 to 150 BB, so all-ins and side pots appear in
+  training. `HandSampler(seed).sample()` draws size, stacks, button and deck seed.
 - Seats are engine list indices `0..n-1`, clockwise. `button` is any of them.
+- Zero-sum is checked in chips, never on floats.
 
-### 1B.2 The encoder (`//rl_env/encoding.py`)
+Engine spec change #3 (small, requested by `rl_env/plan.md` and already in
+`engine/spec.md`): read the current hand's public events and the acting player's hole
+cards **without** building a view, a separate accessor for every participant's hole
+cards (critic only), exact starting stacks at any chip unit (recorded-hand replays), and
+the engine benchmark's workload as a library function (`//engine:bench_lib`).
+`cli_server/spec.md` makes the `:e2e` library (recorded hands, stacked deck) usable by
+other projects' tests.
 
-`encode_obs(view: TableView, legal: LegalActions) -> np.ndarray` (float32). It reads
-only the engine's `TableView`, so the same function serves training (in process) and the
-bot client (decoded from `cli_server` protocol messages). Seats are renumbered relative
-to the acting player: slot 0 is me, slot 1 the next seat clockwise, and so on. Empty
-slots stay zero. Amounts are in big bets (BB / 2) and clipped.
+### 1B.2 The observation (`rl_env/tracker.py`, `rl_env/hints.py`, `rl_env/encoder.py`, `rl_env/critic.py`)
 
-| Block | Size | Encoding, from `TableView` |
+`encode_view(view: TableView, legal: LegalActions) -> np.ndarray` (float32, `OBS_DIM`).
+It reads only the engine's `TableView` (its `history`, `seat`, `hole_cards`) and the
+legal actions, so the bot client can call it on a view decoded from `cli_server`
+protocol messages. Training uses `Table.observation()`, which builds the **same bytes**
+without a view: a `HandTracker` is fed only the engine events added since the
+previous decision. A test checks the two paths are byte-identical at every decision.
+
+Seats are renumbered relative to the acting player over the hand's participants: slot 0
+is me, slot 1 the next participant clockwise, and so on. Empty slots stay zero. Amounts
+are in big bets (BB / 2), scaled and clipped; every value is in [0, 2].
+
+| Block | Size | Encoding |
 |---|---|---|
-| My hole cards | 52 | 1 at each `card.index` of `view.hole_cards` |
-| Board, by street | 156 | flop / turn / river, 52 each, from `view.board` |
-| Hand-strength hints | 16 | from `engine.best_omaha(hole, board)` (flop onwards): high category one-hot (9), has qualifying low (1), quality of best low (5), count of distinct A–8 ranks in my hand (1) |
-| Street | 4 | one-hot of `view.street` |
-| Players dealt | 9 | one-hot of 2..10 (`seats` with `in_hand`) |
-| My position | 10 | seats after `view.button`, one-hot |
-| Betting state | 10 | pot, to call (`legal.call_amount`), bets this street one-hot 0–4+ (`view.raises`, last bucket = 4 or more since heads-up is uncapped), my chips in pot (`me.total_bet`), players still in, **my stack** |
-| Each other seat (9 slots) | 117 | 13 each: occupied, still in, all-in, chips in pot, chips this street, bets per street (4), last aggressor, acts after me, has acted this street, **stack** |
-| Last 8 actions | 104 | 13 each, from `PlayerActed` events in `view.history`: who (slot, 10) and what (fold / check-call / bet-raise) |
-| **Total** | **478** | `OBS_DIM`, plus `ENCODER_VERSION = 1` |
+| My hole cards | 52 | multi-hot over `Card.index` |
+| Board, by street | 156 | flop / turn / river, 52 each |
+| Street | 4 | one-hot |
+| Players dealt | 9 | one-hot of 2..10 |
+| My position | 10 | offset from the button, one-hot |
+| Betting state | 17 | pot, to call, pot odds, bets this street one-hot 0–4+ (heads-up is uncapped), my chips in pot (total, this street), players still in, players able to act, **my stack**, can raise, can check, cap lifted, raises left |
+| My action history | 6 | my bets per street (4), last aggressor this street, last aggressor before |
+| Each other seat (9 slots) | 135 | 15 each: occupied, still in, all-in, chips in pot, chips this street, bets per street (4), last aggressor (this street, before), acts after me, has acted this street, **stack**, is button |
+| Last 8 actions | 144 | 18 each: present, who (slot, 10), what (fold / check-call / bet-raise), street (4) |
+| Hand-strength hints | 21 | from `engine.best_omaha(hole, board)` (flop onwards): high category one-hot (9), has qualifying low, highest low card one-hot 5–8 (4), low strength; on every street: distinct A–8 ranks in my hand one-hot 0–4 (5), has A+2 |
+| **Total** | **554** | `OBS_DIM`, plus `ENCODER_VERSION = 1`; offsets in `OBS_LAYOUT` and `rl_env/plan.md` |
 
 - The hand-strength hints aren't strictly needed, but they make early learning much
   faster and the evaluator gives them almost for free. On the river `best_omaha` costs
-  about 125 µs, more than the rest of the decision. Cache the hints per
+  about 125 µs, more than the rest of the decision. They are cached per
   `(table, seat, street)` and use the faster evaluator from 1A.2.
-- Preflop hints are zeros, apart from the A–8 count.
-- `encode_priv(table, seat)` is the critic's extra input: the other seats' hole cards as
-  36 small integers (9 slots × 4 `Card.index`, −1 for empty), expanded to one-hot on the
-  learner.
-- Write into a preallocated numpy array by index. The encoder runs once per decision in
-  Python, so it can easily cost more than the engine. The benchmark measures it.
+- The critic's extra input: `critic_cards(table, seat)` gives the other seats' hole
+  cards as a `(9, 4)` int8 array of `Card.index` in the observation's slot order,
+  `NO_CARD = 52` for empty slots. `expand_critic` turns it into a `(PRIV_DIM = 468)`
+  multi-hot (9 slots × 52), the reference for the learner's expansion. `encoder.py` and
+  `tracker.py` never import `critic.py`.
+- The encoder writes sparsely into preallocated per-group arrays. It runs once per
+  decision in Python, so it can easily cost more than the engine. The benchmark
+  measures it.
 
-### 1B.3 `TableBatch` and the `Controller` protocol
+### 1B.3 `TableBatch`, the `Controller` protocol and the `Recorder` (`rl_env/batch.py`, `rl_env/recorder.py`)
 
 ```python
-# rl_env/controller.py
-class Controller(Protocol):
-    def act(self, obs: np.ndarray, mask: np.ndarray,
-            views: list[TableView], legals: list[LegalActions]) -> np.ndarray:
-        """One Act per row. Neural policies read obs/mask; rule bots read views/legals."""
+# rl_env/batch.py
+@dataclass
+class DecisionBatch:                       # one per controller per step
+    key: Hashable                          # controller key
+    tables: np.ndarray; seats: np.ndarray  # int32, (B,)
+    obs: np.ndarray                        # float32, (B, OBS_DIM)
+    mask: np.ndarray                       # bool, (B, 3)
+    legal: list[LegalActions]
+    views: list[TableView] | None          # only built when the controller wants_views
+    @staticmethod
+    def single(view, legal, key=None) -> "DecisionBatch": ...   # one engine on_turn / server turn
 
-# rl_env/tables.py
+class Controller(Protocol):
+    wants_views: bool
+    def act(self, batch: DecisionBatch) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """One action per row; optionally also each chosen action's log-probability.
+        Neural policies read obs/mask; rule bots read views/legal."""
+
 class TableBatch:
-    def __init__(self, n_tables, rng): ...
-    def start_hand(self, i, lineup, stacks_bb, button, deck_seed): ...   # lineup: seat -> controller id
-    def pending(self) -> list[tuple[int, int, str]]:
-        """(table, seat, controller id) for every table waiting on a decision; at most one per table."""
-    def view(self, i) -> TableView: ...
-    def apply(self, i, act) -> None: ...
-    def finished_hands(self) -> list[tuple[int, dict[int, float]]]: ...  # (table, net BB per seat)
-    def other_cards(self, i, seat) -> np.ndarray: ...                     # 36 ints, critic only
+    def __init__(self, n_tables, *, chips_per_bb=100, recorder: Recorder | None = None): ...
+    def start_hand(self, table, spec: HandSpec, controllers: Sequence[Hashable]) -> int: ...  # -> hand_id
+    def pending(self, controllers) -> list[DecisionBatch]: ...  # grouped by controller, <= 1 row per table
+    def submit(self, batch: DecisionBatch, actions, logp=None) -> None: ...
+    def step(self, controllers: Mapping[Hashable, Controller]) -> list[FinishedHand]: ...
+    def collect_finished(self) -> list[FinishedHand]: ...
+    # FinishedHand(table, hand_id, spec, controllers, net_bb, rewards, result)
+    def idle_tables(self) -> list[int]: ...
+    def any_in_hand(self) -> bool: ...
+
+# rl_env/recorder.py
+class Recorder:
+    def __init__(self, keys=None): ...     # record only these controller keys (e.g. {"learner"})
+    n_ready: int; n_pending: int
+    def drain(self) -> TrainingRecords: ...
+    # columns: table, hand_id, seat, controller, obs, mask, action, logp, critic, reward
+    # rows are released only when their hand finishes, with reward = that seat's net / 2
 ```
 
-### 1B.4 Speed with the encoder (`//rl_env/tools/bench.py`)
+`rl_env/controllers.py` has only `RandomController(seed)`, for rl_env's own bench, fuzz
+and tests. The baseline bots belong to arena (Phase 2).
+
+### 1B.4 Speed with the encoder (`rl_env/bench/bench.py`, `buck2 run //rl_env:bench`)
 
 The engine's own speed was handled in 1A.2. This benchmark measures what a rollout worker
-will actually pay per decision: `TableBatch` over 512 tables, with `encode_obs` +
-`legal_mask` for every decision and a dummy batched controller (random actions, no
-network). It reports decisions/s at 2, 6 and 9 players next to the engine-only number from
-`engine/tools/bench.py`, so you can see the encoder's share.
+will actually pay per decision: `TableBatch` over 512 tables, with the observation and
+mask built for every decision and `RandomController` (random actions, no network). It
+reports decisions/s at 2, 6 and 9 players next to the engine-only number from
+`//engine:bench_lib`, so you can see the encoder's share.
 
 Target before Phase 6: **at least 5,000 decisions/s per core with the encoder** (the
 network adds little per decision when batched). Every 2× here roughly halves the AWS
 bill. If the encoder dominates, optimise it (preallocated arrays, cached hints, fewer
-Python loops over `view.history`) before touching the engine again.
+Python loops over the hand's events) before touching the engine again.
 
 ### 1B.5 Tests (`//rl_env/tests`)
 
 - **Determinism:** the same seeds give an identical `TableBatch` run (actions,
   results).
-- **Fuzz through the adapter:** 100k random hands at random table sizes and stacks via
-  `EngineTable` / `TableBatch`, with no exceptions and `sum(net) == 0`.
+- **Fuzz through the batch:** 100k random hands at random table sizes and stacks via
+  `TableBatch`, with no exceptions and nets summing to 0 in chips.
 - **Legal mask:** matches `LegalActions`; fold is masked exactly when check is free;
-  `to_engine` never produces an action the engine rejects.
+  `to_engine` never produces an action the engine rejects; a masked action raises and
+  changes nothing.
 - **Leakage (the most important test):** swap opponents' hole cards, keep everything
-  public the same, and `encode_obs` must be byte-identical.
+  public the same, and the observation must be byte-identical on both paths
+  (`Table.observation()` and `encode_view`).
+- **Training path = view path:** at every decision, `Table.observation()` equals
+  `encode_view(table.view(), legal)` byte for byte.
 - **Rotation:** the same situation seen from different physical seats encodes identically.
-- **Shape and range:** `OBS_DIM` is constant; every value is finite and in [−1, 2].
+- **Shape and range:** `OBS_DIM` is constant; every value is finite and in [−1, 2]
+  (the layout uses [0, 2]).
 - **Hand hints:** known hands give the expected categories and lows (reuse cases from
   `engine/tests/test_evaluator.py`).
 - **Recorded hands:** replay every `cli_server/e2e_test_sets/*.json` case through
-  `EngineTable`. Build the deck with the e2e `deal_script` / `StackedDeck` and play the
+  a `Table`. Build the deck with the e2e `deal_script` / `StackedDeck` and play the
   recorded actions. Final stacks and pot splits must match the recording. This reuses 26
   hand-checked hands, including side pots, quartered lows and odd chips.
 - **Server path:** for every decision in a few thousand fuzz hands,
-  `encode_obs(view, legal) == encode_obs(decode_table_view(encode_table_view(view)), decode_legal(encode_legal(legal)))`,
+  `encode_view(view, legal) == encode_view(decode_table_view(encode_table_view(view)), decode_legal(encode_legal(legal)))`,
   using `cli_server.protocol`. This replaces the original plan's
   `seat_view_from_server` parity test.
+- **Training records:** every recorded decision is matched to exactly one finished hand;
+  its reward is that seat's net in big bets; `logp` is kept when the controller returns it.
 
 **Done when:** all `rl_env` tests pass (and the 1A suites still do), and the benchmark
 numbers are recorded in `rl_env/plan.md`.
@@ -616,7 +674,9 @@ This phase creates `arena/` (2a, 2b). Once arena passes its tests, it creates
 
 Every bot implements the `Controller` protocol (batched, for training and evaluation)
 **and**, through `arena.agent.BotAgent`, the engine `Agent` protocol (`on_turn`), so
-the same bot can sit at `cli_server`.
+the same bot can sit at `cli_server`. `BotAgent.on_turn(player, view, legal)` calls the
+bot with `rl_env`'s `DecisionBatch.single(view, legal)` and submits `to_engine(...)`. Rule
+bots set `wants_views = True`; RandomBot can wrap `rl_env`'s `RandomController`.
 
 | Bot | Plays | Why you want it |
 |---|---|---|
@@ -683,7 +743,8 @@ league (Phase 5) and AWS (Phase 6) are later spec changes to the same project.
 ```python
 # trainer/nets.py
 import torch, torch.nn as nn
-from rl_env.encoding import OBS_DIM, PRIV_DIM
+from rl_env.encoder import OBS_DIM
+from rl_env.critic import PRIV_DIM
 
 def mlp(inp, hidden=512, layers=3):
     mods, d = [], inp
@@ -712,18 +773,19 @@ The mask uses −1e9, not −inf, so the probability math never produces NaN.
 ### 3b. Acting on the workers
 
 ```python
-# trainer/policy.py — a Controller
+# trainer/policy.py — an rl_env Controller
 class NeuralPolicy:
+    wants_views = False                           # reads obs/mask only: no views are built
     def __init__(self):
         torch.set_num_threads(1)                  # one core per worker
         self.net = PolicyNet().eval()
     def load(self, weights): self.net.load_state_dict(weights)
     @torch.no_grad()
-    def act(self, obs, mask, views=None, legals=None):
+    def act(self, batch: DecisionBatch):
         dist = torch.distributions.Categorical(
-            logits=self.net(torch.from_numpy(obs), torch.from_numpy(mask)))
+            logits=self.net(torch.from_numpy(batch.obs), torch.from_numpy(batch.mask)))
         a = dist.sample()
-        return a.numpy(), dist.log_prob(a).numpy()   # logp is stored for PPO
+        return a.numpy(), dist.log_prob(a).numpy()   # the Recorder stores logp for PPO
 ```
 
 ### 3c. The play loop
@@ -732,35 +794,26 @@ class NeuralPolicy:
 # trainer/rollout.py
 class RolloutWorker:
     def collect(self, learner_weights, league_view, n_decisions):
+        # self.tables = TableBatch(n_tables, recorder=Recorder(keys={"learner"}))
         self.learner.load(learner_weights)
-        out, open_steps = StepBuffer(), defaultdict(list)    # (table, seat) -> decisions this hand
-        while len(out) < n_decisions or self.tables.any_in_hand():
-            if len(out) < n_decisions:                       # stop dealing once we have enough
-                for i in self.tables.idle():
-                    lineup, stacks, button, seed = sample_lineup(league_view, self.rng)
-                    self.tables.start_hand(i, lineup, stacks, button, seed)
-            for ctrl_id, group in group_by_controller(self.tables.pending()):
-                views  = [self.tables.view(i) for i, _ in group]
-                legals = [self.tables.legal(i) for i, _ in group]
-                obs  = np.stack([encode_obs(v, l) for v, l in zip(views, legals)])
-                mask = np.stack([legal_mask(l) for l in legals])
-                actions, logp = self.controller(ctrl_id).act(obs, mask, views, legals)  # ONE batched call
-                for k, (i, s) in enumerate(group):
-                    if ctrl_id == "learner":
-                        open_steps[(i, s)].append((obs[k], mask[k], actions[k], logp[k],
-                                                   self.tables.other_cards(i, s)))
-                    self.tables.apply(i, actions[k])
-            for i, net_bb in self.tables.finished_hands():
-                for s in self.tables.learner_seats(i):
-                    ret = net_bb[s] / 2.0                    # BB -> big bets; every decision gets the hand's result
-                    for step in open_steps.pop((i, s), []):
-                        out.add(*step, ret=ret)
-        return out.to_arrays(), self.stats()
+        controllers = self.controllers(league_view)          # key -> Controller ("learner", bots, snapshots)
+        rec = self.tables.recorder
+        while rec.n_ready + rec.n_pending < n_decisions or self.tables.any_in_hand():
+            if rec.n_ready + rec.n_pending < n_decisions:    # stop dealing once we have enough
+                for i in self.tables.idle_tables():
+                    spec, lineup = sample_lineup(league_view, self.sampler, self.rng)  # HandSpec, key per seat
+                    self.tables.start_hand(i, spec, lineup)
+            # pending -> ONE batched act() per controller -> submit; the Recorder keeps the
+            # learner's obs, mask, action, logp and critic cards, and attaches each seat's
+            # reward (net BB / 2) when its hand finishes
+            for hand in self.tables.step(controllers):
+                self.stats.add(hand)                          # learner's result vs bots, etc.
+        return self.tables.recorder.drain(), self.stats.flush()   # TrainingRecords: finished hands only
 ```
 
 In Phase 3, `sample_lineup` picks a table size from 2 to 10 (the engine's `MAX_PLAYERS`),
 puts the learner in one to three seats, fills the rest with random arena bots, picks a
-random button and a fresh deck seed, and draws stacks as in 1B.1.
+random button and a fresh deck seed, and draws stacks as in 1B.1 (`HandSampler`).
 
 ### 3d. The learner and the PPO loss
 
@@ -769,10 +822,10 @@ random button and a fresh deck seed, and draws stacks as in 1B.1.
 def ppo_loss(policy, critic, d, priv, adv, idx, cfg, magnet=None):
     logits = policy(d.obs[idx], d.mask[idx])
     dist = torch.distributions.Categorical(logits=logits)
-    ratio = torch.exp(dist.log_prob(d.act[idx]) - d.logp[idx])   # new prob / old prob
+    ratio = torch.exp(dist.log_prob(d.action[idx]) - d.logp[idx])   # new prob / old prob
     a = adv[idx]; a = (a - a.mean()) / (a.std() + 1e-8)
     pg = -torch.min(ratio * a, ratio.clamp(1 - cfg.clip, 1 + cfg.clip) * a).mean()
-    v_loss = 0.5 * (critic(priv[idx]) - d.ret[idx]).pow(2).mean()
+    v_loss = 0.5 * (critic(priv[idx]) - d.reward[idx]).pow(2).mean()
     ent = dist.entropy().mean()
     loss = pg + cfg.vf_coef * v_loss - cfg.ent_coef * ent
     if magnet is not None:                                       # Phase 5
@@ -787,11 +840,11 @@ def ppo_loss(policy, critic, d, priv, adv, idx, cfg, magnet=None):
 class Learner:
     def update(self, *batches):
         d = to_tensors(concat(batches))
-        priv = torch.cat([d.obs, expand_cards(d.other_cards)], dim=1)
+        priv = torch.cat([d.obs, expand_critic(d.critic)], dim=1)   # torch twin of rl_env.critic.expand_critic
         with torch.no_grad():
-            adv = d.ret - self.critic(priv)                       # luck subtracted out
+            adv = d.reward - self.critic(priv)                       # luck subtracted out
         for _ in range(self.cfg.epochs):
-            for idx in shuffled_minibatches(len(d.ret), self.cfg.minibatch):
+            for idx in shuffled_minibatches(len(d.reward), self.cfg.minibatch):
                 loss, info = ppo_loss(self.policy, self.critic, d, priv, adv, idx, self.cfg,
                                       magnet=self.magnet)
                 self.opt.zero_grad(); loss.backward()
@@ -825,7 +878,7 @@ adds the parallelism.
 | approx_kl per update | about 0.005–0.03 | much higher: lower lr or epochs |
 | clipfrac | about 0.05–0.3 | near 0: too timid; near 0.5: too aggressive |
 | Critic explained variance | rises well above 0 | stuck near 0: critic input or targets wrong |
-| Decisions per second | stable | falls: memory leak in `open_steps` |
+| Decisions per second | stable | falls: rows piling up in the `Recorder` (`n_pending` should drop to 0 between iterations) |
 
 ### 3g. First export and play it yourself
 
@@ -1160,18 +1213,18 @@ mismatched encoder doesn't crash; it just plays badly.
 ```python
 # bot_client/players.py
 from cli_server.protocol import decode_table_view, decode_legal
-from rl_env.encoding import encode_obs
-from rl_env.adapter import legal_mask, to_engine, Act
+from rl_env.encoder import encode_view
+from rl_env.actions import mask_array, to_engine
 
 class OnnxPlayer:
     def __init__(self, model_path):
         self.sess = onnxruntime.InferenceSession(model_path); self.rng = np.random.default_rng()
     def on_turn(self, msg) -> str:                                   # msg: decoded `turn` message
         view, legal = decode_table_view(msg["view"]), decode_legal(msg["legal"])   # engine dataclasses
-        obs  = encode_obs(view, legal)[None]                          # SAME encoder as training
-        mask = legal_mask(legal)[None].astype(np.float32)
+        obs  = encode_view(view, legal)[None]                         # SAME bytes as training
+        mask = mask_array(legal)[None].astype(np.float32)
         probs = self.sess.run(["probs"], {"obs": obs, "mask": mask})[0][0]
-        return to_engine(Act(self.rng.choice(3, p=probs)), legal).type.value   # sample, don't argmax
+        return to_engine(int(self.rng.choice(3, p=probs)), legal).value   # sample, don't argmax
 ```
 
 The networking (join with name, stack and callback port; answering `turn` and `hand_end`
@@ -1184,7 +1237,7 @@ action removes the bluffing frequencies the bot learned.
 
 Tests:
 - ONNX and PyTorch outputs match (`np.allclose`) on 1,000 random observations.
-- Protocol round trip: `encode_obs` of an in-process `TableView` equals `encode_obs` of
+- Protocol round trip: `encode_view` of an in-process `TableView` equals `encode_view` of
   the same view after `encode_table_view` → JSON → `decode_table_view` (from Phase 1B.5;
   repeat it here with a real model).
 - The bot playing through an in-process `cli_server` `GameServer` against `bot_client --bot rule`
@@ -1228,7 +1281,7 @@ the evaluator, not with the training curves.
 | approx_kl spikes, then collapse | updates too large | lower lr or epochs |
 | Critic explained variance stuck near 0 | critic input or targets wrong | privileged card expansion; returns in big bets (BB / 2) |
 | NaN loss | −inf in the mask, zero std | the −1e9 mask, the +1e-8 |
-| Decisions/s fall during a run | memory growth | `open_steps`, opponent cache, engine `history` kept by finished tables |
+| Decisions/s fall during a run | memory growth | `Recorder.n_pending`, opponent cache, engine `history` kept by finished tables |
 | Results differ between engine and server path | engine change not mirrored in protocol | `cli_server --e2e_test`, protocol round trip |
 | Self-play results swing | strategy cycling | raise pool share or `magnet_coef` |
 | AWS slower than expected | workers idle during updates, or the reverse | dashboard CPU per node; Phase 7 overlap |
