@@ -29,3 +29,12 @@ python_test(
         "//cli_server:protocol",
     ],
 )
+
+# 100,000 random hands through a TableBatch (minutes). For quick local runs lower
+# the count with the RL_ENV_FUZZ_HANDS environment variable.
+python_test(
+    name = "rl_env_fuzz_test",
+    srcs = glob(["fuzz/*.py"]),
+    base_module = "rl_env_fuzz",
+    deps = [":rl_env"],
+)
