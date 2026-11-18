@@ -16,3 +16,12 @@ python_test(
     base_module = "engine_tests",
     deps = [":engine"],
 )
+
+# 100,000 random step-mode hands (about a minute). For quick local runs lower the
+# count with the ENGINE_FUZZ_HANDS environment variable.
+python_test(
+    name = "engine_fuzz_test",
+    srcs = glob(["fuzz/*.py"]),
+    base_module = "engine_fuzz",
+    deps = [":engine"],
+)
