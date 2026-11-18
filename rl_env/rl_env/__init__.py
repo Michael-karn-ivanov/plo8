@@ -20,6 +20,8 @@ from .actions import (
     mask_array,
     to_engine,
 )
+from .batch import Controller, DecisionBatch, FinishedHand, TableBatch
+from .controllers import RandomController
 from .critic import NO_CARD, PRIV_DIM, critic_cards, expand_critic
 from .encoder import ENCODER_VERSION, OBS_DIM, OBS_LAYOUT, encode, encode_view
 from .recorder import Recorder, TrainingRecords
@@ -60,6 +62,11 @@ __all__ = [
     "critic_cards",
     "expand_critic",
     # batch
+    "Controller",
+    "DecisionBatch",
+    "FinishedHand",
+    "TableBatch",
+    "RandomController",
     "Recorder",
     "TrainingRecords",
 ]

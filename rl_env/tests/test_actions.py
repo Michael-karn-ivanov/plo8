@@ -121,6 +121,7 @@ class ImportScanTest(unittest.TestCase):
     def test_only_stdlib_numpy_engine_entities(self):
         allowed = set(sys.stdlib_module_names) | {"numpy", "engine", "entities", "__future__"}
         modules = package_modules()
+        self.assertGreaterEqual(len(modules), 10)
         for name, source in modules:
             with self.subTest(module=name):
                 roots = imported_roots(source)

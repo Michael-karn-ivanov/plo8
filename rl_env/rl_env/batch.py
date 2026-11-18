@@ -1,0 +1,359 @@
+"""Many tables at once: decisions grouped by controller, actions submitted in
+batches, finished hands reported with each seat's result.
+
+Each seat of a hand is assigned a controller key by the caller when the hand
+starts. `pending()` groups the decisions of all tables (at most one per table)
+by the acting seat's controller key; a `Controller` answers a whole
+`DecisionBatch` at once. Grouping and iteration orders are by table index
+(never over sets or `id()`), so a run is deterministic.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import (
+    Any,
+    Callable,
+    Hashable,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    Union,
+    runtime_checkable,
+)
+
+import numpy as np
+
+from engine import HandResult, LegalActions, TableView
+
+from .actions import IllegalMaskedActionError, action_mask, check_action, mask_array
+from .encoder import OBS_DIM, encode_view
+from .recorder import Recorder
+from .stacks import HandSampler, HandSpec
+from .table import Table
+
+__all__ = ["Controller", "DecisionBatch", "FinishedHand", "TableBatch"]
+
+
+@dataclass(eq=False)
+class DecisionBatch:
+    """The pending decisions of one controller: one row per table."""
+
+    key: Hashable
+    tables: np.ndarray  # int32 (B,)
+    seats: np.ndarray  # int32 (B,)
+    obs: np.ndarray  # float32 (B, OBS_DIM)
+    mask: np.ndarray  # bool (B, 3)
+    legal: list  # list[LegalActions]
+    views: Optional[list] = None  # list[TableView], only for controllers that want them
+    # The engine decisions the rows answer (to reject a stale batch); None for
+    # `single()` batches, which belong to no TableBatch.
+    decisions: Optional[list] = field(default=None, repr=False)
+
+    def __len__(self) -> int:
+        return int(self.tables.shape[0])
+
+    @classmethod
+    def single(
+        cls, view: TableView, legal: LegalActions, key: Hashable = None
+    ) -> "DecisionBatch":
+        """A one-row batch from one engine view and its legal actions (an engine
+        `on_turn`, or a decoded server `turn` message). Table -1, seat `view.seat`."""
+        return cls(
+            key=key,
+            tables=np.array([-1], dtype=np.int32),
+            seats=np.array([view.seat], dtype=np.int32),
+            obs=encode_view(view, legal)[None, :],
+            mask=mask_array(legal)[None, :],
+            legal=[legal],
+            views=[view],
+        )
+
+
+@runtime_checkable
+class Controller(Protocol):
+    """Decides for the seats assigned to it.
+
+    `wants_views` (class or instance attribute): build `DecisionBatch.views`.
+    `act` returns one action per row (int array), or `(actions, logp)` with the
+    log-probability of each chosen action (float32), which the Recorder keeps.
+    """
+
+    wants_views: bool
+
+    def act(self, batch: DecisionBatch) -> Union[np.ndarray, tuple[np.ndarray, np.ndarray]]: ...
+
+
+@dataclass(frozen=True, eq=False)
+class FinishedHand:
+    table: int
+    hand_id: int
+    spec: HandSpec
+    controllers: tuple  # controller key per seat
+    net_bb: np.ndarray  # float64 (n_seats,)
+    rewards: np.ndarray  # float32 (n_seats,), big bets
+    result: HandResult
+
+
+def _wants_views(controller: Any) -> bool:
+    return bool(getattr(controller, "wants_views", False))
+
+
+def _scalar(x: Any) -> Any:
+    item = getattr(x, "item", None)
+    return item() if callable(item) else x
+
+
+class TableBatch:
+    """`n_tables` tables played side by side (see the module docstring)."""
+
+    def __init__(
+        self,
+        n_tables: int,
+        *,
+        chips_per_bb: int = 100,
+        recorder: Optional[Recorder] = None,
+        observations: bool = True,
+    ) -> None:
+        if isinstance(n_tables, bool) or not isinstance(n_tables, int) or n_tables < 1:
+            raise ValueError(f"n_tables must be a positive int, got {n_tables!r}")
+        self.tables = [Table(chips_per_bb) for _ in range(n_tables)]
+        self.recorder = recorder
+        # False: observation arrays are left at zero (bench --no-obs only).
+        self.observations = observations
+        self._hand_id: list[int] = [-1] * n_tables
+        self._spec: list[Optional[HandSpec]] = [None] * n_tables
+        self._controllers: list[tuple] = [()] * n_tables
+        self._running: list[bool] = [False] * n_tables
+        self._finished: list[FinishedHand] = []
+        self._next_hand_id = 0
+        self.n_decisions = 0  # decisions submitted so far
+        self.n_hands = 0  # hands finished so far
+
+    def __len__(self) -> int:
+        return len(self.tables)
+
+    # --- hands ---------------------------------------------------------------------
+
+    def start_hand(self, table: int, spec: HandSpec, controllers: Sequence[Hashable]) -> int:
+        """Start a hand on an idle table with one controller key per seat. Returns
+        the hand's batch-unique, increasing id. A hand that needs no decision is
+        finished at once (reported by the next `collect_finished()`)."""
+        if self._running[table]:
+            raise RuntimeError(f"table {table} still has a hand running")
+        keys = tuple(controllers)
+        if len(keys) != spec.n_seats:
+            raise ValueError(f"need {spec.n_seats} controller keys, got {len(keys)}")
+        tbl = self.tables[table]
+        pending = tbl.start_hand(spec.n_seats, spec.stacks_bb, spec.button, spec.deck_seed)
+        hand_id = self._next_hand_id
+        self._next_hand_id += 1
+        self._hand_id[table] = hand_id
+        self._spec[table] = spec
+        self._controllers[table] = keys
+        self._running[table] = True
+        if not pending:
+            self._finish(table)
+        return hand_id
+
+    def hand_id(self, table: int) -> int:
+        """Id of the table's current (or last) hand, -1 before the first."""
+        return self._hand_id[table]
+
+    def controllers_of(self, table: int) -> tuple:
+        """Controller key per seat of the table's current (or last) hand."""
+        return self._controllers[table]
+
+    def idle_tables(self) -> list[int]:
+        """Tables without a running hand (waiting for the caller's next hand)."""
+        return [t for t, running in enumerate(self._running) if not running]
+
+    def any_in_hand(self) -> bool:
+        return any(self._running)
+
+    def _finish(self, table: int) -> None:
+        tbl = self.tables[table]
+        self._running[table] = False
+        hand_id = self._hand_id[table]
+        fh = FinishedHand(
+            table=table,
+            hand_id=hand_id,
+            spec=self._spec[table],  # type: ignore[arg-type]
+            controllers=self._controllers[table],
+            net_bb=tbl.net_bb,  # type: ignore[arg-type]
+            rewards=tbl.rewards,  # type: ignore[arg-type]
+            result=tbl.result,  # type: ignore[arg-type]
+        )
+        self._finished.append(fh)
+        self.n_hands += 1
+        if self.recorder is not None:
+            self.recorder.finish(hand_id, tbl.rewards)  # type: ignore[arg-type]
+
+    def collect_finished(self) -> list[FinishedHand]:
+        """Hands finished since the last call, in finishing order."""
+        out = self._finished
+        self._finished = []
+        return out
+
+    # --- decisions -----------------------------------------------------------------
+
+    def pending(
+        self, controllers: Optional[Mapping[Hashable, Any]] = None
+    ) -> list[DecisionBatch]:
+        """Every table with a decision, grouped by the acting seat's controller key.
+        Groups are ordered by their smallest table index, rows by table index.
+        Views are built only for groups whose controller (looked up in
+        `controllers`) has `wants_views`."""
+        groups: dict[Hashable, list[int]] = {}
+        tables = self.tables
+        running = self._running
+        for t, tbl in enumerate(tables):
+            if running[t]:
+                decision = tbl.decision
+                if decision is not None:
+                    key = self._controllers[t][decision.seat]
+                    group = groups.get(key)
+                    if group is None:
+                        groups[key] = [t]
+                    else:
+                        group.append(t)
+        out = []
+        build_obs = self.observations
+        for key, ts in groups.items():
+            b = len(ts)
+            obs = np.zeros((b, OBS_DIM), dtype=np.float32)
+            seats = []
+            legal = []
+            masks = []
+            decisions = []
+            rows: list[int] = []
+            cols: list[int] = []
+            vals: list[float] = []
+            for r, t in enumerate(ts):
+                tbl = tables[t]
+                decision = tbl.decision
+                decisions.append(decision)
+                seats.append(decision.seat)  # type: ignore[union-attr]
+                lg = decision.legal  # type: ignore[union-attr]
+                legal.append(lg)
+                masks.append(action_mask(lg))
+                if build_obs:
+                    before = len(cols)
+                    tbl.collect_observation(cols, vals)
+                    rows.extend([r] * (len(cols) - before))
+            if cols:
+                obs[rows, cols] = vals
+            views = None
+            if controllers is not None and _wants_views(controllers.get(key)):
+                views = [tables[t].view() for t in ts]
+            out.append(
+                DecisionBatch(
+                    key=key,
+                    tables=np.array(ts, dtype=np.int32),
+                    seats=np.array(seats, dtype=np.int32),
+                    obs=obs,
+                    mask=np.array(masks, dtype=bool).reshape(b, 3),
+                    legal=legal,
+                    views=views,
+                    decisions=decisions,
+                )
+            )
+        return out
+
+    def submit(self, batch: DecisionBatch, actions: Any, logp: Any = None) -> None:
+        """Apply one action per row. Every action is validated against its mask
+        (and the batch against the tables) first: if any is invalid, it raises and
+        no table is touched. Then each table acts; decisions are recorded (with
+        `logp` if given) and finished hands move to the finished list."""
+        b = len(batch)
+        acts = np.asarray(actions)
+        if acts.shape != (b,):
+            raise IllegalMaskedActionError(f"need {b} actions, got shape {acts.shape}")
+        lp = None
+        if logp is not None:
+            lp = np.asarray(logp, dtype=np.float32)
+            if lp.shape != (b,):
+                raise ValueError(f"need {b} log-probabilities, got shape {lp.shape}")
+        checked = [check_action(_scalar(acts[r]), batch.mask[r]) for r in range(b)]
+        decisions = batch.decisions
+        for r in range(b):
+            t = int(batch.tables[r])
+            if not 0 <= t < len(self.tables):
+                raise ValueError(f"row {r}: no table {t} in this batch")
+            tbl = self.tables[t]
+            decision = tbl.decision
+            if (
+                not self._running[t]
+                or decision is None
+                or decision.seat != int(batch.seats[r])
+                or (decisions is not None and decision is not decisions[r])
+            ):
+                raise ValueError(f"row {r}: table {t} has no such pending decision (stale batch)")
+        recorder = self.recorder
+        record = recorder is not None and recorder.wants(batch.key)
+        for r in range(b):
+            t = int(batch.tables[r])
+            tbl = self.tables[t]
+            a = checked[r]
+            if record:
+                recorder.record(  # type: ignore[union-attr]
+                    tbl,
+                    t,
+                    self._hand_id[t],
+                    int(batch.seats[r]),
+                    batch.key,
+                    batch.obs[r],
+                    batch.mask[r],
+                    a,
+                    None if lp is None else float(lp[r]),
+                )
+            tbl.act(a)
+            self.n_decisions += 1
+            if tbl.hand_over:
+                self._finish(t)
+
+    def step(self, controllers: Mapping[Hashable, Any]) -> list[FinishedHand]:
+        """`pending`, each controller's `act` in group order, `submit`, then
+        `collect_finished()`."""
+        for batch in self.pending(controllers):
+            out = controllers[batch.key].act(batch)
+            if isinstance(out, tuple):
+                actions, logp = out
+            else:
+                actions, logp = out, None
+            self.submit(batch, actions, logp)
+        return self.collect_finished()
+
+    def run(
+        self,
+        controllers: Mapping[Hashable, Any],
+        sampler: HandSampler,
+        n_hands: int,
+        seat_controllers: Callable[[HandSpec], Sequence[Hashable]],
+        on_finished: Optional[Callable[[FinishedHand], None]] = None,
+    ) -> int:
+        """Keep every table busy with `sampler.sample()` hands (controller keys from
+        `seat_controllers(spec)`) until `n_hands` hands started here have finished.
+        Calls `on_finished` for every finished hand; returns how many finished."""
+        started = 0
+        done = 0
+        for t in self.idle_tables():
+            if started >= n_hands:
+                break
+            spec = sampler.sample()
+            self.start_hand(t, spec, seat_controllers(spec))
+            started += 1
+        while done < n_hands:
+            finished = self.step(controllers)
+            if not finished and not self.any_in_hand():
+                break
+            for fh in finished:
+                done += 1
+                if on_finished is not None:
+                    on_finished(fh)
+                if started < n_hands and not self._running[fh.table]:
+                    spec = sampler.sample()
+                    self.start_hand(fh.table, spec, seat_controllers(spec))
+                    started += 1
+        return done
