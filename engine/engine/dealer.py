@@ -81,11 +81,6 @@ class NotEnoughPlayersError(RuntimeError):
     """A hand needs at least two active players with chips."""
 
 
-def _callback(p: Player, name: str) -> Optional[Callable]:
-    callback = getattr(p.agent, name, None)
-    return callback if callable(callback) else None
-
-
 def _run_now(fn: Callable[[], None]) -> None:
     fn()
 
@@ -256,7 +251,7 @@ class Dealer:
         for p in recipients:
             if p.status is PlayerStatus.LEFT:
                 continue
-            callback = _callback(p, "on_event")
+            callback = p._callback("on_event")
             if callback is not None:
                 call_safely(callback, p, event)
 
@@ -273,7 +268,7 @@ class Dealer:
 
     def _notify(self, p: Player, name: str, *args: object) -> None:
         """Schedule an optional notification callback `name(p, *args)`."""
-        callback = _callback(p, name)
+        callback = p._callback(name)
         if callback is not None:
             self.schedule(functools.partial(call_safely, callback, p, *args))
 

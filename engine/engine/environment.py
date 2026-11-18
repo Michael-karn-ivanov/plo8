@@ -29,6 +29,8 @@ MIN_PLAYERS = 2
 MAX_PLAYERS = 10
 DEFAULT_ACTION_TIMEOUT = 600.0  # seconds; only meant to catch hung / disconnected agents
 
+_LEFT = PlayerStatus.LEFT
+
 
 class TableFullError(ValueError):
     """No seat is free for a new player (seated + waiting would exceed max_seats)."""
@@ -45,6 +47,14 @@ def _bind_agent(player: Player) -> None:
     bind = getattr(player.agent, "bind", None)
     if callable(bind):
         bind(player)
+
+
+def _deliver(event: TableEvent, listeners: list[tuple[Player, Callable[..., Any]]]) -> None:
+    """`on_event(player, event)` for each listener, in seat order (players that
+    left meanwhile are skipped)."""
+    for p, callback in listeners:
+        if p.status is not _LEFT:
+            call_safely(callback, p, event)
 
 
 class Environment:
@@ -122,6 +132,9 @@ class Environment:
         self._outbox: deque[Callable[[], None]] = deque()
         self._deliver_lock = threading.RLock()
         self._seq = 0
+        # Seated players whose agent has on_event, with the callback (None: to be
+        # rebuilt; invalidated when seats change or an agent is replaced).
+        self._listeners: Optional[list[tuple[Player, Callable[..., Any]]]] = None
         self.rng = random.Random(seed)
         self.dealer = Dealer(
             players,
@@ -200,15 +213,34 @@ class Environment:
 
     # --- events --------------------------------------------------------------
 
+    def _invalidate_listeners(self) -> None:
+        """Seats changed or an agent was replaced: rebuild the on_event list."""
+        self._listeners = None
+
+    def _event_listeners(self) -> list[tuple[Player, Callable[..., Any]]]:
+        listeners = self._listeners
+        if listeners is None:
+            listeners = []
+            for p in self.dealer.players:
+                if p.seated:
+                    callback = p._callback("on_event")
+                    if callback is not None:
+                        listeners.append((p, callback))
+            self._listeners = listeners
+        return listeners
+
     def _broadcast(self, event: TableEvent) -> None:
         """Stamp `event` with the next `seq` (and the hand number), record it in
-        the hand's history and deliver it to every seated player."""
+        the hand's history and deliver it to every seated player. If no seated
+        player listens (`on_event`), nothing is queued."""
         with self._lock:
             self._seq += 1
             event = self.dealer.stamp(event, self._seq)
-            recipients = self.dealer.recipients()
-            self._outbox.append(functools.partial(Dealer.deliver, event, recipients))
-        self._flush()
+            listeners = self._event_listeners()
+            if listeners:
+                self._outbox.append(functools.partial(_deliver, event, listeners))
+        if self._outbox:
+            self._flush()
 
     def _schedule(self, fn: Callable[[], None]) -> None:
         """Queue an agent notification behind the events already queued."""
@@ -222,6 +254,8 @@ class Environment:
         A no-op while this thread holds the lock: whoever releases it flushes
         (join / leave / rebuy / the end of a hand do).
         """
+        if not self._outbox:
+            return
         if self._lock._is_owned():  # type: ignore[attr-defined]
             return
         with self._deliver_lock:
@@ -376,6 +410,7 @@ class Environment:
             p.seat = i
         player.status = PlayerStatus.ACTIVE
         dealer.sb_seat = dealer.bb_seat = None  # refer to the old numbering
+        self._invalidate_listeners()
 
         callback = getattr(player.agent, "on_seated", None)
         if callable(callback):
@@ -454,6 +489,7 @@ class Environment:
         player.seat = None
         player.leave_requested = False
         player.in_hand = False
+        self._invalidate_listeners()
         self._schedule_left(player)
         # Only the remaining seated players get it.
         self._broadcast(PlayerLeft(idx, player.name, player.stack))  # type: ignore[arg-type]

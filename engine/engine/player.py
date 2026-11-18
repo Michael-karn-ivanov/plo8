@@ -125,11 +125,14 @@ class Player:
         self.name: Optional[str] = name
         self.seat: Optional[int] = None
         self.status = PlayerStatus.WAITING
+        self._dealer: Optional["Dealer"] = None
+        self._env: Optional["Environment"] = None
+        # Optional agent callbacks, looked up once per name (cleared with the agent).
+        self._callbacks: dict[str, Optional[Callable[..., Any]]] = {}
+        self._agent: Optional[Any] = None
         self.agent = agent
         self._chips_per_bb = CHIPS_PER_BB
         self._chips = chips
-        self._dealer: Optional["Dealer"] = None
-        self._env: Optional["Environment"] = None
         self.rebuy_chips = 0  # total chips added through rebuy()
         self.leave_requested = False  # leave() during a hand: removed when it ends
 
@@ -144,9 +147,37 @@ class Player:
         self.missed_turn = False  # a turn ended without a valid action this hand
         self._return_requested = False  # rebuy()/sit_in() while sitting out, in the window
 
-        # Turn state.
+        # Turn state (callback mode).
         self._legal: Optional[LegalActions] = None
         self._pending: Optional[Action] = None
+
+    # --- agent ---------------------------------------------------------------
+
+    @property
+    def agent(self) -> Optional[Any]:
+        return self._agent
+
+    @agent.setter
+    def agent(self, agent: Optional[Any]) -> None:
+        self._agent = agent
+        self._callbacks = {}
+        env = self._env
+        if env is not None:
+            env._invalidate_listeners()
+
+    def set_agent(self, agent: Any) -> None:
+        self.agent = agent
+
+    def _callback(self, name: str) -> Optional[Callable[..., Any]]:
+        """The agent's optional callback `name`, or None (cached per player)."""
+        try:
+            return self._callbacks[name]
+        except KeyError:
+            callback = getattr(self._agent, name, None)
+            if not callable(callback):
+                callback = None
+            self._callbacks[name] = callback
+            return callback
 
     # --- amounts -----------------------------------------------------------
 
@@ -177,9 +208,6 @@ class Player:
     @property
     def sitting_out(self) -> bool:
         return self.status is PlayerStatus.SITTING_OUT
-
-    def set_agent(self, agent: Any) -> None:
-        self.agent = agent
 
     # --- actions (during this player's turn) -------------------------------
 

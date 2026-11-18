@@ -14,6 +14,7 @@ from engine import (
     HandStarted,
     Player,
     PlayerActed,
+    PlayerJoined,
     PlayerStatus,
     PotAwarded,
     Street,
@@ -235,6 +236,32 @@ class EventStreamTest(unittest.TestCase):
         boards = [e for e in result.history if isinstance(e, BoardDealt)]
         self.assertEqual([e.street for e in boards], [Street.FLOP, Street.TURN, Street.RIVER])
         self.assertTrue(any(isinstance(e, BlindPosted) and e.all_in for e in result.history))
+
+    def test_events_recorded_without_listeners(self):
+        # Nobody defines on_event: the events are still stamped and recorded.
+        env, _ = table([None, None, None], seed=8)
+        result = env.start_round()
+        self.assertTrue(result.history)
+        self.assertIsInstance(result.history[0], HandStarted)
+        seqs = [e.seq for e in result.history]
+        self.assertEqual(seqs, list(range(seqs[0], seqs[0] + len(seqs))))
+        self.assertTrue(all(e.hand_no == 1 for e in result.history))
+
+    def test_listener_added_later_receives_events(self):
+        # The on_event cache is rebuilt when an agent is replaced or a player joins.
+        env, players = table([None, None], seed=8)
+        env.start_round()
+        late = Recorder()
+        players[0].set_agent(late)
+        joiner = Recorder()
+        env.join(50, name="j", agent=joiner)
+        result = env.start_round()
+        self.assertEqual(hand_events(late, 2), list(result.history))
+        self.assertEqual(hand_events(joiner, 2), list(result.history))
+        self.assertTrue(any(isinstance(e, PlayerJoined) for e in late.events))
+        players[1].agent = Recorder()  # plain attribute assignment works too
+        result = env.start_round()
+        self.assertEqual(hand_events(players[1].agent, 3), list(result.history))
 
 
 class ForcedFoldTest(unittest.TestCase):
