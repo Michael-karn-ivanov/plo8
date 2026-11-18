@@ -25,3 +25,12 @@ python_test(
     base_module = "engine_fuzz",
     deps = [":engine"],
 )
+
+# Step-mode self-play benchmark: buck2 run //engine:bench -- [options]
+python_binary(
+    name = "bench",
+    main = "bench/bench.py",
+    # Keep the tool out of the `engine` package namespace.
+    base_module = "engine_bench",
+    deps = [":engine"],
+)
