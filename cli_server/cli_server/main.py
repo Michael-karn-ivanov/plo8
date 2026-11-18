@@ -20,7 +20,8 @@ from typing import Any, Optional, Sequence
 
 from engine import MAX_PLAYERS, MIN_PLAYERS
 
-from cli_server.e2e.driver import UnknownCaseError, case_name, case_path, run_cases
+from cli_server.e2e.cases import UnknownCaseError, case_name, case_path
+from cli_server.e2e.driver import run_cases
 from cli_server.server import DEFAULT_GRACE_PERIOD, DEFAULT_HAND_PAUSE, HOST, GameServer
 
 __all__ = [

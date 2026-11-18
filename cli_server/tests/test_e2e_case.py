@@ -1,6 +1,8 @@
 import copy
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from entities import Card
 
@@ -14,7 +16,14 @@ from cli_server.e2e.case import (
     load_case,
     parse_case,
 )
-from cli_server.e2e.driver import E2E_DIR
+from cli_server.e2e.cases import (
+    E2E_DIR,
+    UnknownCaseError,
+    available_cases,
+    case_name,
+    case_path,
+    load_cases,
+)
 
 SAMPLE = "12_heads_up_three_raises_preflop_bb_scoops"
 
@@ -67,6 +76,54 @@ class LoadSampleTest(unittest.TestCase):
         for path in sorted(E2E_DIR.glob("*.json")):
             with self.subTest(case=path.stem):
                 load_case(path)
+
+
+class CaseFilesTest(unittest.TestCase):
+    """`cases.py`: finding and loading the case files."""
+
+    def test_available_cases_lists_every_file_sorted(self):
+        names = available_cases()
+        self.assertIn(SAMPLE, names)
+        self.assertEqual(names, sorted(names))
+        self.assertEqual(names, sorted(p.stem for p in E2E_DIR.glob("*.json")))
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(available_cases(Path(tmp, "missing")), [])
+
+    def test_case_name_and_path(self):
+        self.assertEqual(case_name(SAMPLE), SAMPLE)
+        self.assertEqual(case_name(f"{SAMPLE}.json"), SAMPLE)
+        self.assertEqual(case_path(SAMPLE), E2E_DIR / f"{SAMPLE}.json")
+        self.assertEqual(case_path(f"{SAMPLE}.json"), case_path(SAMPLE))
+
+    def test_case_path_rejects_unknown_names_and_separators(self):
+        for bad in ("no_such_case", "", ".json", f"../e2e_test_sets/{SAMPLE}", f"x/{SAMPLE}"):
+            with self.subTest(name=bad):
+                with self.assertRaises(UnknownCaseError) as cm:
+                    case_path(bad)
+                self.assertIsInstance(cm.exception, KeyError)
+                self.assertIn(SAMPLE, str(cm.exception))  # lists the available cases
+
+    def test_load_cases_loads_every_file(self):
+        cases = load_cases()
+        self.assertEqual([c.name for c in cases], available_cases())
+        self.assertTrue(all(isinstance(c, Case) for c in cases))
+        self.assertEqual([c.name for c in load_cases([f"{SAMPLE}.json"])], [SAMPLE])
+        with self.assertRaises(UnknownCaseError):
+            load_cases(["no_such_case"])
+
+    def test_an_invalid_file_makes_load_cases_raise_naming_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "a_good.json").write_text(json.dumps(sample_data()), encoding="utf-8")
+            bad = sample_data()
+            bad["game"]["rake"] = 1
+            Path(tmp, "b_bad.json").write_text(json.dumps(bad), encoding="utf-8")
+            self.assertEqual(available_cases(tmp), ["a_good", "b_bad"])
+            self.assertEqual([c.name for c in load_cases(["a_good"], tmp)], ["a_good"])
+            with self.assertRaisesRegex(CaseError, r"b_bad\.json.*rake"):
+                load_cases(directory=tmp)
+            Path(tmp, "b_bad.json").write_text("{", encoding="utf-8")
+            with self.assertRaisesRegex(CaseError, r"b_bad\.json"):
+                load_cases(directory=tmp)
 
 
 class CaseConventionsTest(unittest.TestCase):

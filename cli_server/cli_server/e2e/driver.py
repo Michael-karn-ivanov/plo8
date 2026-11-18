@@ -4,6 +4,9 @@
 server and checks the client transcripts; `run_cases(names, seed,
 action_timeout)` runs the selected cases (all of them by default), prints a
 report and returns the exit status.
+
+Finding the case files (`E2E_DIR`, `available_cases`, `case_path`, ...) lives in
+`cases.py` (library `:e2e`); the names are re-exported here for convenience.
 """
 
 from __future__ import annotations
@@ -19,9 +22,10 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Any, Optional, Sequence
+from typing import IO, Optional, Sequence
 
 from .case import Case, CaseError, load_case
+from .cases import E2E_DIR, UnknownCaseError, available_cases, case_name, case_path
 from .check import ClientRun, Mismatch, check
 from .deck import StackedDeck, deal_script, join_offset, seating
 from .expect import build_expected, client_scripts
@@ -44,21 +48,10 @@ __all__ = [
 
 _log = logging.getLogger("cli_server.e2e")
 
-# The JSON files are resources of the `:e2e` library: they sit next to the
-# `cli_server` package, in the source tree and in the built binary alike.
-E2E_DIR = Path(__file__).resolve().parents[2] / "e2e_test_sets"
-
 PASS, FAIL, ERROR = "PASS", "FAIL", "ERROR"
 MAX_REPORTED = 20  # mismatches printed per case
 JOIN_LINE_TIMEOUT = 30.0  # seconds a client process has to print its `joined` line
 EXIT_TIMEOUT = 10.0  # seconds a client has to print its transcript and exit after `close`
-
-
-class UnknownCaseError(KeyError):
-    """No file in `e2e_test_sets` has that name."""
-
-    def __str__(self) -> str:
-        return str(self.args[0]) if self.args else "unknown case"
 
 
 @dataclass
@@ -71,36 +64,9 @@ class CaseReport:
     seconds: float = 0.0
 
 
-# --- case files ------------------------------------------------------------------------
-
-
 def case_deadline(action_timeout: float) -> float:
     """Overall time limit of one case, in seconds."""
     return 30.0 + 4 * action_timeout
-
-
-def available_cases(directory: Optional[Path] = None) -> list[str]:
-    """Names (file stems) of every case, sorted."""
-    d = E2E_DIR if directory is None else Path(directory)
-    if not d.is_dir():
-        return []
-    return sorted(p.stem for p in d.glob("*.json"))
-
-
-def case_name(name: str) -> str:
-    """`NAME` or `NAME.json` -> `NAME`."""
-    return name[:-5] if name.endswith(".json") else name
-
-
-def case_path(name: str, directory: Optional[Path] = None) -> Path:
-    """The file of a case (with or without `.json`). Raises UnknownCaseError."""
-    d = E2E_DIR if directory is None else Path(directory)
-    stem = case_name(name)
-    path = d / f"{stem}.json"
-    if not stem or "/" in stem or os.sep in stem or not path.is_file():
-        available = ", ".join(available_cases(d)) or "none"
-        raise UnknownCaseError(f"no e2e case {name!r} in {d} (available: {available})")
-    return path
 
 
 # --- client processes ---------------------------------------------------------------------

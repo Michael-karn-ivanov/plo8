@@ -11,8 +11,8 @@ from __future__ import annotations
 import itertools
 import json
 
+from cli_server.e2e.cases import E2E_DIR
 from cli_server.e2e.check import ClientRun
-from cli_server.e2e.driver import E2E_DIR
 from cli_server.e2e.expect import build_expected
 
 SAMPLE = "12_heads_up_three_raises_preflop_bb_scoops"
