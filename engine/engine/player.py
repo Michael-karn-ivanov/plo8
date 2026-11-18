@@ -115,6 +115,13 @@ class Player:
 
     `name` is the player's nick; if None, the environment assigns "Player<N>" when
     the player is seated / joins. `seat` is None unless the player is seated.
+
+    A player that is not yet at a table has no chip unit: it keeps its stack (and
+    any rebuys made before seating) in big blinds, as given, and converts it to
+    chips once, with the table's unit, when it is first attached to a table. So a
+    stack that is a whole number of the table's chips is seated exactly. Until
+    then `stack` reports the amount in BB and `chips` the amount at the default
+    100 chips/BB (for display only).
     """
 
     def __init__(
@@ -122,8 +129,8 @@ class Player:
     ) -> None:
         if name is not None and (not isinstance(name, str) or not name):
             raise ValueError(f"name must be a non-empty string, got {name!r}")
-        chips = to_chips(stack, CHIPS_PER_BB)
-        if chips < 0:
+        chips = to_chips(stack, CHIPS_PER_BB)  # also checks the type
+        if stack < 0:
             raise ValueError(f"stack cannot be negative, got {stack!r}")
         self.name: Optional[str] = name
         self.seat: Optional[int] = None
@@ -135,6 +142,11 @@ class Player:
         self._agent: Optional[Any] = None
         self.agent = agent
         self._chips_per_bb = CHIPS_PER_BB
+        # Before the first attach to a table: the stack / rebuys in BB, exactly as
+        # given (None once attached). `_chips` / `rebuy_chips` hold the display
+        # value at the default unit until then.
+        self._unseated_bb: Optional[float] = stack
+        self._unseated_rebuy_bb: float = 0.0
         self._chips = chips
         self.rebuy_chips = 0  # total chips added through rebuy()
         self.leave_requested = False  # leave() during a hand: removed when it ends
@@ -190,6 +202,9 @@ class Player:
 
     @property
     def stack(self) -> float:
+        unseated = self._unseated_bb
+        if unseated is not None:
+            return float(unseated)
         return self._chips / self._chips_per_bb
 
     @property
@@ -202,6 +217,8 @@ class Player:
 
     @property
     def rebought(self) -> float:
+        if self._unseated_bb is not None:
+            return float(self._unseated_rebuy_bb)
         return to_bb(self.rebuy_chips, self._chips_per_bb)
 
     @property
@@ -211,6 +228,14 @@ class Player:
     @property
     def sitting_out(self) -> bool:
         return self.status is PlayerStatus.SITTING_OUT
+
+    def _chips_at(self, chips_per_bb: int) -> int:
+        """The chips this player would be seated with at a table of `chips_per_bb`
+        (its current chips once it is attached to a table)."""
+        unseated = self._unseated_bb
+        if unseated is not None:
+            return to_chips(unseated, chips_per_bb)
+        return self._chips
 
     # --- actions (during this player's turn) -------------------------------
 
@@ -277,8 +302,19 @@ class Player:
         """Add `amount_bb` big blinds to the stack (broadcast as `PlayerRebought`).
 
         Allowed inside `on_hand_end` or between hands. A sitting-out player who
-        rebuys becomes active and is dealt into the next hand.
+        rebuys becomes active and is dealt into the next hand. A player that has
+        not been at a table yet adds the amount to its starting stack in BB (it is
+        converted to chips with the table's unit when the player is seated).
         """
+        if self._unseated_bb is not None and self.status is PlayerStatus.WAITING:
+            to_chips(amount_bb, CHIPS_PER_BB)  # type check
+            if not amount_bb > 0:
+                raise ValueError(f"rebuy amount must be positive, got {amount_bb!r}")
+            self._unseated_bb += amount_bb
+            self._unseated_rebuy_bb += amount_bb
+            self._chips = to_chips(self._unseated_bb, CHIPS_PER_BB)
+            self.rebuy_chips = to_chips(self._unseated_rebuy_bb, CHIPS_PER_BB)
+            return
         with self._lock():
             self._check_can_manage_seat("rebuy")
             dealer = self._dealer
@@ -344,15 +380,22 @@ class Player:
     def _attach(
         self, seat: Optional[int], dealer: "Dealer", env: Optional["Environment"] = None
     ) -> None:
-        """Bind the player to a table; `seat` None means waiting to be seated."""
+        """Bind the player to a table; `seat` None means waiting to be seated.
+
+        On the first attach the BB stack (and pre-seating rebuys) is converted to
+        chips once, with the table's unit. A player stays with one dealer for its
+        whole life, so there is no later rescaling."""
         if self._dealer is not None and self._dealer is not dealer:
             raise ValueError(f"{self.name} is already seated at another table")
         if self.status is PlayerStatus.LEFT:
             raise ValueError(f"{self.name} has left the table")
-        if dealer.chips_per_bb != self._chips_per_bb:
-            self._chips = to_chips(self._chips / self._chips_per_bb, dealer.chips_per_bb)
-            self.rebuy_chips = to_chips(self.rebuy_chips / self._chips_per_bb, dealer.chips_per_bb)
-            self._chips_per_bb = dealer.chips_per_bb
+        if self._unseated_bb is not None:
+            cpb = dealer.chips_per_bb
+            self._chips = to_chips(self._unseated_bb, cpb)
+            self.rebuy_chips = to_chips(self._unseated_rebuy_bb, cpb)
+            self._chips_per_bb = cpb
+            self._unseated_bb = None
+            self._unseated_rebuy_bb = 0.0
         self.seat = seat
         if seat is None:
             self.status = PlayerStatus.WAITING

@@ -527,5 +527,61 @@ class ReplayDeterminismTest(unittest.TestCase):
         )
 
 
+class DirectPlayersReplayTest(unittest.TestCase):
+    """A recorded hand replayed as `//rl_env` does: players created directly and
+    passed to `Environment(players=...)`, chip unit = the recording's big blind,
+    starting stacks that are not whole at 100 chips/BB."""
+
+    START_CHIPS = {0: 12345, 1: 6789, 2: 20001, 3: 15003}
+
+    def recorded_final(self, cpb, high, low_first, low_second):
+        """Final chips of the odd-chip hand (seat 1 folds the SB, the others check
+        it down; seat 3 wins the high, seats 2 and 0 split the low)."""
+        s = self.START_CHIPS
+        return {
+            0: s[0] - cpb + low_second,
+            1: s[1] - cpb // 2,
+            2: s[2] - cpb + low_first,
+            3: s[3] - cpb + high,
+        }
+
+    def replay(self, cpb, step_mode):
+        stacks = [self.START_CHIPS[s] / cpb for s in range(4)]
+        if step_mode:
+            agents = [None] * 4
+        else:
+            agents = [Scripted(), Scripted("f"), Scripted(), Scripted()]
+        players = [Player(f"p{i}", st, a) for i, (st, a) in enumerate(zip(stacks, agents))]
+        env = Environment(players, deck=StackedDeck([odd_chip_script()]), chips_per_bb=cpb)
+        self.assertEqual({p.seat: p.chips for p in players}, self.START_CHIPS)
+        if step_mode:
+            d = env.start_hand()
+            while d is not None:
+                if d.seat == 1:
+                    action = ActionType.FOLD
+                else:
+                    action = ActionType.CHECK if d.legal.can_check else ActionType.CALL
+                d = env.step(action)
+            result = env.last_result
+        else:
+            result = env.start_round()
+        self.assertTrue(result.showdown)
+        started = result.history[0]
+        self.assertIsInstance(started, HandStarted)
+        self.assertEqual(
+            [st for _, _, st in started.participants], [self.START_CHIPS[s] / cpb for s in range(4)]
+        )
+        return {p.seat: p.chips for p in players}
+
+    def test_recorded_final_stacks_reproduced(self):
+        # 1,000 chips/BB: pot 3,500 -> high 1,750, low 875 / 875.
+        # 1,002 chips/BB: pot 3,507 -> high 1,754 (odd chip), low 877 / 876.
+        for cpb, split in ((1000, (1750, 875, 875)), (1002, (1754, 877, 876))):
+            expected = self.recorded_final(cpb, *split)
+            for step_mode in (False, True):
+                with self.subTest(chips_per_bb=cpb, step_mode=step_mode):
+                    self.assertEqual(self.replay(cpb, step_mode), expected)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -71,7 +71,9 @@ class Environment:
 
     `chips_per_bb` is the table's chip unit (an even int >= 2; BB = `chips_per_bb`
     chips, SB = half of it); every chip computation uses it, so a caller replaying
-    a hand recorded in chips sets it to the recording's big blind.
+    a hand recorded in chips sets it to the recording's big blind. Starting stacks
+    (of initial `players` and of joiners) are converted to chips once, with this
+    unit, so a stack that is a whole number of the table's chips is seated exactly.
 
     `deck` is an optional `entities.Deck` (subclasses, e.g. a stacked deck, are
     allowed) used for every hand of this table, following the deck use and deal
@@ -127,7 +129,8 @@ class Environment:
             raise TableFullError(f"a table seats at most {max_seats} players, got {len(players)}")
         names: set[str] = set()
         for p in players:
-            if p.chips <= 0:
+            # At least one chip of this table (converted with its unit).
+            if p._chips_at(chips_per_bb) <= 0:
                 raise ValueError(f"player {p.name!r} must have a positive stack to be seated")
             if p.name is not None:
                 if p.name in names:
@@ -432,15 +435,17 @@ class Environment:
     ) -> None:
         """A new player joins the table with `stack_bb` big blinds.
 
-        `seat` is the position relative to the button (1 = first seat left of the
-        button, ..., n = right of the button, n counting all seated players);
-        None joins as big blind. At an empty / one-active-player table `seat` is
-        ignored: the first joiner takes the button (SB heads-up) and the next one
-        sits after them as BB. Between hands the player is seated at once; during a
-        hand (either mode) he is queued and seated when the hand is over (relative
-        to the new button). Either way, if this does not raise the player is dealt
-        into the next hand. The agent receives its `Player` through `on_seated`
-        and the later callbacks. Thread-safe.
+        The buy-in is converted to chips with the table's unit (at least one chip
+        of the table), so a buy-in that is a whole number of the table's chips is
+        seated exactly. `seat` is the position relative to the button (1 = first
+        seat left of the button, ..., n = right of the button, n counting all
+        seated players); None joins as big blind. At an empty / one-active-player
+        table `seat` is ignored: the first joiner takes the button (SB heads-up)
+        and the next one sits after them as BB. Between hands the player is
+        seated at once; during a hand (either mode) he is queued and seated when
+        the hand is over (relative to the new button). Either way, if this does
+        not raise the player is dealt into the next hand. The agent receives its
+        `Player` through `on_seated` and the later callbacks. Thread-safe.
         """
         self._join(stack_bb, seat=seat, name=name, agent=agent)
 
@@ -478,7 +483,7 @@ class Environment:
 
             player = Player(name, 0, agent)
             player._attach(None, self.dealer, self)
-            player._chips = chips
+            player._chips = chips  # converted with the table's unit above
             _bind_agent(player)
             if self.dealer.in_hand:
                 self.pending_joins.append(_JoinRequest(player, seat))
