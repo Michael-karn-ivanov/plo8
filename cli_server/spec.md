@@ -90,3 +90,5 @@ What is asserted during each test replay:
 - stacks of the clients are correctly updated through the hand and at the end of it
 - winners correctly determined and pot correctly splitted
 So this mode is actual e2e test engine both for server (its api etc) and for game engine (in ../engine) itself.
+
+The recorded hands are reusable by tests of other projects: the files in e2e_test_sets, together with the code that loads and validates a case and builds its seating (button first, clockwise) and its stacked deck, are available to them as a library, without starting a server. plo8/rl_env replays every recorded hand through its own tables this way. The wire protocol module stays usable on its own as well (plo8/rl_env tests encode and decode table views and legal actions with it).
