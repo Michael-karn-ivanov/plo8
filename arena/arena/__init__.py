@@ -3,11 +3,13 @@ Hi-Lo 8-or-better, on top of `//rl_env`.
 
 - Bots (rl_env `Controller`s): `RandomBot`, `CallingStation`, `Maniac`,
   `RuleBot`; `make_bot(name, seed)` / `BOT_NAMES`.
+- `BotAgent`: any bot as an engine agent (callback mode, later bot_client).
 
 No poker rule lives here: betting, pots, showdown and hand evaluation stay in
 the engine, table driving in rl_env.
 """
 
+from .agent import BotAgent
 from .bots import BOT_NAMES, Bot, CallingStation, Maniac, RandomBot, make_bot
 from .rules import (
     NUT_LOW_PAIRS,
@@ -39,4 +41,6 @@ __all__ = [
     "preflop_score",
     "postflop_class",
     "decide",
+    # agent
+    "BotAgent",
 ]
