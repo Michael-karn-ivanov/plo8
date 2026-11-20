@@ -36,9 +36,20 @@ from .table import Table
 __all__ = ["Controller", "DecisionBatch", "FinishedHand", "TableBatch"]
 
 
+class _BatchToken:
+    """Opaque identity of a TableBatch inside its decision tokens."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<TableBatch token>"
+
+
 @dataclass(eq=False)
 class DecisionBatch:
-    """The pending decisions of one controller: one row per table."""
+    """The pending decisions of one controller: one row per table. Holds only
+    what the acting seats may see (no critic input, no other seat's cards, no
+    engine object)."""
 
     key: Hashable
     tables: np.ndarray  # int32 (B,)
@@ -47,9 +58,9 @@ class DecisionBatch:
     mask: np.ndarray  # bool (B, 3)
     legal: list  # list[LegalActions]
     views: Optional[list] = None  # list[TableView], only for controllers that want them
-    # The engine decisions the rows answer (to reject a stale batch); None for
-    # `single()` batches, which belong to no TableBatch.
-    decisions: Optional[list] = field(default=None, repr=False)
+    # Opaque per-row tokens of the decisions the rows answer (to reject a stale
+    # batch); None for `single()` batches, which belong to no TableBatch.
+    tokens: Optional[list] = field(default=None, repr=False)
 
     def __len__(self) -> int:
         return int(self.tables.shape[0])
@@ -126,6 +137,9 @@ class TableBatch:
         self._spec: list[Optional[HandSpec]] = [None] * n_tables
         self._controllers: list[tuple] = [()] * n_tables
         self._running: list[bool] = [False] * n_tables
+        # Actions applied in the table's current hand (part of the decision token).
+        self._acted: list[int] = [0] * n_tables
+        self._token = _BatchToken()
         self._finished: list[FinishedHand] = []
         self._next_hand_id = 0
         self.n_decisions = 0  # decisions submitted so far
@@ -153,6 +167,7 @@ class TableBatch:
         self._spec[table] = spec
         self._controllers[table] = keys
         self._running[table] = True
+        self._acted[table] = 0
         if not pending:
             self._finish(table)
         return hand_id
@@ -198,6 +213,9 @@ class TableBatch:
 
     # --- decisions -----------------------------------------------------------------
 
+    def _decision_token(self, table: int) -> tuple:
+        return (self._token, self._hand_id[table], self._acted[table])
+
     def pending(
         self, controllers: Optional[Mapping[Hashable, Any]] = None
     ) -> list[DecisionBatch]:
@@ -226,14 +244,14 @@ class TableBatch:
             seats = []
             legal = []
             masks = []
-            decisions = []
+            tokens = []
             rows: list[int] = []
             cols: list[int] = []
             vals: list[float] = []
             for r, t in enumerate(ts):
                 tbl = tables[t]
                 decision = tbl.decision
-                decisions.append(decision)
+                tokens.append(self._decision_token(t))
                 seats.append(decision.seat)  # type: ignore[union-attr]
                 lg = decision.legal  # type: ignore[union-attr]
                 legal.append(lg)
@@ -256,7 +274,7 @@ class TableBatch:
                     mask=np.array(masks, dtype=bool).reshape(b, 3),
                     legal=legal,
                     views=views,
-                    decisions=decisions,
+                    tokens=tokens,
                 )
             )
         return out
@@ -276,7 +294,7 @@ class TableBatch:
             if lp.shape != (b,):
                 raise ValueError(f"need {b} log-probabilities, got shape {lp.shape}")
         checked = [check_action(_scalar(acts[r]), batch.mask[r]) for r in range(b)]
-        decisions = batch.decisions
+        tokens = batch.tokens
         for r in range(b):
             t = int(batch.tables[r])
             if not 0 <= t < len(self.tables):
@@ -287,7 +305,7 @@ class TableBatch:
                 not self._running[t]
                 or decision is None
                 or decision.seat != int(batch.seats[r])
-                or (decisions is not None and decision is not decisions[r])
+                or (tokens is not None and tokens[r] != self._decision_token(t))
             ):
                 raise ValueError(f"row {r}: table {t} has no such pending decision (stale batch)")
         recorder = self.recorder
@@ -309,6 +327,7 @@ class TableBatch:
                     None if lp is None else float(lp[r]),
                 )
             tbl.act(a)
+            self._acted[t] += 1
             self.n_decisions += 1
             if tbl.hand_over:
                 self._finish(t)

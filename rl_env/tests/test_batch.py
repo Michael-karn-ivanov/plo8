@@ -178,6 +178,18 @@ class SubmitTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             batch.submit(group, np.full(len(group), CHECK_CALL))
 
+    def test_batch_of_another_table_batch_is_rejected(self):
+        # Same seeds: same tables, seats and decisions, but a different batch.
+        one, other = TableBatch(4), TableBatch(4)
+        fill(one, HandSampler(7), lambda spec: ["a"] * spec.n_seats)
+        fill(other, HandSampler(7), lambda spec: ["a"] * spec.n_seats)
+        (group,) = one.pending()
+        before = table_state(other)
+        with self.assertRaises(ValueError):
+            other.submit(group, np.full(len(group), CHECK_CALL))
+        self.assertEqual(table_state(other), before)
+        one.submit(group, np.full(len(group), CHECK_CALL))  # its own batch accepts it
+
 
 class FinishedTest(unittest.TestCase):
     def test_finished_once_with_rewards_and_idle_tables(self):
