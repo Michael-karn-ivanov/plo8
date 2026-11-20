@@ -6,9 +6,12 @@
 
 The workload of the spec's speed target: `--tables` tables in one `TableBatch`,
 a `RandomController` at every seat, the observation and the mask built at every
-decision (`--no-obs`: mask only, to isolate the observation cost). For each table
-size it reports hands, decisions, wall time, decisions/s and hands/s, next to the
-engine-only number for the same size from the engine's own workload
+decision. `--no-obs` uses `TableBatch(observations=False)`: mask only, no
+observation built and no tracker fed - to isolate the observation cost and to
+show what an arena match pays. `--record` adds a `Recorder` (incompatible with
+`--no-obs`: a recorder needs observations). For each table size it reports
+hands, decisions, wall time, decisions/s and hands/s, next to the engine-only
+number for the same size from the engine's own workload
 (`engine.benchmark.run_benchmark`), and the share of time spent in rl_env,
 `1 - engine_time / total_time` with the engine time taken per decision
 (`= 1 - rl_env decisions/s / engine decisions/s`). Timing with
@@ -63,6 +66,8 @@ def run_rl_env(
 ) -> dict:
     """One run at one table size; returns hands, decisions and seconds of the
     timed part."""
+    if record and not observations:
+        raise ValueError("--record needs observations (incompatible with --no-obs)")
     recorder = Recorder() if record else None
     batch = TableBatch(tables, recorder=recorder, observations=observations)
     sampler = HandSampler(seed, sizes=(players,), cfg=cfg)
@@ -94,8 +99,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--stacks", choices=("deep", "mixed"), default="mixed", help="deep: 100 BB everywhere"
     )
-    parser.add_argument("--no-obs", action="store_true", help="mask only, no observation")
-    parser.add_argument("--record", action="store_true", help="record with a Recorder")
+    parser.add_argument(
+        "--no-obs",
+        action="store_true",
+        help="TableBatch(observations=False): mask only, no observation",
+    )
+    parser.add_argument(
+        "--record", action="store_true", help="record with a Recorder (not with --no-obs)"
+    )
     parser.add_argument("--profile", action="store_true", help="profile the rl_env runs")
     args = parser.parse_args(argv)
 
@@ -105,6 +116,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         parser.error("--players must be comma-separated integers")
     if args.tables < 1 or args.hands < 1 or not sizes or any(not 2 <= n <= 10 for n in sizes):
         parser.error("need --tables >= 1, --hands >= 1 and table sizes in 2..10")
+    if args.record and args.no_obs:
+        parser.error("--record needs observations: it cannot be combined with --no-obs")
     cfg = StackConfig(deep_share=1.0) if args.stacks == "deep" else StackConfig()
     print(
         f"tables={args.tables} hands={args.hands} seed={args.seed} stacks={args.stacks} "
