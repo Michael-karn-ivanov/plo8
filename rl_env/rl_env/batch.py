@@ -93,6 +93,9 @@ class Controller(Protocol):
     """Decides for the seats assigned to it.
 
     `wants_views` (class or instance attribute): build `DecisionBatch.views`.
+    `wants_obs` (optional; True when absent): reads `DecisionBatch.obs`. Only a
+    controller declaring `wants_obs = False` may sit in a batch without
+    observations.
     `act` returns one action per row (int array), or `(actions, logp)` with the
     log-probability of each chosen action (float32), which the Recorder keeps.
     """

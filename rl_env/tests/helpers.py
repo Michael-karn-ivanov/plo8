@@ -111,9 +111,11 @@ def passive(table: Table) -> None:
 
 class CheckCallController:
     """A tiny controller that reads `views` and `legal` (proves the view path of
-    the interface): always check / call, after checking the view it got."""
+    the interface): always check / call, after checking the view it got. It
+    reads no observation vectors (`wants_obs = False`)."""
 
     wants_views = True
+    wants_obs = False
 
     def __init__(self) -> None:
         self.views_seen = 0

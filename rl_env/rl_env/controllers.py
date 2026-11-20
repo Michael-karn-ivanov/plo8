@@ -16,10 +16,14 @@ __all__ = ["RandomController"]
 class RandomController:
     """Uniform over the masked actions, from its own seeded `np.random.Generator`.
 
+    Reads only `mask` (no views, no observation vectors), so it may act in a
+    batch without observations.
+
     With `with_logp=True` `act` also returns the log-probability of each chosen
     action (`-log(number of allowed actions)`, float32)."""
 
     wants_views = False
+    wants_obs = False
 
     def __init__(self, seed: int = 0, *, with_logp: bool = False) -> None:
         self.rng = np.random.Generator(np.random.PCG64(seed))
