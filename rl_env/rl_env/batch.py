@@ -7,6 +7,12 @@ by the acting seat's controller key; a `Controller` answers a whole
 `DecisionBatch` at once. Grouping and iteration orders are by table index
 (never over sets or `id()`), so a run is deterministic.
 
+`TableBatch(observations=False)` builds no observation vectors (and feeds no
+tracker): for batches whose controllers all declare `wants_obs = False`
+(evaluation matches with rule-based bots, the bench's `--no-obs`). Everything
+else - masks, legal actions, grouping, order, views, actions and results - is
+the same as with observations.
+
 Nothing a controller receives (`DecisionBatch`) or `FinishedHand` carries any
 hidden information, nor any reference to an engine object that could reach it.
 The full deal of a finished hand is read separately with
@@ -60,7 +66,7 @@ class DecisionBatch:
     key: Hashable
     tables: np.ndarray  # int32 (B,)
     seats: np.ndarray  # int32 (B,)
-    obs: np.ndarray  # float32 (B, OBS_DIM)
+    obs: Optional[np.ndarray]  # float32 (B, OBS_DIM); None in a batch without observations
     mask: np.ndarray  # bool (B, 3)
     legal: list  # list[LegalActions]
     views: Optional[list] = None  # list[TableView], only for controllers that want them
@@ -76,7 +82,8 @@ class DecisionBatch:
         cls, view: TableView, legal: LegalActions, key: Hashable = None
     ) -> "DecisionBatch":
         """A one-row batch from one engine view and its legal actions (an engine
-        `on_turn`, or a decoded server `turn` message). Table -1, seat `view.seat`."""
+        `on_turn`, or a decoded server `turn` message). Table -1, seat `view.seat`.
+        Always builds `obs`."""
         return cls(
             key=key,
             tables=np.array([-1], dtype=np.int32),
@@ -123,6 +130,10 @@ def _wants_views(controller: Any) -> bool:
     return bool(getattr(controller, "wants_views", False))
 
 
+def _wants_obs(controller: Any) -> bool:
+    return bool(getattr(controller, "wants_obs", True))
+
+
 def _scalar(x: Any) -> Any:
     item = getattr(x, "item", None)
     return item() if callable(item) else x
@@ -141,9 +152,13 @@ class TableBatch:
     ) -> None:
         if isinstance(n_tables, bool) or not isinstance(n_tables, int) or n_tables < 1:
             raise ValueError(f"n_tables must be a positive int, got {n_tables!r}")
+        observations = bool(observations)
+        if recorder is not None and not observations:
+            raise ValueError("a Recorder needs observations: TableBatch(observations=True)")
         self.tables = [Table(chips_per_bb) for _ in range(n_tables)]
         self.recorder = recorder
-        # False: observation arrays are left at zero (bench --no-obs only).
+        # False: no observation is built (DecisionBatch.obs is None); only
+        # controllers with `wants_obs = False` may act in such a batch.
         self.observations = observations
         self._hand_id: list[int] = [-1] * n_tables
         self._spec: list[Optional[HandSpec]] = [None] * n_tables
@@ -250,7 +265,11 @@ class TableBatch:
         """Every table with a decision, grouped by the acting seat's controller key.
         Groups are ordered by their smallest table index, rows by table index.
         Views are built only for groups whose controller (looked up in
-        `controllers`) has `wants_views`."""
+        `controllers`) has `wants_views`.
+
+        In a batch without observations `obs` is None; if `controllers` is given
+        and a pending group's controller has `wants_obs` true (or absent), it
+        raises ValueError before anything is built."""
         groups: dict[Hashable, list[int]] = {}
         tables = self.tables
         running = self._running
@@ -264,18 +283,28 @@ class TableBatch:
                         groups[key] = [t]
                     else:
                         group.append(t)
-        out = []
         build_obs = self.observations
+        if not build_obs and controllers is not None:
+            for key in groups:
+                controller = controllers.get(key)
+                if controller is not None and _wants_obs(controller):
+                    raise ValueError(
+                        f"controller {key!r} wants observations (wants_obs is true or "
+                        f"absent) but this TableBatch builds none (observations=False)"
+                    )
+        out = []
         for key, ts in groups.items():
             b = len(ts)
-            obs = np.zeros((b, OBS_DIM), dtype=np.float32)
             seats = []
             legal = []
             masks = []
             tokens = []
-            rows: list[int] = []
-            cols: list[int] = []
-            vals: list[float] = []
+            obs = None
+            if build_obs:
+                obs = np.zeros((b, OBS_DIM), dtype=np.float32)
+                rows: list[int] = []
+                cols: list[int] = []
+                vals: list[float] = []
             for r, t in enumerate(ts):
                 tbl = tables[t]
                 decision = tbl.decision
@@ -288,8 +317,8 @@ class TableBatch:
                     before = len(cols)
                     tbl.collect_observation(cols, vals)
                     rows.extend([r] * (len(cols) - before))
-            if cols:
-                obs[rows, cols] = vals
+            if build_obs and cols:
+                obs[rows, cols] = vals  # type: ignore[index]
             views = None
             if controllers is not None and _wants_views(controllers.get(key)):
                 views = [tables[t].view() for t in ts]
@@ -338,6 +367,8 @@ class TableBatch:
                 raise ValueError(f"row {r}: table {t} has no such pending decision (stale batch)")
         recorder = self.recorder
         record = recorder is not None and recorder.wants(batch.key)
+        if record and batch.obs is None:
+            raise ValueError("cannot record a batch without observations")
         for r in range(b):
             t = int(batch.tables[r])
             tbl = self.tables[t]
@@ -349,7 +380,7 @@ class TableBatch:
                     self._hand_id[t],
                     int(batch.seats[r]),
                     batch.key,
-                    batch.obs[r],
+                    batch.obs[r],  # type: ignore[index]
                     batch.mask[r],
                     a,
                     None if lp is None else float(lp[r]),
@@ -362,7 +393,8 @@ class TableBatch:
 
     def step(self, controllers: Mapping[Hashable, Any]) -> list[FinishedHand]:
         """`pending`, each controller's `act` in group order, `submit`, then
-        `collect_finished()`."""
+        `collect_finished()`. In a batch without observations a controller that
+        wants them makes it raise ValueError before any table changes."""
         for batch in self.pending(controllers):
             out = controllers[batch.key].act(batch)
             if isinstance(out, tuple):
