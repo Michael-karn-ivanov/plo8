@@ -1,4 +1,5 @@
-"""Table: start / act / end of a hand, validation, rejected actions, rewards."""
+"""Table: start / act / end of a hand, validation, rejected actions, rewards,
+lazy tracker."""
 
 import random
 import unittest
@@ -189,6 +190,32 @@ class HandTest(unittest.TestCase):
             helpers.passive(t2)
             self.assertEqual(t1.result.board, t2.result.board)
             self.assertEqual(len(t1.result.board), 5)
+
+
+class LazyTrackerTest(unittest.TestCase):
+    def test_unread_observations_leave_the_tracker_unfed(self):
+        rng = random.Random(4)
+        for _ in range(100):
+            table = Table()
+            spec = helpers.random_spec(rng)
+            helpers.play_random(table, spec, rng)
+            self.assertTrue(table.hand_over)
+            self.assertGreater(len(table.history), 0)
+            self.assertEqual(table.events_fed, 0)
+
+    def test_reading_an_observation_feeds_it_and_a_new_hand_resets_it(self):
+        table = Table()
+        table.start_hand(3, [100.0] * 3, 0, 7)
+        self.assertEqual(table.events_fed, 0)
+        table.observation()
+        self.assertEqual(table.events_fed, len(table.history))
+        self.assertGreater(table.events_fed, 0)
+        table.act(CHECK_CALL)
+        table.observation()
+        self.assertEqual(table.events_fed, len(table.history))
+        helpers.passive(table)
+        table.start_hand(3, [100.0] * 3, 1, 8)
+        self.assertEqual(table.events_fed, 0)
 
 
 if __name__ == "__main__":

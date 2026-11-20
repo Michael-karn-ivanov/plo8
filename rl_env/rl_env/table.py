@@ -202,6 +202,12 @@ class Table:
         self._sync()
         return self._tracker  # type: ignore[return-value]
 
+    @property
+    def events_fed(self) -> int:
+        """How many of the hand's events the tracker has processed so far (0 while
+        no observation of the hand has been read)."""
+        return self._seen
+
     def _sync(self) -> None:
         """Feed the tracker the events added since the previous read (cursor into
         the engine's history; no copy of the whole history)."""
