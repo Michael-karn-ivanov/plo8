@@ -11,6 +11,7 @@ the engine, table driving in rl_env.
 
 from .agent import BotAgent
 from .bots import BOT_NAMES, Bot, CallingStation, Maniac, RandomBot, make_bot
+from .history import format_hand
 from .rules import (
     NUT_LOW_PAIRS,
     RULE_PARAMS,
@@ -44,8 +45,9 @@ __all__ = [
     "decide",
     # agent
     "BotAgent",
-    # stats
+    # stats / history
     "CHIPS_PER_BIG_BET",
     "Summary",
     "summarize",
+    "format_hand",
 ]
