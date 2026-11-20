@@ -22,7 +22,7 @@ Dependencies
 * Every hand is independent: nothing carries over from the previous hand at the same table (no rebuys, sit-outs, joins, leaves or button movement are needed; stacks, size and button are given anew each hand).
 * While a hand is in progress, the table tells: whether a decision is pending, which seat is to act, the action mask, the engine's legal actions and, on request only, the acting seat's table view (the engine's view - only that seat's own hole cards are visible).
 * When the hand is over, the table gives each seat's net result for the hand. The reward used for learning is the net result in big bets (one big bet = 2 big blinds; the engine reports amounts in big blinds), with no rake. The net results of all seats sum to zero.
-* For the critic only (a value network used during training that may see everything), the table can also give the other seats' hole cards, relative to a given seat. This is the only way hidden information leaves rl_env, it is clearly separated from the observation, and nothing a playing policy receives may be derived from it.
+* For the critic only (a value network used during training that may see everything), the table can also give the other seats' hole cards, relative to a given seat. This is the only way hidden information leaves rl_env during a hand, it is clearly separated from the observation, and nothing a playing policy receives may be derived from it.
 
 3. Stacks used for training
 * rl_env provides a way to draw starting stacks for a hand from a seeded random source:
@@ -54,7 +54,9 @@ Dependencies
 * rl_env runs a batch of tables side by side in one process, so that the decisions of many tables can be sent to a neural network together. Each table in the batch is the table of section 2.
 * Each seat of a hand is assigned a controller - the thing that decides for it (for example the current neural policy, an older copy of it, or a hand-written bot). Which controller sits where is chosen by the caller when the hand starts, per seat.
 * A controller receives a batch of decisions at once and returns one action (fold, check-or-call, bet-or-raise) per decision. With each batch it receives the observation vectors, the action masks, and also the engine's table views and legal actions, so both neural policies (which read vectors and masks) and rule-based bots (which read views and legal actions) can implement the same interface. Views are built only for controllers that ask for them; a controller that only needs vectors and masks must not pay for views.
+* A batch whose controllers read no observation vectors (for example rule-based bots in an evaluation match, plo8/arena) can be run without building them; its controllers then receive masks, legal actions and, on request, views as usual, and everything else (actions, results, determinism) is unchanged.
 * The batch reports all pending decisions grouped by controller (at most one pending decision per table, since one player acts at a time), accepts the chosen actions, advances each of those tables to its next decision or to the end of its hand, and reports finished hands with each seat's result. The caller decides when and with what to start the next hand on a finished table.
+* For evaluation tools only (plo8/arena's hand histories and deal checks), every seat's hole cards of a finished hand can be read from the batch, until the caller starts that table's next hand. Like the critic input this is hidden information: it is clearly separated from what controllers receive and is never passed to a controller.
 * The batch also makes it possible to record, for every decision, everything training needs: table, hand, seat, controller, observation, mask, chosen action, the critic's extra input, and, once the hand is over, that seat's reward. Matching each decision to the final result of its hand must be unambiguous.
 * A batch run is deterministic: the same seeds (for decks, stacks, seating and any random choices made by rl_env itself) and the same controller decisions give identical decisions, actions and results.
 
@@ -75,5 +77,7 @@ Dependencies
 * Determinism: the same seeds and controller decisions give an identical batch run (decisions, actions, results), and the same deck seed deals the same cards relative to the button whatever the stacks.
 * Fuzz: 100,000 random hands through the batch at random table sizes (2-10) and random stacks run without errors, and in every hand the seats' net results sum to zero.
 * Training records: for random batch runs, every recorded decision is matched to exactly one finished hand, and its reward is that seat's net result in big bets.
+* Batches without observations: the same seeds and controller decisions give the same actions and results with and without observation vectors.
+* Finished hole cards: for a finished hand, every seat's hole cards read from the batch equal the hands the engine dealt (the shown hands at showdown agree), and controllers never receive them.
 * The benchmark meets the target, or the gap and the next step are recorded in plan.md.
 * All existing tests of plo8/entities, plo8/engine, plo8/cli_server and plo8/cli_client still pass.
