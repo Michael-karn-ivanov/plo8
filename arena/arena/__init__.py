@@ -22,6 +22,7 @@ from .rules import (
     postflop_class,
     preflop_score,
 )
+from .stats import CHIPS_PER_BIG_BET, Summary, summarize
 
 __all__ = [
     # bots
@@ -43,4 +44,8 @@ __all__ = [
     "decide",
     # agent
     "BotAgent",
+    # stats
+    "CHIPS_PER_BIG_BET",
+    "Summary",
+    "summarize",
 ]
