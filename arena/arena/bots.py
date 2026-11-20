@@ -1,9 +1,9 @@
-"""Baseline bots: RandomBot, CallingStation, Maniac.
+"""Baseline bots: RandomBot, CallingStation, Maniac (RuleBot is in rules.py).
 
 Every bot implements the rl_env `Controller` protocol (`wants_views`,
 `act(batch) -> np.ndarray[int64, (B,)]`), has a short `name` and is stateless
 between calls (RandomBot's only state is its generator). They see only what a
-player sees: `DecisionBatch.mask`, `legal`, `views`.
+player sees: `DecisionBatch.mask`, `legal`, `views` (RuleBot only).
 
 Every bot finishes with `_masked(actions, batch.mask)`: an action whose mask
 bit is off becomes CHECK_CALL (always allowed), so mask safety never depends on
@@ -91,7 +91,7 @@ class Maniac(Bot):
         return _masked(actions, mask)
 
 
-BOT_NAMES = ("random", "calling", "maniac")
+BOT_NAMES = ("random", "calling", "maniac", "rule")
 
 
 def make_bot(name: str, seed: int = 0) -> Bot:
@@ -102,4 +102,8 @@ def make_bot(name: str, seed: int = 0) -> Bot:
         return CallingStation()
     if name == "maniac":
         return Maniac()
+    if name == "rule":
+        from .rules import RuleBot  # rules imports this module
+
+        return RuleBot()
     raise ValueError(f"unknown bot {name!r}; known bots: {', '.join(BOT_NAMES)}")

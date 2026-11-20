@@ -17,3 +17,11 @@ python_library(
     ],
     visibility = ["PUBLIC"],
 )
+
+# Fast tests (seconds).
+python_test(
+    name = "arena_test",
+    srcs = glob(["tests/*.py"]),
+    base_module = "arena_tests",
+    deps = [":arena"],
+)
