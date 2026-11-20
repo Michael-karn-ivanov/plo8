@@ -1,6 +1,7 @@
 """Duplicate matches: deal order and rotation seen from the arena side, mirror
-matches, zero sum, determinism, combining, histories."""
+matches, zero sum, determinism, combining, histories, the CLI."""
 
+import io
 import unittest
 from collections import defaultdict
 from unittest import mock
@@ -17,6 +18,7 @@ from arena import (
     play_match,
     summarize,
 )
+from arena.cli import COLUMNS, HEADER, lineup_for, main
 from rl_env import StackConfig
 
 
@@ -221,6 +223,44 @@ class HistoriesTest(unittest.TestCase):
         self.assertEqual(play_match(lineup, 2, seed=8, n_histories=0).histories, ())
         self.assertEqual(len(play_match(lineup, 2, seed=8, n_histories=100).histories), 8)
         self.assertIsNone(a.hands)
+
+
+class CliTest(unittest.TestCase):
+    def test_results_table(self):
+        out = io.StringIO()
+        code = main(
+            ["--agent", "rule", "--opponents", "random", "--players", "2,6,9", "--deals", "20"],
+            out=out,
+        )
+        self.assertEqual(code, 0)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(lines[0], HEADER)
+        self.assertIn("big bets", lines[0])
+        header = lines[1].split()
+        for col in ("agent", "opponents", "players", "hands", "bb/100", "95%", "CI"):
+            self.assertIn(col, header)
+        rows = [line.split() for line in lines[2:] if line.split()[:1] in (["rule"], ["random"])]
+        self.assertEqual(len(rows), 6)
+        got = {(r[0], int(r[2])): int(r[3]) for r in rows}
+        for n in (2, 6, 9):
+            self.assertEqual(got[("rule", n)], 20 * n)
+            self.assertEqual(got[("random", n)], (n - 1) * n * 20)
+        self.assertEqual(sum("hands/s" in line for line in lines), 3)
+        self.assertEqual(len(COLUMNS), 6)
+
+    def test_agent_among_opponents_is_starred(self):
+        lineup = lineup_for("random", ["random", "calling"], 4)
+        self.assertEqual([e.name for e in lineup], ["random*", "random", "calling", "random"])
+        self.assertEqual([e.bot for e in lineup], ["random", "random", "calling", "random"])
+
+    def test_histories_printed(self):
+        out = io.StringIO()
+        main(
+            ["--agent", "rule", "--opponents", "calling", "--players", "3", "--deals", "4",
+             "--histories", "2", "--stacks", "training"],
+            out=out,
+        )
+        self.assertEqual(out.getvalue().count("\nDeal "), 2)
 
 
 if __name__ == "__main__":

@@ -25,3 +25,13 @@ python_test(
     base_module = "arena_tests",
     deps = [":arena"],
 )
+
+# Command-line evaluator: buck2 run //arena:match -- [options]
+# (the code is arena.cli, part of the library, so tests can call it).
+python_binary(
+    name = "match",
+    main = "bin/match.py",
+    # Keep the tool out of the `arena` package namespace.
+    base_module = "arena_bin",
+    deps = [":arena"],
+)
