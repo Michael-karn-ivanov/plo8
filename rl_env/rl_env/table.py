@@ -13,6 +13,12 @@ button-relative positions, whatever the stacks.
 
 Amounts stay in BB at the engine boundary; rewards are in big bets (1 big bet
 = 2 BB). Zero-sum is checked in chips.
+
+Hidden information: `privileged_hole_cards()` is the only place in rl_env that
+reads the engine's `env.privileged_hole_cards()`. Its two callers are the
+critic input (`critic.critic_cards`, during a hand) and `finished_hole_cards()`
+(after a hand, for evaluation tools). Nothing a controller receives is built
+from either.
 """
 
 from __future__ import annotations
@@ -36,7 +42,8 @@ MAX_SEATS = 10
 
 
 class NoHandError(RuntimeError):
-    """A decision read / action while no decision is pending at the table."""
+    """A decision read / action while no decision is pending at the table (or a
+    finished-hand read while no hand is over)."""
 
 
 def _is_number(x: Any) -> bool:
@@ -77,6 +84,11 @@ class Table:
     ) -> bool:
         """Start a new hand (any running hand is abandoned). Returns whether a
         decision is pending (False when the hand needed none: it is already over).
+
+        The hand's tracker starts empty and is fed only when an observation (or
+        `tracker`) is read, so a hand whose observations are never read never
+        processes an event. Starting a hand ends the readability of the previous
+        hand's `finished_hole_cards()`.
 
         `deck` (tests and replays only): any `entities.Deck`, e.g. a stacked deck,
         used instead of the seeded one."""
@@ -191,7 +203,12 @@ class Table:
         return self.env.history
 
     def privileged_hole_cards(self) -> Mapping[int, Hand]:
-        """PRIVILEGED (critic input only): seat -> hole cards of every participant."""
+        """PRIVILEGED - hidden information: seat -> hole cards of every participant
+        of the current hand (or of the last one once it is over).
+
+        The only place in rl_env that reads the engine's privileged accessor. Its
+        callers are the critic input (`critic_cards`) and `finished_hole_cards()`;
+        it must never reach a controller."""
         if self.env is None:
             return {}
         return self.env.privileged_hole_cards()
@@ -270,6 +287,19 @@ class Table:
     @property
     def hand_over(self) -> bool:
         return self.result is not None
+
+    def finished_hole_cards(self) -> Mapping[int, Hand]:
+        """HIDDEN INFORMATION - evaluation tools only (e.g. arena's hand histories);
+        must never reach a controller.
+
+        seat -> `Hand` of every seat of the finished hand (all seats of an rl_env
+        table are dealt in, folded ones included), as the engine's read-only
+        mapping. Raises NoHandError unless the hand is over, so it reveals nothing
+        while a decision is pending. Readable until this table's next
+        `start_hand` (which builds a new environment)."""
+        if not self.hand_over:
+            raise NoHandError("no finished hand at this table")
+        return self.privileged_hole_cards()
 
     def _finish(self) -> None:
         env = self.env

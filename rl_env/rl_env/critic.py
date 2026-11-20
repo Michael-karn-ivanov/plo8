@@ -1,9 +1,11 @@
 """Critic input: the other seats' hole cards, relative to a seat.
 
-PRIVILEGED. This is the only way hidden information leaves rl_env. It is a
-separate function and a separate array; `encoder.py` and `tracker.py` never
-import this module (checked by a test), and nothing a playing policy receives
-may be derived from it.
+PRIVILEGED. This is the only way hidden information leaves rl_env during a
+hand (after a hand, evaluation tools read `finished_hole_cards`; both go
+through `Table.privileged_hole_cards`). It is a separate function and a
+separate array; `encoder.py` and `tracker.py` never import this module
+(checked by a test), and nothing a playing policy receives may be derived from
+it.
 
 `critic_cards(table, seat)` -> int8 (9, 4): row `k-1` holds the hole cards of
 relative slot `k = 1..9` (the same slot order as the observation: the k-th
@@ -31,7 +33,8 @@ PRIV_DIM = N_SLOTS * 52  # 468
 
 def critic_cards(table: Any, seat: int, out: Any = None) -> np.ndarray:
     """The other participants' hole cards relative to `seat` (see the module
-    docstring). Read through the engine's privileged step-mode accessor."""
+    docstring). Read through `Table.privileged_hole_cards()` (the engine's
+    privileged step-mode accessor)."""
     cards = table.privileged_hole_cards()
     seats = sorted(cards)
     if out is None:
