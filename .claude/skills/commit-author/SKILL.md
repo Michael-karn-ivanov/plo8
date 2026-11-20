@@ -7,11 +7,11 @@ Use git add if necessary and git commit with a meaningfull subject.
 
 When asked to commit the changes and there are multiple files changed, you use following prioritization list:
 1. If there are multiple spec.md changed (along with other changes) - you select and commit only one spec.md, following this priority list:
-rl_env > cli_client > cli_server > engine > entities
+arena > rl_env > cli_client > cli_server > engine > entities
 You do not commit anything else
 2. If multiple files were changed and among them single spec.md - you always commit only spec.md.
 3. If there are multiple plan.md changed (along with other changes, but no spec.md - otherwise it would be rule 1 or rule 2) - you select and commit only one plan.md, following this priority list:
-entities > engine > cli_server > cli_client > rl_env
+entities > engine > cli_server > cli_client > rl_env > arena
 4. If multiple files were changed and among them single plan.md (along with other changes, but no spec.md - otherwise it would be rule 1 or rule 2) - you commit only plan.md.
 5. If multiple files were changed and amond them no spec.md and plan.md - you commit changes working through sub-directories in this priority order:
 entities > engine > cli_server > cli_client > rl_env
