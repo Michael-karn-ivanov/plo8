@@ -26,6 +26,15 @@ python_test(
     deps = [":arena"],
 )
 
+# Strength acceptance matches (tens of seconds). For quick local runs lower the
+# deal count with the ARENA_SLOW_DEALS environment variable.
+python_test(
+    name = "arena_slow_test",
+    srcs = glob(["slow/*.py"]),
+    base_module = "arena_slow",
+    deps = [":arena"],
+)
+
 # Command-line evaluator: buck2 run //arena:match -- [options]
 # (the code is arena.cli, part of the library, so tests can call it).
 python_binary(
