@@ -6,6 +6,11 @@ starts. `pending()` groups the decisions of all tables (at most one per table)
 by the acting seat's controller key; a `Controller` answers a whole
 `DecisionBatch` at once. Grouping and iteration orders are by table index
 (never over sets or `id()`), so a run is deterministic.
+
+Nothing a controller receives (`DecisionBatch`) or `FinishedHand` carries any
+hidden information, nor any reference to an engine object that could reach it.
+The full deal of a finished hand is read separately with
+`finished_hole_cards(table)`, for evaluation tools only.
 """
 
 from __future__ import annotations
@@ -26,12 +31,13 @@ from typing import (
 import numpy as np
 
 from engine import HandResult, LegalActions, TableView
+from entities import Hand
 
 from .actions import IllegalMaskedActionError, action_mask, check_action, mask_array
 from .encoder import OBS_DIM, encode_view
 from .recorder import Recorder
 from .stacks import HandSampler, HandSpec
-from .table import Table
+from .table import NoHandError, Table
 
 __all__ = ["Controller", "DecisionBatch", "FinishedHand", "TableBatch"]
 
@@ -98,6 +104,9 @@ class Controller(Protocol):
 
 @dataclass(frozen=True, eq=False)
 class FinishedHand:
+    """Public results of a finished hand (`result` shows hole cards only for the
+    hands shown at showdown)."""
+
     table: int
     hand_id: int
     spec: HandSpec
@@ -153,7 +162,8 @@ class TableBatch:
     def start_hand(self, table: int, spec: HandSpec, controllers: Sequence[Hashable]) -> int:
         """Start a hand on an idle table with one controller key per seat. Returns
         the hand's batch-unique, increasing id. A hand that needs no decision is
-        finished at once (reported by the next `collect_finished()`)."""
+        finished at once (reported by the next `collect_finished()`). Ends the
+        readability of the table's previous `finished_hole_cards`."""
         if self._running[table]:
             raise RuntimeError(f"table {table} still has a hand running")
         keys = tuple(controllers)
@@ -210,6 +220,21 @@ class TableBatch:
         out = self._finished
         self._finished = []
         return out
+
+    def finished_hole_cards(self, table: int) -> Mapping[int, Hand]:
+        """HIDDEN INFORMATION - evaluation tools only (arena's hand histories,
+        deal-order checks); must never reach a controller.
+
+        seat -> `Hand` of every seat of the table's last hand once it is over
+        (whether or not `collect_finished()` has returned it yet), until the
+        caller starts that table's next hand: read it for a `FinishedHand` before
+        restarting `fh.table`. Raises RuntimeError while the table has a hand
+        running and NoHandError if it never had one."""
+        if self._running[table]:
+            raise RuntimeError(f"table {table} still has a hand running")
+        if self._hand_id[table] < 0:
+            raise NoHandError(f"table {table} has not had a hand yet")
+        return self.tables[table].finished_hole_cards()
 
     # --- decisions -----------------------------------------------------------------
 
@@ -354,7 +379,8 @@ class TableBatch:
     ) -> int:
         """Keep every table busy with `sampler.sample()` hands (controller keys from
         `seat_controllers(spec)`) until `n_hands` hands started here have finished.
-        Calls `on_finished` for every finished hand; returns how many finished."""
+        Calls `on_finished` for every finished hand (before its table is
+        restarted); returns how many finished."""
         started = 0
         done = 0
         for t in self.idle_tables():

@@ -4,8 +4,11 @@ It drives `//engine` in step mode and gives the learning side tables, decisions,
 observation vectors, action masks, results and training records. No poker rule
 lives here: betting, pots, showdown and hand evaluation stay in the engine.
 
-Hidden information leaves only through the critic input (`critic.py`), a
-separate function and array that the observation code never imports.
+Hidden information leaves through two separate doors, never through a
+controller: during a hand only the critic input (`critic.py`, a separate
+function and array that the observation code never imports); after a hand only
+`finished_hole_cards` (for evaluation tools), readable until the table's next
+hand starts. Both go through `Table.privileged_hole_cards`.
 """
 
 from .actions import (
