@@ -28,7 +28,10 @@ and `handle_join`. This project adds:
 Two parts are libraries that other projects use without a server (see Reusable
 libraries): the wire protocol (`//cli_server:protocol`) and the recorded hands with
 their loader, seating and stacked deck (`//cli_server:e2e`). `plo8/rl_env` tests use
-both.
+both. A third target, the server itself (`//cli_server:cli_server_lib`, with
+`GameServer` and the `cli_server.main` module), is available to the tests of the
+client projects `plo8/cli_client` and `plo8/bot_client` (see Reusable libraries →
+In-process server for client tests).
 
 ## Layout
 
@@ -73,9 +76,9 @@ cli_server/
 `cli_server/BUCK`:
 - `python_library(name = "protocol", srcs = ["cli_server/__init__.py", "cli_server/protocol.py"],
   base_module = "", deps = ["//engine:engine", "//entities:entities"],
-  visibility = ["PUBLIC"])`. A separate target so clients (e.g. `//cli_client`) and
-  other projects' tests (e.g. `//rl_env`) can share the wire format without depending
-  on the server.
+  visibility = ["PUBLIC"])`. A separate target so clients (e.g. `//cli_client`,
+  `//bot_client`) and other projects' tests (e.g. `//rl_env`) can share the wire format
+  without depending on the server.
 - `python_library(name = "e2e", srcs = ["cli_server/e2e/__init__.py",
   "cli_server/e2e/case.py", "cli_server/e2e/cases.py", "cli_server/e2e/deck.py"],
   base_module = "", resources = glob(["e2e_test_sets/*.json"]),
@@ -94,8 +97,12 @@ cli_server/
   depend on `:cli_server_lib` at import time and there is no dependency cycle.
 - `python_library(name = "cli_server_lib", srcs = ["cli_server/session.py",
   "cli_server/server.py", "cli_server/main.py"], base_module = "",
-  deps = [":protocol", ":e2e_runner", "//engine:engine"], visibility = ["//cli_client/..."])`.
-  The client's integration test runs an in-process `GameServer`.
+  deps = [":protocol", ":e2e_runner", "//engine:engine"],
+  visibility = ["//cli_client/...", "//bot_client/..."])`. The tests of the client
+  projects use it: cli_client's integration test and bot_client's integration tests run
+  an in-process `GameServer`, and bot_client's lost-server test starts
+  `python -m cli_server.main` as a child process (see Reusable libraries → In-process
+  server for client tests). It stays out of `PUBLIC`: only client tests need it.
 - `python_binary(name = "cli_server", main_module = "cli_server.main",
   deps = [":cli_server_lib"])`.
 - `python_test(name = "cli_server_test", srcs = glob(["tests/*.py"],
@@ -147,12 +154,19 @@ cli_server [--port PORT] [--grace-period SECONDS] [--action-timeout SECONDS]
 - The server binds to `127.0.0.1` only, because server and clients share a host (spec).
 - Logging goes to stderr: listening address and the table settings, joins and leaves,
   lobby changes, each hand start (hand number, button, players), each hand result
-  (winners, pots, stacks).
+  (winners, pots, stacks). The startup line has the form `listening on 127.0.0.1:PORT;
+  blinds ...`, logged once the socket is bound; a parent process that started the
+  server with `--port 0` reads the actual port from it (see In-process server for
+  client tests).
+- `main.py` ends with `if __name__ == "__main__": sys.exit(main())`, so
+  `python -m cli_server.main ...` runs the same server as the buck2 binary.
 - SIGINT / SIGTERM: stop accepting requests. If a hand is running, the interrupt
   aborts it in the main thread (the engine's `_abort_hand` refunds the bets). A lobby
   wait or a pause between hands is woken up and ends at once. Then send `close` to
   every session and exit 0. In e2e mode an interrupt stops the current case, kills its
-  client processes, prints the report so far and exits 1.
+  client processes, prints the report so far and exits 1. A `SIGKILL` closes every
+  socket with the process; clients see their callback channel and the server port go
+  away without `close`.
 
 ## Wire protocol (`protocol.py`)
 
@@ -200,6 +214,32 @@ that is not the pending turn (late or duplicate) or an action that the turn's
 for `rebuy` / `sit_in`, the engine's `IllegalActionError` / `ValueError` message
 (e.g. "during betting use the hand_end reply"). A rejected `action` does not use up
 the turn. The client may send a corrected action until `action_timeout` runs out.
+
+### Rejected `action` wording (contract)
+Clients tell the two reasons for rejecting a well-formed `action` from a known player
+apart by the `error` text (spec). The texts come from `ClientSession.submit_action`
+and are part of the protocol:
+
+| reason | `error` | stable phrase |
+|---|---|---|
+| no turn is pending (it timed out, was already answered, or the hand moved on) | `"<name> has no pending turn"` | `pending turn` |
+| a turn is pending, but with another `seq` (stale or duplicate `seq`) | `"turn <seq> is not the pending turn of <name> (<pending seq>)"` | `pending turn` |
+| the action is not in the pending turn's `LegalActions` | `"<action> is not legal now (legal: <legal actions>, leave)"` | `is not legal now` |
+
+- A client classifies a rejection by the stable phrase: it contains `pending turn` ⇒
+  the turn is no longer pending (do not retry for that `seq`); it contains `is not
+  legal now` ⇒ the turn is still pending and a different action may be sent for the
+  same `seq`. The rest of the text (names, numbers, the list of legal actions) is for
+  people and may be worded differently.
+- No other `action` error contains either phrase: unknown player (`"unknown player
+  '<name>'"`), a player still joining (`"<name> is still joining"`), and malformed
+  requests (`ProtocolError` texts from `validate_request`, e.g. an unknown action
+  name) say something else. The two phrases never appear together.
+- The stale check runs before the legality check, so an action for a stale `seq` is
+  reported as stale even if it would also be illegal.
+- Changing these phrases is a protocol change: `test_server` pins them against a real
+  `GameServer` here, and bot_client's integration test pins its classifier against
+  them (see In-process server for client tests).
 
 ### Table settings (`table` in the join response)
 `TableSettings` dataclass with `encode_settings` / `decode_settings`:
@@ -308,6 +348,10 @@ two hooks given by the server: `on_turn(session, view)` and `on_status(session, 
     action timeout) to the JSON, enqueues it, then calls the `on_turn` hook, which
     announces the turn to the other players (see Turn announcements).
   - `("hand_end", seq, seat, result)` sets `pending_hand_end`.
+  - `("event", e)`: a `hand_started` clears `pending_turn` and `pending_hand_end`, and a
+    `player_acted` of this player clears `pending_turn`, so a reply to a turn the dealer
+    has moved past (timed out) is refused as "no pending turn" instead of being
+    accepted and then dropped.
   - `seated`, `sat_out`, `returned` and `left` call the `on_status` hook after being
     enqueued, because they change the number of active players (lobby) or end the
     session.
@@ -323,7 +367,11 @@ two hooks given by the server: `on_turn(session, view)` and `on_status(session, 
   removed after the hand).
 - `recv()` blocks on `inbox` and raises `EOFError` on the sentinel.
 - Request handlers (called from listener threads, see below) feed `inbox`:
-  - valid `action` → `("action", seq, Action(type) | Leave())`, clears `pending_turn`;
+  - valid `action` → `("action", seq, Action(type) | Leave())`, clears `pending_turn`.
+    `submit_action(seq, action)` checks, under the session lock and in this order: a
+    pending turn exists, its `seq` matches, the action is allowed by its
+    `LegalActions`. Each failure raises `SessionError` with the wording of Rejected
+    `action` wording (contract); the pending turn is kept;
   - valid `hand_end` → `("hand_end", seq, HandEndReply(rebuy_bb, sit_in, leave))`,
     clears `pending_hand_end`;
   - `leave` → `Leave()` (`RemoteAgent`'s reader calls `player.leave()`).
@@ -349,6 +397,12 @@ lobby `threading.Condition` with a `generation` counter.
   sets it; the e2e driver uses `1`.
 - `port` / `settings` are readable after construction (the actual port when `0` was
   given).
+- Running it: `serve_forever()` runs the game loop on the calling thread (the binary);
+  `start()` runs the listener and the game loop on background daemon threads and
+  returns the server (tests, including the client projects'); `shutdown()` stops both.
+- Read-only inspection for tests and logs: `env`, `state` (`LOBBY` / `PLAYING` /
+  `STOPPED`), `hands_played`, `results` (recent `HandResult`s), `hand_start_times`,
+  `lobby_history`, `session_names()`.
 
 ### Request listener
 A `socketserver.ThreadingTCPServer` on `127.0.0.1:port` (`allow_reuse_address`,
@@ -384,7 +438,8 @@ engine's `join_table` does).
 ### Other requests
 - `action` / `hand_end`: look up the session by `name`. Check that `seq` matches the
   pending request. For `action`, also check `legal.allows(type)` (`leave` is always
-  allowed). Then feed `inbox` as above.
+  allowed). Then feed `inbox` as above. The `SessionError` text is returned unchanged
+  as the response's `error` (for `action`, the contract wording).
 - `rebuy` / `sit_in`: call `player.rebuy(amount_bb)` / `player.sit_in()` directly from
   the handler thread. The engine guards this bookkeeping with its lock and rejects it
   during betting. On success, poke the lobby with `arrival=True`: the player is back,
@@ -496,7 +551,8 @@ while not stopping:
 - `stopping` is set by the signal handler, which also pokes the condition so a lobby
   wait or a pause ends at once (the pause sleeps with `wait_for_poke` too).
 - `serve_forever()` may run on a thread other than the main thread (the e2e driver
-  does this). Then signals are not involved and `stop()` sets `stopping` and pokes.
+  and the client projects' tests do this, or use `start()`). Then signals are not
+  involved and `stop()` / `shutdown()` set `stopping` and poke.
 
 ## How the spec's example maps to messages
 - Join: response with `queued`, `seat` and `table` (blinds, bet sizes, seats, max
@@ -756,7 +812,8 @@ transcript with them.
 Two targets are public for other projects' tests (spec: "the recorded hands are
 reusable by tests of other projects"). Today `plo8/rl_env` uses both: it replays every
 recorded hand through its own tables, and it round-trips table views and legal actions
-through the wire format.
+through the wire format. A third, the server itself, is shared with the client
+projects' tests only (below).
 
 ### `//cli_server:protocol`
 - Contents: `protocol.py` only. Imports: the standard library, `engine` and
@@ -792,6 +849,35 @@ through the wire format.
 - Adding, renaming or fixing a case file changes what the other projects' replays run.
   A new case must pass `--e2e_test` here; other projects' tests (e.g. rl_env's, which
   expects every case to replay) must then pass too.
+
+### In-process server for client tests (`//cli_server:cli_server_lib`)
+Spec: the in-process server is available to the tests of `plo8/cli_client` and
+`plo8/bot_client`; the server's behaviour does not change. Nothing new is built for
+this: the target's visibility is widened to `//bot_client/...`, and what the clients
+use is fixed here so that it does not change under them.
+- Users: cli_client's integration test (an in-process `GameServer`); bot_client's
+  integration tests (in-process `GameServer`s with several bot and scripted clients)
+  and its lost-server test (the server as a child process, killed mid-game).
+- In-process API they rely on: `GameServer(port=0, grace_period=..., hand_pause=...,
+  env_kwargs={"seed", "action_timeout", "max_buy_in", ...})`, `.port` (the bound port),
+  `.settings`, `.start()` (listener and game loop on daemon threads), `.shutdown()`
+  (sends `close` to every session, then stops), and the read-only inspection fields
+  `results` (recent `HandResult`s, each with its `history`), `hands_played`, `state`
+  and `session_names()`. `results` is bounded (`HISTORY_LIMIT` = 1000 hands), enough
+  for the 200-hand runs of the client tests.
+- Child-process use: `sys.executable -m cli_server.main --port 0 --grace-period S
+  --hand-pause 0`, with the test's `sys.path` as `PYTHONPATH` (as the e2e driver
+  starts its clients). The parent reads the bound port from the `listening on
+  127.0.0.1:PORT;` log line on stderr. Killing it with `SIGKILL` drops all of its
+  sockets, which is what a "lost server" test needs; SIGTERM shuts down cleanly
+  (`close` to every session, exit 0).
+- Protocol details clients rely on beyond the wire format: the wording of rejected
+  `action` requests (Wire protocol → Rejected `action` wording (contract)). bot_client
+  does not retry for a stale `seq` and falls back to check-or-call for an illegal
+  action; it tells them apart by the stable phrases.
+- `cli_server_lib` imports `:e2e_runner` (for `--e2e_test`), so client tests that
+  depend on it also get the e2e modules; they do not import them. Client projects'
+  own code (as opposed to their tests) keeps depending on `:protocol` only.
 
 ## Required engine capabilities
 Used as they are: `Environment` (incl. `max_seats`, `action_timeout`,
@@ -843,7 +929,11 @@ Already in the engine and relied on:
   `returned` / `left` call `on_status`; `joined` is captured, not forwarded, and calls
   no hook; `notify` adds `to` and never raises on a broken session; `send` does not
   block on a client that does not read; a broken callback socket makes `recv` raise
-  `EOFError`; `close` flushes, then closes.
+  `EOFError`; `close` flushes, then closes. `submit_action`: no pending turn, a wrong
+  `seq`, and a stale `seq` that is also illegal raise `SessionError` containing
+  `pending turn` and not `is not legal now`; an illegal action for the pending `seq`
+  raises one containing `is not legal now` and not `pending turn`, and keeps the turn
+  pending; a `hand_started` / own `player_acted` event clears the pending turn.
 - `test_server` (an in-process `GameServer` on port 0 with a 0.2 s grace period, a
   short `action_timeout`, `hand_pause` 0 unless the test is about the pause, a fixed
   seed, and `fake_client` clients; `fake_client` ignores message types it does not
@@ -884,6 +974,11 @@ Already in the engine and relied on:
   - actions are routed by name to the right player; wrong `seq`, an illegal action
     and an unknown name get errors, and a corrected action within the timeout is
     accepted;
+  - rejected `action` wording (contract), over the wire: an `action` with a wrong
+    `seq` while a turn is pending, a duplicate of an action already accepted, and an
+    action after the turn timed out get errors containing `pending turn`; an action
+    the pending turn does not allow gets an error containing `is not legal now`; none
+    of them contains the other phrase, and the unknown-name error contains neither;
   - a duplicate name, an unreachable callback port and a malformed join are rejected;
   - a client that never answers `turn` is folded and sits out; a client whose callback
     socket closes is removed; the `leave` request works mid-hand and between hands,
@@ -897,7 +992,10 @@ Already in the engine and relied on:
   values (negative times, zero action timeout, out-of-range port) rejected; `--case`
   without `--e2e_test` and an unknown case name exit 2; `--e2e_test` defaults
   (action timeout 10 s, seed 0); `--case NAME` and `--case NAME.json` pick the same
-  file.
+  file. Child process: `sys.executable -m cli_server.main --port 0 --grace-period 0
+  --hand-pause 0` (with `PYTHONPATH` from `sys.path`) logs `listening on
+  127.0.0.1:PORT;` with the bound port, accepts a `join` on that port, and exits 0
+  after SIGTERM, sending `close` to the joined client.
 - `test_e2e_case`: the sample case loads into the expected dataclasses. Invalid cases
   are rejected with a clear reason: wrong variant / betting / blinds / bet sizes / cap,
   rake, duplicate card, unknown player in an action, showdown player with unknown hole,
@@ -931,3 +1029,6 @@ Already in the engine and relied on:
     winners and amounts in chips. This is the same use other projects make of the
     library, kept here so that a change to a case file or to the library is caught in
     cli_server first.
+- External checks: `buck2 test //cli_client/... //bot_client/...` uses
+  `cli_server_lib` in-process and as a child process; a change to the API or the
+  wording listed in In-process server for client tests must keep those green.
