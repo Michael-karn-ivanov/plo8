@@ -26,3 +26,5 @@ or
 
 Despite it should be regular cli, it is very much encouraged to make interface as realistic (comparable to actual online poker rooms) as possible.
 If you're missing some capabilities from server for this problem - you are eligible to propose changes into plo8/cli_server spec.
+
+The client's networking (the connection for requests to the server port and the listener for the server's callback channel) is reusable by other projects as a library on its own, without the curses user interface or the table model: plo8/bot_client uses it to seat bots at the server. Using it must not pull in curses. The client's own behaviour does not change.
