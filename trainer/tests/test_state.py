@@ -1,5 +1,5 @@
-"""Reproducible construction, state dict round trip, and config / encoder
-version recorded in the state dict."""
+"""Reproducible construction, state dict round trip, config / encoder version
+recorded in the state dict, and `check_state_dict`."""
 
 import os
 import tempfile
@@ -8,7 +8,7 @@ import unittest
 import torch
 
 from rl_env import ENCODER_VERSION, OBS_DIM, PRIV_DIM
-from trainer import CriticNet, NetConfigError, PolicyNet, critic_input
+from trainer import CriticNet, NetConfigError, PolicyNet, check_state_dict, critic_input
 
 try:
     from . import helpers
@@ -29,6 +29,10 @@ def assert_same_state(test, a, b):
             test.assertEqual(sa[k], sb[k])
         else:
             test.assertTrue(torch.equal(sa[k], sb[k]), k)
+
+
+def snapshot(net):
+    return {k: v.detach().clone() for k, v in net.state_dict().items() if k != "_extra_state"}
 
 
 class StateTest(unittest.TestCase):
@@ -133,6 +137,57 @@ class StateTest(unittest.TestCase):
         del state["_extra_state"]
         with self.assertRaises(RuntimeError):
             PolicyNet().load_state_dict(state)
+
+    def test_check_state_dict(self):
+        for cls in (PolicyNet, CriticNet):
+            net = build(cls, 20, hidden=64, layers=2)
+            before = snapshot(net)
+            source = build(cls, 21, hidden=64, layers=2)
+
+            check_state_dict(net, source.state_dict())  # matching: passes
+
+            def refused(state, *words):
+                with self.assertRaises(NetConfigError) as cm:
+                    check_state_dict(net, state)
+                for w in words:
+                    self.assertIn(w, str(cm.exception))
+
+            state = source.state_dict()
+            state["_extra_state"] = dict(state["_extra_state"], encoder_version=ENCODER_VERSION + 1)
+            refused(state, "encoder_version")
+
+            refused(build(cls, 22, hidden=32, layers=2).state_dict(), "hidden")
+
+            state = source.state_dict()
+            del state["head.bias"]
+            refused(state, "missing", "head.bias")
+
+            state = source.state_dict()
+            state["extra.weight"] = torch.zeros(3)
+            refused(state, "unexpected", "extra.weight")
+
+            state = source.state_dict()
+            state["head.weight"] = torch.zeros(state["head.weight"].shape[0], 5)
+            refused(state, "head.weight", "shape")
+
+            state = source.state_dict()
+            state["head.bias"] = state["head.bias"].double()
+            refused(state, "head.bias", "dtype")
+
+            state = source.state_dict()
+            del state["_extra_state"]
+            refused(state, "_extra_state")
+
+            # Never modifies the network.
+            after = snapshot(net)
+            for k in before:
+                self.assertTrue(torch.equal(before[k], after[k]), k)
+
+        # Policy vs critic state dicts.
+        with self.assertRaises(NetConfigError):
+            check_state_dict(PolicyNet(hidden=64, layers=2), CriticNet(hidden=64, layers=2).state_dict())
+        with self.assertRaises(NetConfigError):
+            check_state_dict(CriticNet(hidden=64, layers=2), PolicyNet(hidden=64, layers=2).state_dict())
 
     def test_train_eval_same_outputs(self):
         net = build(PolicyNet, 19)

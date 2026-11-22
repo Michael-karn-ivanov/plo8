@@ -14,12 +14,14 @@ never produce NaN and illegal actions get exactly zero probability.
 
 Both networks record their config and the rl_env `ENCODER_VERSION` in the state
 dict (`_extra_state`) and refuse to load a state dict built for another one.
+`check_state_dict` validates a state dict against a network without copying
+anything.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Mapping, Optional
 
 import numpy as np
 import torch
@@ -39,6 +41,7 @@ __all__ = [
     "PolicyNet",
     "CriticNet",
     "critic_input",
+    "check_state_dict",
 ]
 
 MASK_VALUE = -1e9  # logit of an illegal action (finite: never -inf)
@@ -50,10 +53,12 @@ _HIDDEN_GAIN = math.sqrt(2.0)
 _POLICY_HEAD_GAIN = 0.01
 _CRITIC_HEAD_GAIN = 1.0
 
+_EXTRA = "_extra_state"
+
 
 class NetConfigError(ValueError):
     """A state dict was built for a network of another kind, config or encoder
-    version."""
+    version (or does not have this network's keys and shapes)."""
 
 
 # --- building blocks -------------------------------------------------------------
@@ -137,6 +142,21 @@ def log_probs(logits: Tensor) -> Tensor:
 _MISSING = object()
 
 
+def _config_diff(own: dict, state: Any) -> Optional[str]:
+    """None if `state` equals the config `own`, else a message naming the
+    differing keys."""
+    if not isinstance(state, dict):
+        return f"expected a config dict in {_EXTRA}, got {type(state).__name__}"
+    keys = sorted(set(own) | set(state), key=str)
+    diff = [k for k in keys if own.get(k, _MISSING) != state.get(k, _MISSING)]
+    if not diff:
+        return None
+    return ", ".join(
+        f"{k}: state {state.get(k, '<missing>')!r} != net {own.get(k, '<missing>')!r}"
+        for k in diff
+    )
+
+
 class _ConfigMixin:
     """`get_extra_state` / `set_extra_state`: the network's config (plain ints and
     strings, readable with `torch.load(weights_only=True)`) is stored in the state
@@ -149,17 +169,49 @@ class _ConfigMixin:
         return dict(self._config())
 
     def set_extra_state(self, state: Any) -> None:
-        own = self._config()
-        if not isinstance(state, dict):
-            raise NetConfigError(f"expected a config dict in _extra_state, got {type(state).__name__}")
-        keys = sorted(set(own) | set(state), key=str)
-        diff = [k for k in keys if own.get(k, _MISSING) != state.get(k, _MISSING)]
-        if diff:
-            details = ", ".join(
-                f"{k}: state {state.get(k, '<missing>')!r} != net {own.get(k, '<missing>')!r}"
-                for k in diff
-            )
-            raise NetConfigError(f"state dict does not match this network ({details})")
+        diff = _config_diff(self._config(), state)
+        if diff is not None:
+            raise NetConfigError(f"state dict does not match this network ({diff})")
+
+
+def check_state_dict(net: nn.Module, state_dict: Mapping[str, Any]) -> None:
+    """Validate `state_dict` against `net` without copying anything: the recorded
+    config (`_extra_state`: kind, encoder version, sizes) must equal the
+    network's, the parameter keys must be the same (missing and unexpected keys
+    are named), and every tensor must have the network's shape and dtype.
+    Raises NetConfigError naming every problem."""
+    if not isinstance(net, _ConfigMixin) or not isinstance(net, nn.Module):
+        raise TypeError(f"net must be a PolicyNet or CriticNet, got {type(net).__name__}")
+    if not isinstance(state_dict, Mapping):
+        raise NetConfigError(f"a state dict must be a mapping, got {type(state_dict).__name__}")
+    problems: list[str] = []
+    if _EXTRA not in state_dict:
+        problems.append(f"missing {_EXTRA} (the recorded config)")
+    else:
+        diff = _config_diff(net._config(), state_dict[_EXTRA])
+        if diff is not None:
+            problems.append(diff)
+    own = net.state_dict()
+    expected = [k for k in own if k != _EXTRA]
+    given = [k for k in state_dict if k != _EXTRA]
+    missing = sorted(set(expected) - set(given))
+    unexpected = sorted(set(given) - set(expected), key=str)
+    if missing:
+        problems.append(f"missing keys {missing}")
+    if unexpected:
+        problems.append(f"unexpected keys {unexpected}")
+    for k in expected:
+        if k not in state_dict:
+            continue
+        v, ref = state_dict[k], own[k]
+        if not isinstance(v, Tensor):
+            problems.append(f"{k}: expected a tensor, got {type(v).__name__}")
+        elif tuple(v.shape) != tuple(ref.shape):
+            problems.append(f"{k}: shape {tuple(v.shape)} != net {tuple(ref.shape)}")
+        elif v.dtype != ref.dtype:
+            problems.append(f"{k}: dtype {v.dtype} != net {ref.dtype}")
+    if problems:
+        raise NetConfigError("state dict does not match this network: " + "; ".join(problems))
 
 
 # --- networks --------------------------------------------------------------------
@@ -247,7 +299,7 @@ def critic_input(obs: np.ndarray, critic_cards: np.ndarray) -> np.ndarray:
     """PRIVILEGED - the critic's input, training only: the observations followed by
     rl_env's `expand_critic` of the other seats' hole cards. This is the only
     function in trainer that handles hidden information; its result goes only to
-    `CriticNet`, never to `PolicyNet`.
+    `CriticNet`, never to `PolicyNet` or `NeuralPolicy`.
 
     obs float32 (B, OBS_DIM); critic_cards int8 (B, 9, 4) (`rl_env.critic_cards`
     rows, `TrainingRecords.critic`) -> float32 (B, OBS_DIM + PRIV_DIM), C-contiguous.
