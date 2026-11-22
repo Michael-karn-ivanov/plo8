@@ -26,6 +26,10 @@ from cli_server.session import ClientSession, SessionError
 
 HOST = "127.0.0.1"
 
+# Stable phrases of the rejected `action` wording (plan: Rejected `action` wording).
+STALE = "pending turn"
+ILLEGAL = "is not legal now"
+
 LEGAL = LegalActions(
     can_check=False, call_amount=0.5, can_raise=True, raise_to=2.0, bet_unit=1.0, raises_left=3
 )
@@ -316,6 +320,79 @@ class RepliesTest(SessionTestCase):
         session, _ = self.make_session()
         session.submit_leave()
         self.assertEqual(self.recv_in_thread(session), ("ok", Leave()))
+
+
+class RejectedActionWordingTest(SessionTestCase):
+    """The `error` texts clients classify rejections by (plan: Rejected `action`
+    wording (contract)): `pending turn` = no longer pending, `is not legal now` =
+    still pending, try another action."""
+
+    def reject(self, session, seq, action):
+        with self.assertRaises(SessionError) as cm:
+            session.submit_action(seq, action)
+        return str(cm.exception)
+
+    def assert_stale(self, text):
+        self.assertIn(STALE, text)
+        self.assertNotIn(ILLEGAL, text)
+
+    def assert_illegal(self, text):
+        self.assertIn(ILLEGAL, text)
+        self.assertNotIn(STALE, text)
+
+    def test_no_pending_turn(self):
+        session, _ = self.make_session()
+        text = self.reject(session, 1, Action.call())
+        self.assert_stale(text)
+        self.assertEqual(text, "A has no pending turn")
+
+    def test_wrong_seq(self):
+        session, _ = self.make_session()
+        session.send(("turn", 4, view(), LEGAL))
+        text = self.reject(session, 3, Action.call())
+        self.assert_stale(text)
+        self.assertEqual(text, "turn 3 is not the pending turn of A (4)")
+        self.assertEqual(session.pending_turn, (4, LEGAL))  # kept
+
+    def test_stale_and_illegal_is_reported_as_stale(self):
+        session, _ = self.make_session()
+        session.send(("turn", 4, view(), LEGAL))
+        self.assert_stale(self.reject(session, 3, Action.check()))  # check is illegal too
+        session.send(("event", acted("A", ActionType.FOLD, "timeout")))
+        self.assert_stale(self.reject(session, 4, Action.check()))  # no pending turn
+
+    def test_illegal_for_the_pending_seq(self):
+        session, _ = self.make_session()
+        session.send(("turn", 4, view(), LEGAL))
+        text = self.reject(session, 4, Action.check())
+        self.assert_illegal(text)
+        self.assertTrue(text.startswith("check is not legal now (legal: "), text)
+        self.assertTrue(text.endswith(", leave)"), text)
+        self.assertEqual(session.pending_turn, (4, LEGAL))  # still pending
+        session.submit_action(4, Action.call())  # a different action for the same seq
+        self.assertEqual(self.recv_in_thread(session), ("ok", ("action", 4, Action.call())))
+
+    def test_duplicate_is_stale(self):
+        session, _ = self.make_session()
+        session.send(("turn", 4, view(), LEGAL))
+        session.submit_action(4, Action.call())
+        self.assert_stale(self.reject(session, 4, Action.call()))
+
+    def test_hand_started_clears_the_pending_turn(self):
+        session, _ = self.make_session()
+        session.send(("turn", 4, view(), LEGAL))
+        session.send(("event", HandStarted(0, 0, 1, ((0, "A", 39.5), (1, "B", 40.5)), hand_no=2, seq=9)))
+        self.assertIsNone(session.pending_turn)
+        self.assert_stale(self.reject(session, 4, Action.call()))
+
+    def test_own_player_acted_clears_the_pending_turn(self):
+        session, _ = self.make_session()
+        session.send(("turn", 4, view(), LEGAL))
+        session.send(("event", acted("B")))
+        self.assertEqual(session.pending_turn, (4, LEGAL))
+        session.send(("event", acted("A", ActionType.FOLD, "timeout")))
+        self.assertIsNone(session.pending_turn)
+        self.assert_stale(self.reject(session, 4, Action.call()))
 
 
 class ChannelTest(SessionTestCase):
