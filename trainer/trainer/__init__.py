@@ -15,16 +15,20 @@ consumes their arrays.
 from .nets import (
     LOGIT_LIMIT,
     MASK_VALUE,
+    CriticNet,
     NetConfigError,
     PolicyNet,
+    critic_input,
     masked_logits,
     mlp,
 )
 
 __all__ = [
     "PolicyNet",
+    "CriticNet",
     "mlp",
     "masked_logits",
+    "critic_input",
     "MASK_VALUE",
     "LOGIT_LIMIT",
     "NetConfigError",

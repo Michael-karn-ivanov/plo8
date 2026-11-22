@@ -20,10 +20,11 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import numpy as np
 import torch
 from torch import Tensor, nn
 
-from rl_env import ENCODER_VERSION, N_ACTIONS, OBS_DIM
+from rl_env import ENCODER_VERSION, N_ACTIONS, OBS_DIM, PRIV_DIM, expand_critic
 
 __all__ = [
     "MASK_VALUE",
@@ -34,6 +35,8 @@ __all__ = [
     "mlp",
     "masked_logits",
     "PolicyNet",
+    "CriticNet",
+    "critic_input",
 ]
 
 MASK_VALUE = -1e9  # logit of an illegal action (finite: never -inf)
@@ -191,3 +194,64 @@ class PolicyNet(_ConfigMixin, nn.Module):
         _check_input(obs, self.obs_dim, "obs")
         _check_mask(mask, (obs.shape[0], self.n_actions))
         return masked_logits(self.head(self.body(obs)), mask)
+
+
+class CriticNet(_ConfigMixin, nn.Module):
+    """Value (big bets) of the acting seat from the observation plus the
+    privileged critic input. Training only; never used at play time."""
+
+    def __init__(
+        self,
+        in_dim: int = OBS_DIM + PRIV_DIM,
+        hidden: int = DEFAULT_HIDDEN,
+        layers: int = DEFAULT_LAYERS,
+        encoder_version: int = ENCODER_VERSION,
+    ) -> None:
+        super().__init__()
+        self.in_dim = _positive_int("in_dim", in_dim)
+        self.hidden = _positive_int("hidden", hidden)
+        self.layers = _positive_int("layers", layers)
+        self.encoder_version = int(encoder_version)
+        self.body = mlp(in_dim, hidden, layers)
+        self.head = _linear(hidden, 1, _CRITIC_HEAD_GAIN)
+
+    def _config(self) -> dict:
+        return {
+            "net": "critic",
+            "encoder_version": self.encoder_version,
+            "in_dim": self.in_dim,
+            "hidden": self.hidden,
+            "layers": self.layers,
+            "n_actions": 1,
+        }
+
+    def forward(self, x: Tensor) -> Tensor:
+        """x float32 (B, in_dim) -> values float32 (B,) (also for B = 1)."""
+        _check_input(x, self.in_dim, "critic input")
+        return self.head(self.body(x)).squeeze(-1)
+
+
+# --- critic input ----------------------------------------------------------------
+
+
+def critic_input(obs: np.ndarray, critic_cards: np.ndarray) -> np.ndarray:
+    """PRIVILEGED - the critic's input, training only: the observations followed by
+    rl_env's `expand_critic` of the other seats' hole cards. This is the only
+    function in trainer that handles hidden information; its result goes only to
+    `CriticNet`, never to `PolicyNet`.
+
+    obs float32 (B, OBS_DIM); critic_cards int8 (B, 9, 4) (`rl_env.critic_cards`
+    rows, `TrainingRecords.critic`) -> float32 (B, OBS_DIM + PRIV_DIM), C-contiguous.
+    """
+    if not isinstance(obs, np.ndarray):
+        raise TypeError(f"obs must be a numpy array, got {type(obs).__name__}")
+    if obs.dtype != np.float32:
+        raise TypeError(f"obs must be float32, got {obs.dtype}")
+    if obs.ndim != 2 or obs.shape[1] != OBS_DIM:
+        raise ValueError(f"obs must have shape (B, {OBS_DIM}), got {obs.shape}")
+    cards = np.asarray(critic_cards)
+    if cards.ndim != 3 or len(cards) != obs.shape[0]:
+        raise ValueError(
+            f"critic_cards must have shape ({obs.shape[0]}, 9, 4), got {cards.shape}"
+        )
+    return np.ascontiguousarray(np.concatenate([obs, expand_critic(cards)], axis=1))
