@@ -1,0 +1,28 @@
+# trainer: the neural networks (and, in later stages, the training loop) for a
+# fixed-limit Omaha Hi-Lo 8-or-better bot, on top of //rl_env.
+#
+# torch and numpy are not buck2 targets: the repo's Python toolchain
+# (toolchains/BUCK) runs the repo venv interpreter (.venv, requirements-rl.txt), so
+# `import torch` works here as `import numpy` does in rl_env.
+
+python_library(
+    name = "trainer",
+    srcs = glob(["trainer/**/*.py"]),
+    # Module paths are taken relative to this directory, so the sources under
+    # trainer/ import as `trainer.*`.
+    base_module = "",
+    deps = ["//rl_env:rl_env"],
+    visibility = ["PUBLIC"],
+)
+
+# Fast tests (CPU, seconds). //arena:arena only for test_imports (import boundary).
+python_test(
+    name = "trainer_test",
+    srcs = glob(["tests/*.py"]),
+    base_module = "trainer_tests",
+    deps = [
+        ":trainer",
+        "//arena:arena",
+        "//rl_env:rl_env",
+    ],
+)
