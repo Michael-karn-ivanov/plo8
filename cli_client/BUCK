@@ -1,12 +1,35 @@
 # cli_client: a full-screen terminal client for the //cli_server Omaha Hi-Lo table.
 
+# The networking library on its own (ServerConnection, CallbackListener), so other
+# projects (e.g. //bot_client) can talk to the server without the table model or
+# the curses UI. It owns the package file `cli_client/__init__.py`, which must stay
+# free of imports: importing `cli_client.net` loads nothing else from the package.
 python_library(
-    name = "cli_client_lib",
-    srcs = glob(["cli_client/*.py"]),
+    name = "net",
+    srcs = [
+        "cli_client/__init__.py",
+        "cli_client/net.py",
+    ],
     # Module paths are taken relative to this directory, so the sources under
     # cli_client/ import as `cli_client.*`.
     base_module = "",
+    deps = ["//cli_server:protocol"],
+    visibility = ["PUBLIC"],
+)
+
+# The table model, controller, rendering, curses UI and main.
+python_library(
+    name = "cli_client_lib",
+    srcs = glob(
+        ["cli_client/*.py"],
+        exclude = [
+            "cli_client/__init__.py",
+            "cli_client/net.py",
+        ],
+    ),
+    base_module = "",
     deps = [
+        ":net",
         "//cli_server:protocol",
         "//engine:engine",
         "//entities:entities",
@@ -22,11 +45,23 @@ python_binary(
 
 python_test(
     name = "cli_client_test",
-    srcs = glob(["tests/*.py"]),
+    srcs = glob(
+        ["tests/*.py"],
+        exclude = ["tests/test_net_library.py"],
+    ),
     base_module = "cli_client_tests",
     deps = [
         ":cli_client_lib",
         # test_integration runs an in-process GameServer.
         "//cli_server:cli_server_lib",
     ],
+)
+
+# Built against :net only: the test fails if net.py starts importing a module
+# that :net does not contain. It guards the library contract //bot_client uses.
+python_test(
+    name = "net_library_test",
+    srcs = ["tests/test_net_library.py"],
+    base_module = "cli_client_tests",
+    deps = [":net"],
 )
