@@ -1,11 +1,19 @@
-"""Networking: requests to the server port and the server's callback channel.
+"""Networking library (`//cli_client:net`): requests to the server port and the
+server's callback channel.
 
 - `ServerConnection` (client -> server): one persistent connection to the
-  server's port; each request line gets exactly one response line.
+  server's port, opened on the first request; each request line gets exactly
+  one response line.
 - `CallbackListener` (server -> client): listens on the client's own port. The
   server opens one connection per joined player and sends notifications on it.
-  Every message goes on the controller's inbox; the end of the channel puts
-  `DISCONNECTED` there.
+  Every message goes, as a raw dict, on the caller's inbox (any `queue.Queue`);
+  the end of the channel puts `DISCONNECTED` there.
+
+This module is also used by other projects (`//bot_client`). It imports only the
+standard library and `cli_server.protocol` — never `curses` or any other
+cli_client module — writes nothing to stdout / stderr, and logs to the
+`cli_client.net` logger without installing handlers. Building requests, sending
+them in order, checking `ok` and decoding messages are left to the caller.
 """
 
 from __future__ import annotations
@@ -28,7 +36,8 @@ REQUEST_TIMEOUT = 10.0
 
 
 class ConnectionLost(Exception):
-    """The server port cannot be reached (socket error or timeout)."""
+    """The server port cannot be reached (socket error, timeout or an over-long
+    line, even after one reconnect), or the connection was closed."""
 
 
 def _close(sock: Optional[socket.socket]) -> None:
@@ -47,9 +56,14 @@ def _close(sock: Optional[socket.socket]) -> None:
 class ServerConnection:
     """Client -> server requests over one persistent TCP connection.
 
-    `request(msg)` returns the response (also `ok: false` ones). A socket error
-    or timeout reconnects once; if that fails too, `ConnectionLost` is raised.
-    The server tells clients apart by `name`, so a new connection is fine.
+    `request(msg)` returns the response (also `ok: false` ones; a malformed
+    response line comes back as `ok: false` with "bad response: ..."). A socket
+    error, timeout or over-long line drops the connection, reconnects and
+    resends once; if that fails too, `ConnectionLost` is raised. The server
+    tells clients apart by `name`, so a new connection is fine.
+
+    `request` is safe from any thread (a lock serialises calls). `close()` may
+    be called more than once; a `request` after it raises `ConnectionLost`.
     """
 
     def __init__(self, port: int, host: str = HOST, timeout: float = REQUEST_TIMEOUT) -> None:
@@ -103,6 +117,7 @@ class ServerConnection:
                     self._drop()
                 except ProtocolError as e:
                     # One bad response line; the stream is still in sync.
+                    _log.warning("bad response to %s: %s", msg, e)
                     return {"type": "response", "ok": False, "error": f"bad response: {e}"}
                 except (OSError, ValueError) as e:
                     last = e
@@ -117,10 +132,14 @@ class ServerConnection:
 
 class CallbackListener:
     """Listens on `host:port` (0 = a free port; see `self.port`) for the
-    server's callback connection. A new connection replaces the old one.
+    server's callback connection. Binding happens in the constructor, so bind
+    errors are raised there; `start()` launches the accept thread.
 
-    Messages addressed to another player (`to`) are dropped. A malformed line
-    is logged and skipped; the reader keeps going.
+    A new connection replaces the old one (which ends without `DISCONNECTED`).
+    Messages addressed to another player (`to`) are dropped and counted in
+    `dropped`. A malformed line is logged, counted in `malformed` and skipped;
+    the reader keeps going. Unknown message types are passed through. Nothing
+    is put on the inbox after `close()`. All threads are daemon threads.
     """
 
     def __init__(
@@ -195,6 +214,10 @@ class CallbackListener:
                 if to is not None and to != self.name:
                     self.dropped += 1
                     continue
+                with self._lock:
+                    closed = self._closed
+                if closed:
+                    break  # nothing goes on the inbox after close()
                 _log.debug("received %s", msg)
                 self.inbox.put(msg)
         finally:
