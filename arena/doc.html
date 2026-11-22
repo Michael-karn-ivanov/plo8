@@ -1,0 +1,1779 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>arena documentation</title>
+<style>
+:root {
+  --bg: #fbfaf7; --fg: #1f2328; --muted: #6a6f76; --line: #e3e0d8;
+  --name: #0b5cad; --def: #7a3e9d; --code-bg: #f2efe8; --loc: #8a8f96;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a8; --line: #2c3036;
+    --name: #6cb6ff; --def: #d2a8ff; --code-bg: #1e2228; --loc: #7d838c;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a8; --line: #2c3036;
+  --name: #6cb6ff; --def: #d2a8ff; --code-bg: #1e2228; --loc: #7d838c;
+}
+body { background: var(--bg); color: var(--fg); margin: 0;
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+p.lead { color: var(--muted); margin: 0 0 16px; }
+.toolbar button { font: inherit; font-size: 13px; padding: 4px 10px; margin-right: 6px;
+  border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 6px; cursor: pointer; }
+.toolbar { margin-bottom: 16px; }
+details { margin: 2px 0; }
+.kids { margin-left: 18px; padding-left: 10px; border-left: 1px solid var(--line); }
+summary { cursor: pointer; padding: 2px 0; list-style-position: outside; }
+summary:hover { background: color-mix(in srgb, var(--line) 40%, transparent); }
+.name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; color: var(--name); font-weight: 600; }
+.name.def { color: var(--def); }
+.desc { color: var(--fg); }
+.d0 > summary .desc, .kids .desc { }
+.loc { float: right; font: 12px ui-monospace, Menlo, monospace; color: var(--loc); margin-left: 12px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;
+  margin: 6px 0 8px 18px; overflow-x: auto; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+input#q { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: transparent; color: var(--fg); width: 220px; max-width: 100%; }
+mark { background: #ffe48a; color: #000; }
+</style>
+</head>
+<body>
+<main>
+<h1>arena</h1>
+<p class="lead">Baseline bots (Random, CallingStation, Maniac, RuleBot), BotAgent and the duplicate-match evaluator for Omaha Hi-Lo 8-or-better, built on rl_env.
+Tree: folders → files → classes / functions → logical blocks → code. Only <code>.py</code> sources are covered (BUCK, JSON test sets, markdown and unit tests are omitted).</p>
+<div class="toolbar">
+<button onclick="setAll(true)">Expand all</button>
+<button onclick="setAll(false)">Collapse all</button>
+<button onclick="expandTo(1)">Files</button>
+<button onclick="expandTo(2)">Classes &amp; functions</button>
+<input id="q" placeholder="Filter by name / description" oninput="filter(this.value)">
+</div>
+<details class="d0"><summary><span class="name ">./arena</span><span class="desc"> – baseline bots and the duplicate-match evaluator, on top of rl_env</span>
+</summary>
+<div class="kids">
+<details class="d1"><summary><span class="name ">__init__.py</span><span class="desc"> – package entry: lists the bots, BotAgent and play_match, and re-exports them</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – what arena provides and that no poker rule lives here</span>
+<span class="loc">arena/__init__.py:1–12</span>
+</summary>
+<pre><code>&quot;&quot;&quot;arena: baseline bots and the duplicate-match evaluator for fixed-limit Omaha
+Hi-Lo 8-or-better, on top of `//rl_env`.
+
+- Bots (rl_env `Controller`s): `RandomBot`, `CallingStation`, `Maniac`,
+  `RuleBot`; `make_bot(name, seed)` / `BOT_NAMES`.
+- `BotAgent`: any bot as an engine agent (callback mode, later bot_client).
+- `play_match(lineup, n_deals, seed, ...)`: duplicate match, results per report
+  name in big bets per 100 hands with a 95% interval; `combine` for more deals.
+
+No poker rule lives here: betting, pots, showdown and hand evaluation stay in
+the engine, table driving in rl_env.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – bots, agent, match, rules, history and stats names</span>
+<span class="loc">arena/__init__.py:14–37</span>
+</summary>
+<pre><code>from .agent import BotAgent
+from .bots import BOT_NAMES, Bot, CallingStation, Maniac, RandomBot, make_bot
+from .history import format_hand
+from .match import (
+    AccountingError,
+    Entrant,
+    HandRecord,
+    MatchResult,
+    NameStats,
+    combine,
+    play_match,
+)
+from .rules import (
+    NUT_LOW_PAIRS,
+    RULE_PARAMS,
+    PostflopClass,
+    RuleBot,
+    RuleParams,
+    decide,
+    nut_low_pairs,
+    postflop_class,
+    preflop_score,
+)
+from .stats import CHIPS_PER_BIG_BET, Summary, summarize</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__</span>
+<span class="loc">arena/__init__.py:39–72</span>
+</summary>
+<pre><code>__all__ = [
+    # bots
+    &quot;Bot&quot;,
+    &quot;RandomBot&quot;,
+    &quot;CallingStation&quot;,
+    &quot;Maniac&quot;,
+    &quot;RuleBot&quot;,
+    &quot;BOT_NAMES&quot;,
+    &quot;make_bot&quot;,
+    # rules
+    &quot;RuleParams&quot;,
+    &quot;RULE_PARAMS&quot;,
+    &quot;PostflopClass&quot;,
+    &quot;NUT_LOW_PAIRS&quot;,
+    &quot;nut_low_pairs&quot;,
+    &quot;preflop_score&quot;,
+    &quot;postflop_class&quot;,
+    &quot;decide&quot;,
+    # agent
+    &quot;BotAgent&quot;,
+    # match
+    &quot;Entrant&quot;,
+    &quot;NameStats&quot;,
+    &quot;HandRecord&quot;,
+    &quot;MatchResult&quot;,
+    &quot;AccountingError&quot;,
+    &quot;play_match&quot;,
+    &quot;combine&quot;,
+    # stats / history
+    &quot;CHIPS_PER_BIG_BET&quot;,
+    &quot;Summary&quot;,
+    &quot;summarize&quot;,
+    &quot;format_hand&quot;,
+]</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">agent.py</span><span class="desc"> – BotAgent: any arena bot (any rl_env Controller) as an engine callback-mode Agent</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – how a turn is answered and the optional rebuy</span>
+<span class="loc">arena/agent.py:1–9</span>
+</summary>
+<pre><code>&quot;&quot;&quot;BotAgent: any arena bot (any rl_env `Controller`) as an engine `Agent`.
+
+On each turn it builds a one-row batch (`DecisionBatch.single`: the same
+view, legal actions and mask a `TableBatch` row would have), asks the bot,
+maps the action to the engine (`to_engine`, which raises on a masked action)
+and submits it to the player. At the end of a hand it may rebuy up to a
+configured stack (off by default). It has no `on_hole_cards` / `on_event`, so
+the engine builds no views for them.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – logging, engine and rl_env types</span>
+<span class="loc">arena/agent.py:11–17</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import logging
+from typing import Any, Optional
+
+from engine import ActionType, HandResult, LegalActions, Player, TableView
+from rl_env import DecisionBatch, to_engine</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__ and logger</span>
+<span class="loc">arena/agent.py:19–21</span>
+</summary>
+<pre><code>__all__ = [&quot;BotAgent&quot;]
+
+_log = logging.getLogger(&quot;arena.agent&quot;)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">BotAgent</span><span class="desc"> – engine agent wrapping a bot</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – keeps the bot and the optional rebuy target</span>
+<span class="loc">arena/agent.py:27–31</span>
+</summary>
+<pre><code>def __init__(self, bot: Any, *, rebuy_to_bb: Optional[float] = None) -&gt; None:
+    if rebuy_to_bb is not None and not rebuy_to_bb &gt; 0:
+        raise ValueError(f&quot;rebuy_to_bb must be positive, got {rebuy_to_bb!r}&quot;)
+    self.bot = bot
+    self.rebuy_to_bb = rebuy_to_bb</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def decide</span><span class="desc"> – asks the bot on a one-row DecisionBatch and maps its action to the engine</span>
+<span class="loc">arena/agent.py:33–38</span>
+</summary>
+<pre><code>def decide(self, view: TableView, legal: LegalActions) -&gt; ActionType:
+    &quot;&quot;&quot;The engine action the bot chooses for this view and legal actions.&quot;&quot;&quot;
+    batch = DecisionBatch.single(view, legal)
+    out = self.bot.act(batch)
+    actions = out[0] if isinstance(out, tuple) else out
+    return to_engine(int(actions[0]), legal)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def on_turn</span><span class="desc"> – calls the player&#x27;s fold / check / call / raise_ for the chosen action</span>
+<span class="loc">arena/agent.py:40–49</span>
+</summary>
+<pre><code>def on_turn(self, player: Player, view: TableView, legal: LegalActions) -&gt; None:
+    t = self.decide(view, legal)
+    if t is ActionType.FOLD:
+        player.fold()
+    elif t is ActionType.CHECK:
+        player.check()
+    elif t is ActionType.CALL:
+        player.call()
+    else:
+        player.raise_()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def on_hand_end</span><span class="desc"> – rebuys up to the target stack if set (failures logged)</span>
+<span class="loc">arena/agent.py:51–61</span>
+</summary>
+<pre><code>def on_hand_end(self, player: Player, result: HandResult) -&gt; None:
+    target = self.rebuy_to_bb
+    if target is None:
+        return
+    missing = round(target - player.stack, 2)
+    if missing &lt;= 0:
+        return
+    try:
+        player.rebuy(missing)
+    except Exception:  # noqa: BLE001 - e.g. above the table&#x27;s max buy-in
+        _log.warning(&quot;rebuy of %s BB for %s failed&quot;, missing, player.name, exc_info=True)</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">bots.py</span><span class="desc"> – baseline bots RandomBot, CallingStation, Maniac and the make_bot factory</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – the Controller protocol and the mask safety net</span>
+<span class="loc">arena/bots.py:1–11</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Baseline bots: RandomBot, CallingStation, Maniac (RuleBot is in rules.py).
+
+Every bot implements the rl_env `Controller` protocol (`wants_views`,
+`act(batch) -&gt; np.ndarray[int64, (B,)]`), has a short `name` and is stateless
+between calls (RandomBot&#x27;s only state is its generator). They see only what a
+player sees: `DecisionBatch.mask`, `legal`, `views` (RuleBot only).
+
+Every bot finishes with `_masked(actions, batch.mask)`: an action whose mask
+bit is off becomes CHECK_CALL (always allowed), so mask safety never depends on
+a rule being written correctly. For the three simple bots it never triggers.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – numpy and rl_env action constants / RandomController</span>
+<span class="loc">arena/bots.py:13–19</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+
+from rl_env import BET_RAISE, CHECK_CALL, RandomController</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__</span>
+<span class="loc">arena/bots.py:21–28</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;Bot&quot;,
+    &quot;RandomBot&quot;,
+    &quot;CallingStation&quot;,
+    &quot;Maniac&quot;,
+    &quot;BOT_NAMES&quot;,
+    &quot;make_bot&quot;,
+]</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _masked</span><span class="desc"> – replaces any action outside its row&#x27;s mask with CHECK_CALL</span>
+<span class="loc">arena/bots.py:31–38</span>
+</summary>
+<pre><code>def _masked(actions: Any, mask: Any) -&gt; np.ndarray:
+    &quot;&quot;&quot;`actions` with every action outside its row&#x27;s mask replaced by CHECK_CALL.&quot;&quot;&quot;
+    a = np.asarray(actions, dtype=np.int64).reshape(-1)
+    m = np.asarray(mask, dtype=bool)
+    if a.shape[0] == 0:
+        return a
+    ok = m[np.arange(a.shape[0]), a]
+    return np.where(ok, a, CHECK_CALL).astype(np.int64)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Bot</span><span class="desc"> – base class of the arena bots (reads neither views nor observations by default)</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – name, wants_views, wants_obs</span>
+<span class="loc">arena/bots.py:41–48</span>
+</summary>
+<pre><code>class Bot:
+    &quot;&quot;&quot;Base of the arena bots (a `Controller`). Reads neither views nor
+    observation vectors unless a subclass says so.&quot;&quot;&quot;
+
+    name: str = &quot;&quot;
+    wants_views: bool = False
+    wants_obs: bool = False</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def act</span><span class="desc"> – abstract</span>
+<span class="loc">arena/bots.py:49–50</span>
+</summary>
+<pre><code>def act(self, batch: Any) -&gt; np.ndarray:  # pragma: no cover - abstract
+    raise NotImplementedError</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __repr__</span><span class="desc"> – class name</span>
+<span class="loc">arena/bots.py:52–53</span>
+</summary>
+<pre><code>def __repr__(self) -&gt; str:
+    return f&quot;{type(self).__name__}()&quot;</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">RandomBot</span><span class="desc"> – uniform over the masked actions via a seeded RandomController</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – name &quot;random&quot;</span>
+<span class="loc">arena/bots.py:56–61</span>
+</summary>
+<pre><code>class RandomBot(Bot):
+    &quot;&quot;&quot;Uniform over the actions allowed by the mask (never folds when checking
+    is free), from rl_env&#x27;s `RandomController` seeded at creation.&quot;&quot;&quot;
+
+    name = &quot;random&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – creates the seeded RandomController</span>
+<span class="loc">arena/bots.py:62–64</span>
+</summary>
+<pre><code>def __init__(self, seed: int = 0) -&gt; None:
+    self.seed = int(seed)
+    self._random = RandomController(self.seed)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def act</span><span class="desc"> – random masked actions</span>
+<span class="loc">arena/bots.py:66–67</span>
+</summary>
+<pre><code>def act(self, batch: Any) -&gt; np.ndarray:
+    return _masked(self._random.act(batch), batch.mask)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __repr__</span><span class="desc"> – shows the seed</span>
+<span class="loc">arena/bots.py:69–70</span>
+</summary>
+<pre><code>def __repr__(self) -&gt; str:
+    return f&quot;RandomBot(seed={self.seed})&quot;</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">CallingStation</span><span class="desc"> – always checks or calls</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – name &quot;calling&quot;</span>
+<span class="loc">arena/bots.py:73–77</span>
+</summary>
+<pre><code>class CallingStation(Bot):
+    &quot;&quot;&quot;Always checks or calls.&quot;&quot;&quot;
+
+    name = &quot;calling&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def act</span><span class="desc"> – CHECK_CALL for every row</span>
+<span class="loc">arena/bots.py:78–80</span>
+</summary>
+<pre><code>def act(self, batch: Any) -&gt; np.ndarray:
+    n = len(batch.mask)
+    return _masked(np.full(n, CHECK_CALL, dtype=np.int64), batch.mask)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">Maniac</span><span class="desc"> – bets / raises whenever allowed, otherwise checks or calls</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – name &quot;maniac&quot;</span>
+<span class="loc">arena/bots.py:83–87</span>
+</summary>
+<pre><code>class Maniac(Bot):
+    &quot;&quot;&quot;Bets or raises whenever allowed, otherwise checks or calls. Never folds.&quot;&quot;&quot;
+
+    name = &quot;maniac&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def act</span><span class="desc"> – BET_RAISE where allowed, else CHECK_CALL</span>
+<span class="loc">arena/bots.py:88–91</span>
+</summary>
+<pre><code>def act(self, batch: Any) -&gt; np.ndarray:
+    mask = np.asarray(batch.mask, dtype=bool).reshape(-1, 3)
+    actions = np.where(mask[:, BET_RAISE], BET_RAISE, CHECK_CALL).astype(np.int64)
+    return _masked(actions, mask)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – BOT_NAMES</span>
+<span class="loc">arena/bots.py:94–94</span>
+</summary>
+<pre><code>BOT_NAMES = (&quot;random&quot;, &quot;calling&quot;, &quot;maniac&quot;, &quot;rule&quot;)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def make_bot</span><span class="desc"> – builds a bot from its short name (seed used by random)</span>
+<span class="loc">arena/bots.py:97–109</span>
+</summary>
+<pre><code>def make_bot(name: str, seed: int = 0) -&gt; Bot:
+    &quot;&quot;&quot;A bot from its short name; `seed` is used by `random`, ignored otherwise.&quot;&quot;&quot;
+    if name == &quot;random&quot;:
+        return RandomBot(seed)
+    if name == &quot;calling&quot;:
+        return CallingStation()
+    if name == &quot;maniac&quot;:
+        return Maniac()
+    if name == &quot;rule&quot;:
+        from .rules import RuleBot  # rules imports this module
+
+        return RuleBot()
+    raise ValueError(f&quot;unknown bot {name!r}; known bots: {&#x27;, &#x27;.join(BOT_NAMES)}&quot;)</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">cli.py</span><span class="desc"> – command-line evaluator (code of //arena:match): runs a duplicate match per table size and prints the results table</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – usage and lineup rules</span>
+<span class="loc">arena/cli.py:1–11</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Command-line evaluator (the code of `//arena:match`, `bin/match.py`).
+
+    buck2 run //arena:match -- --agent rule --opponents random --players 2,6,9 \
+                               --deals 2000 --seed 0 [--histories N] \
+                               [--stacks fixed|training] [--tables 256]
+
+Lineup per table size `n`: position 0 = the agent, positions 1..n-1 = the
+opponents in order, repeated. Report names are the bot names; if the agent&#x27;s
+name also appears among the opponents it is reported as `NAME*`, so the
+measured bot is not pooled with its copies.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – argparse, math, StackConfig, bots, match</span>
+<span class="loc">arena/cli.py:13–23</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import argparse
+import math
+import sys
+from typing import Optional, TextIO
+
+from rl_env import StackConfig
+
+from .bots import BOT_NAMES
+from .match import Entrant, MatchResult, play_match</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, report header and column names</span>
+<span class="loc">arena/cli.py:25–31</span>
+</summary>
+<pre><code>__all__ = [&quot;main&quot;, &quot;lineup_for&quot;, &quot;format_results&quot;]
+
+HEADER = (
+    &quot;results in big bets (2 BB) per 100 hands; 95% CI = 1.96*sd/sqrt(deals), &quot;
+    &quot;one sample per rotation group&quot;
+)
+COLUMNS = (&quot;agent&quot;, &quot;opponents&quot;, &quot;players&quot;, &quot;hands&quot;, &quot;bb/100&quot;, &quot;95% CI&quot;)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def lineup_for</span><span class="desc"> – position 0 = the agent (NAME* if also an opponent), then opponents repeated</span>
+<span class="loc">arena/cli.py:34–41</span>
+</summary>
+<pre><code>def lineup_for(agent: str, opponents: list[str], n: int) -&gt; list[Entrant]:
+    &quot;&quot;&quot;Position 0 = agent, then the opponents in order, repeated.&quot;&quot;&quot;
+    agent_name = f&quot;{agent}*&quot; if agent in opponents else agent
+    lineup = [Entrant(agent_name, agent)]
+    for i in range(n - 1):
+        b = opponents[i % len(opponents)]
+        lineup.append(Entrant(b, b))
+    return lineup</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _fmt_ci</span><span class="desc"> – formats the 95% interval</span>
+<span class="loc">arena/cli.py:44–45</span>
+</summary>
+<pre><code>def _fmt_ci(ci: float) -&gt; str:
+    return &quot;±nan&quot; if math.isnan(ci) else f&quot;±{ci:.2f}&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def format_results</span><span class="desc"> – aligned results table, one row per report name per table size</span>
+<span class="loc">arena/cli.py:48–73</span>
+</summary>
+<pre><code>def format_results(results: list[MatchResult]) -&gt; list[str]:
+    &quot;&quot;&quot;The results table: one row per report name per table size.&quot;&quot;&quot;
+    rows = [COLUMNS]
+    for res in results:
+        for name, st in res.stats.items():
+            others = &quot;,&quot;.join(res.lineup[p] for p in range(res.table_size) if p not in st.positions)
+            rows.append(
+                (
+                    name,
+                    others,
+                    str(res.table_size),
+                    str(st.hands),
+                    f&quot;{st.bb_per_100:+.2f}&quot;,
+                    _fmt_ci(st.ci95),
+                )
+            )
+    widths = [max(len(r[i]) for r in rows) for i in range(len(COLUMNS))]
+    right = {2, 3, 4, 5}
+    out = []
+    for r in rows:
+        cells = [
+            r[i].rjust(widths[i]) if i in right else r[i].ljust(widths[i])
+            for i in range(len(COLUMNS))
+        ]
+        out.append(&quot;  &quot;.join(cells).rstrip())
+    return out</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def main</span><span class="desc"> – evaluator command line</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">define the options: agent, opponents, players, deals, seed, histories, stacks, tables</span>
+<span class="loc">arena/cli.py:77–94</span>
+</summary>
+<pre><code>out = out if out is not None else sys.stdout
+parser = argparse.ArgumentParser(description=&quot;arena duplicate-match evaluator.&quot;)
+parser.add_argument(&quot;--agent&quot;, required=True, choices=BOT_NAMES, help=&quot;the measured bot&quot;)
+parser.add_argument(
+    &quot;--opponents&quot;, required=True, help=&quot;comma-separated bot names filling the other seats&quot;
+)
+parser.add_argument(&quot;--players&quot;, default=&quot;2,6,9&quot;, help=&quot;comma-separated table sizes&quot;)
+parser.add_argument(&quot;--deals&quot;, type=int, default=2000, help=&quot;deals per table size&quot;)
+parser.add_argument(&quot;--seed&quot;, type=int, default=0)
+parser.add_argument(&quot;--histories&quot;, type=int, default=0, help=&quot;sample histories per match&quot;)
+parser.add_argument(
+    &quot;--stacks&quot;,
+    choices=(&quot;fixed&quot;, &quot;training&quot;),
+    default=&quot;fixed&quot;,
+    help=&quot;fixed: 100 BB every seat; training: rl_env&#x27;s StackConfig()&quot;,
+)
+parser.add_argument(&quot;--tables&quot;, type=int, default=256, help=&quot;tables in the batch&quot;)
+args = parser.parse_args(argv)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">validate opponents, table sizes, deals / tables; pick the stacks</span>
+<span class="loc">arena/cli.py:96–109</span>
+</summary>
+<pre><code>opponents = [s.strip() for s in args.opponents.split(&quot;,&quot;) if s.strip()]
+unknown = [o for o in opponents if o not in BOT_NAMES]
+if not opponents or unknown:
+    parser.error(f&quot;--opponents must be names from {&#x27;, &#x27;.join(BOT_NAMES)}&quot;)
+try:
+    sizes = [int(s) for s in args.players.split(&quot;,&quot;) if s.strip()]
+except ValueError:
+    parser.error(&quot;--players must be comma-separated integers&quot;)
+if not sizes or any(not 2 &lt;= n &lt;= 10 for n in sizes):
+    parser.error(&quot;table sizes must be in 2..10&quot;)
+if args.deals &lt; 1 or args.tables &lt; 1:
+    parser.error(&quot;need --deals &gt;= 1 and --tables &gt;= 1&quot;)
+stacks = StackConfig() if args.stacks == &quot;training&quot; else 100.0
+n_hist = max(args.histories, 0)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">play one match per size; print the table, the speed and sample histories</span>
+<span class="loc">arena/cli.py:111–136</span>
+</summary>
+<pre><code>print(HEADER, file=out)
+results = []
+for n in sizes:
+    res = play_match(
+        lineup_for(args.agent, opponents, n),
+        args.deals,
+        args.seed,
+        stacks=stacks,
+        n_histories=n_hist,
+        n_tables=args.tables,
+    )
+    results.append(res)
+for line in format_results(results):
+    print(line, file=out)
+for res in results:
+    print(
+        f&quot;{res.table_size} players: wall {res.wall_time:.1f} s, &quot;
+        f&quot;{res.hands_per_second:,.0f} hands/s&quot;,
+        file=out,
+    )
+for res in results:
+    for h in res.histories[:n_hist]:
+        print(&quot;&quot;, file=out)
+        print(h, file=out)
+out.flush()
+return 0</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">run as script</span><span class="desc"> – exits with main()&#x27;s status</span>
+<span class="loc">arena/cli.py:139–140</span>
+</summary>
+<pre><code>if __name__ == &quot;__main__&quot;:
+    sys.exit(main())</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">history.py</span><span class="desc"> – readable hand histories from a HandResult and its events</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – units and naming of the text</span>
+<span class="loc">arena/history.py:1–8</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Readable hand histories from the engine&#x27;s `HandResult` and its events.
+
+Amounts are in BB (the engine&#x27;s unit, stated in the header); the final nets
+are also given in big bets. Cards and boards use their entities text form.
+Seats are shown with their report names (the engine&#x27;s `s0`... names are not
+used). Hole cards of every seat are given by the caller: the evaluator is
+not a player and may show them all.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – engine events, entities, HandSpec</span>
+<span class="loc">arena/history.py:10–24</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from typing import Mapping, Optional, Sequence
+
+from engine import (
+    ActionType,
+    BetReturned,
+    BlindPosted,
+    BoardDealt,
+    HandResult,
+    HandShown,
+    PlayerActed,
+)
+from entities import Board, Hand, Street
+from rl_env import HandSpec</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__ and street names</span>
+<span class="loc">arena/history.py:26–33</span>
+</summary>
+<pre><code>__all__ = [&quot;format_hand&quot;, &quot;cards_text&quot;]
+
+_STREET_NAME = {
+    Street.PREFLOP: &quot;Preflop&quot;,
+    Street.FLOP: &quot;Flop&quot;,
+    Street.TURN: &quot;Turn&quot;,
+    Street.RIVER: &quot;River&quot;,
+}</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def cards_text</span><span class="desc"> – cards separated by spaces</span>
+<span class="loc">arena/history.py:36–40</span>
+</summary>
+<pre><code>def cards_text(cards: Optional[Hand | Board | Sequence]) -&gt; str:
+    &quot;&quot;&quot;Cards separated by spaces (&quot;As 2s Ah 3h&quot;); &quot;&quot; for None / no cards.&quot;&quot;&quot;
+    if cards is None:
+        return &quot;&quot;
+    return &quot; &quot;.join(str(c) for c in cards)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _amount / def _signed</span><span class="desc"> – two-decimal formatting</span>
+<span class="loc">arena/history.py:43–48</span>
+</summary>
+<pre><code>def _amount(x: float) -&gt; str:
+    return f&quot;{x:.2f}&quot;
+
+
+def _signed(x: float) -&gt; str:
+    return f&quot;{x:+.2f}&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _action_text</span><span class="desc"> – &quot;folds&quot;, &quot;checks&quot;, &quot;calls X&quot;, &quot;raises to X&quot; with all-in / reason</span>
+<span class="loc">arena/history.py:51–65</span>
+</summary>
+<pre><code>def _action_text(e: PlayerActed) -&gt; str:
+    t = e.action
+    if t is ActionType.FOLD:
+        text = &quot;folds&quot;
+    elif t is ActionType.CHECK:
+        text = &quot;checks&quot;
+    elif t is ActionType.CALL:
+        text = f&quot;calls {_amount(e.amount_bb)}&quot;
+    else:
+        text = f&quot;raises to {_amount(e.to_bb)}&quot;
+    if e.all_in:
+        text += &quot; all-in&quot;
+    if e.reason:
+        text += f&quot; ({e.reason})&quot;
+    return text</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def format_hand</span><span class="desc"> – the hand as text</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">check names; seat label helper</span>
+<span class="loc">arena/history.py:77–82</span>
+</summary>
+<pre><code>n = spec.n_seats
+if len(names) != n:
+    raise ValueError(f&quot;need {n} names, got {len(names)}&quot;)
+
+def who(seat: int) -&gt; str:
+    return f&quot;seat {seat} {names[seat]}&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">header and one line per seat with stack and hole cards</span>
+<span class="loc">arena/history.py:84–93</span>
+</summary>
+<pre><code>width = max(len(s) for s in names)
+lines = [
+    f&quot;Deal {deal}, rotation {rotation} - {n} players, button seat {spec.button} &quot;
+    f&quot;(amounts in BB)&quot;
+]
+for s in range(n):
+    lines.append(
+        f&quot;Seat {s}  {names[s]:&lt;{width}}  {spec.stacks_bb[s]:&gt;7.2f}  &quot;
+        f&quot;{cards_text(hole_cards.get(s))}&quot;.rstrip()
+    )</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">walk the events: blinds, actions per street, shown hands, returned bets</span>
+<span class="loc">arena/history.py:95–119</span>
+</summary>
+<pre><code>blinds: list[str] = []
+streets: list[tuple[str, list[str]]] = []  # (header, actions)
+shows: list[str] = []
+returned: list[str] = []
+for e in result.history:
+    if isinstance(e, BlindPosted):
+        text = f&quot;{who(e.seat)} {e.blind} {_amount(e.amount_bb)}&quot;
+        if e.all_in:
+            text += &quot; all-in&quot;
+        blinds.append(text)
+    elif isinstance(e, PlayerActed):
+        if not streets:
+            streets.append((_STREET_NAME[Street.PREFLOP], []))
+        streets[-1][1].append(f&quot;{who(e.seat)} {_action_text(e)}&quot;)
+    elif isinstance(e, BoardDealt):
+        if not streets:
+            streets.append((_STREET_NAME[Street.PREFLOP], []))
+        header = f&quot;{_STREET_NAME[e.street]} {cards_text(e.cards)}&quot;
+        if e.street is not Street.FLOP:
+            header += f&quot; ({cards_text(e.board)})&quot;
+        streets.append((header, []))
+    elif isinstance(e, HandShown):
+        shows.append(f&quot;{who(e.seat)} {cards_text(e.hand)}&quot;)
+    elif isinstance(e, BetReturned):
+        returned.append(f&quot;{who(e.seat)} {_amount(e.amount_bb)}&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">blinds, streets, shows, returns, pots (uncontested / high / low) and net results</span>
+<span class="loc">arena/history.py:121–145</span>
+</summary>
+<pre><code>if blinds:
+    lines.append(&quot;Blinds: &quot; + &quot;; &quot;.join(blinds))
+for header, actions in streets:
+    lines.append(header + (&quot;: &quot; + &quot;; &quot;.join(actions) if actions else &quot;&quot;))
+if shows:
+    lines.append(&quot;Shows: &quot; + &quot;; &quot;.join(shows))
+if returned:
+    lines.append(&quot;Returned: &quot; + &quot;; &quot;.join(returned))
+for i, pot in enumerate(result.pots, start=1):
+    head = f&quot;Pot {i} {_amount(pot.amount)}: &quot;
+    if pot.uncontested:
+        parts = [f&quot;{who(s)} wins uncontested {_amount(a)}&quot; for s, a in pot.high]
+    else:
+        parts = [f&quot;high {who(s)} {_amount(a)}&quot; for s, a in pot.high]
+        if pot.low:
+            parts.extend(f&quot;low {who(s)} {_amount(a)}&quot; for s, a in pot.low)
+        else:
+            parts.append(&quot;no low&quot;)
+    lines.append(head + &quot;; &quot;.join(parts))
+nets = []
+for s in range(n):
+    net = result.net.get(s, 0.0)
+    nets.append(f&quot;{who(s)} {_signed(net)} ({_signed(net / 2.0)} big bets)&quot;)
+lines.append(&quot;Net: &quot; + &quot;; &quot;.join(nets))
+return &quot;\n&quot;.join(lines)</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">match.py</span><span class="desc"> – duplicate matches: every deal played table_size times with the lineup rotated, accounted in chips</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – rotation, chip accounting and the hidden-card rule</span>
+<span class="loc">arena/match.py:1–18</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Duplicate matches: every deal is played `table_size` times, rotating the lineup.
+
+A deal is one deck seed, one button and one set of per-seat stacks. Rotation
+`r = 0..n-1` of deal `d` plays the same `HandSpec` with lineup position `p` at
+seat `(p + r) % n` (seat `s` is played by position `(s - r) % n`). By the
+engine&#x27;s deal-order contract seat `s` gets the same hole cards and the board is
+the same as far as it is dealt, whatever the actions, so over the rotation
+group every position holds every seat&#x27;s cards (and stack and position to the
+button) exactly once.
+
+Accounting is in integer chips, keyed by (deal, rotation, seat -&gt; position),
+and converted to big bets only for the report (`stats.summarize`). Zero sum is
+checked per hand and for the totals; a violation raises `AccountingError`.
+
+Only this module reads every seat&#x27;s hole cards (`TableBatch.finished_hole_cards`,
+for hand histories and deal-order checks), after the hand is over and before
+its table is restarted. Nothing read there reaches a controller.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – time, numpy, rl_env, bots, history, stats</span>
+<span class="loc">arena/match.py:20–32</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, Optional, Sequence, Union
+
+import numpy as np
+
+from rl_env import FinishedHand, HandSpec, StackConfig, TableBatch, draw_stacks
+
+from .bots import make_bot
+from .history import format_hand
+from .stats import CHIPS_PER_BB, CHIPS_PER_BIG_BET, AccountingError, summarize, to_chips</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, deck seed bound, BotSpec type</span>
+<span class="loc">arena/match.py:34–46</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;Entrant&quot;,
+    &quot;NameStats&quot;,
+    &quot;HandRecord&quot;,
+    &quot;MatchResult&quot;,
+    &quot;AccountingError&quot;,
+    &quot;play_match&quot;,
+    &quot;combine&quot;,
+]
+
+_SEED_HIGH = 2**63 - 1  # deck seeds are drawn in [0, 2**63 - 1), as rl_env does
+
+BotSpec = Union[str, Callable[[int], Any], Any]</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Entrant</span><span class="desc"> – report name and bot (name, factory or ready controller)</span>
+<span class="loc">arena/match.py:49–52</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class Entrant:
+    name: str  # report name; equal names are pooled
+    bot: BotSpec  # bot name for make_bot, a factory taking a seed, or a ready controller</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">NameStats</span><span class="desc"> – per report name: positions, hands, deals, chips, big bets, bb/100, 95% CI, samples</span>
+<span class="loc">arena/match.py:55–65</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class NameStats:
+    name: str
+    positions: tuple[int, ...]
+    hands: int
+    deals: int
+    total_chips: int
+    total_bb: float  # big bets
+    bb_per_100: float  # big bets per 100 hands
+    ci95: float  # half-width of the 95% interval in bb/100 (nan with one deal)
+    samples: np.ndarray  # float64 (D,), big bets per hand per rotation group</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">HandRecord</span><span class="desc"> – one played hand: deal, rotation, spec, names, positions, net chips, hole cards, board</span>
+<span class="loc">arena/match.py:68–77</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class HandRecord:
+    deal: int
+    rotation: int
+    spec: HandSpec
+    names: tuple[str, ...]  # per seat
+    positions: tuple[int, ...]  # per seat
+    chips: tuple[int, ...]  # net per seat
+    hole_cards: tuple[str, ...]  # per seat, text form
+    board: str</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">MatchResult</span><span class="desc"> – match summary: size, deals, seed, lineup, stats, chips per position and deal, histories, speed</span>
+<span class="loc">arena/match.py:80–91</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class MatchResult:
+    table_size: int
+    n_deals: int
+    seed: int
+    lineup: tuple[str, ...]  # report name per lineup position
+    stats: dict  # dict[str, NameStats], in first-appearance order of the lineup
+    position_chips: np.ndarray  # int64 (n, D): per lineup position, per deal
+    histories: tuple[str, ...]  # sample hand histories, job order
+    hands: Optional[tuple[HandRecord, ...]]
+    wall_time: float
+    hands_per_second: float</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _entrants</span><span class="desc"> – normalises the lineup to Entrants with valid names</span>
+<span class="loc">arena/match.py:97–109</span>
+</summary>
+<pre><code>def _entrants(lineup: Sequence[Union[Entrant, str]]) -&gt; list[Entrant]:
+    out = []
+    for e in lineup:
+        if isinstance(e, Entrant):
+            out.append(e)
+        elif isinstance(e, str):
+            out.append(Entrant(name=e, bot=e))
+        else:
+            raise TypeError(f&quot;a lineup entry must be an Entrant or a bot name, got {e!r}&quot;)
+    for e in out:
+        if not isinstance(e.name, str) or not e.name:
+            raise ValueError(f&quot;report names must be non-empty strings, got {e.name!r}&quot;)
+    return out</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _is_controller</span><span class="desc"> – an object with an act method</span>
+<span class="loc">arena/match.py:112–113</span>
+</summary>
+<pre><code>def _is_controller(bot: Any) -&gt; bool:
+    return not isinstance(bot, (str, type)) and callable(getattr(bot, &quot;act&quot;, None))</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _controllers</span><span class="desc"> – one controller per distinct bot (seeded from a SeedSequence), and each position&#x27;s key</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">give each entrant an identity and a key; keep ready controllers</span>
+<span class="loc">arena/match.py:125–149</span>
+</summary>
+<pre><code>keys: list[int] = []
+seen: dict[tuple, int] = {}
+built: list[tuple[int, Entrant]] = []  # (key, entrant) still to build
+controllers: dict[int, Any] = {}
+for e in entrants:
+    bot = e.bot
+    if isinstance(bot, str):
+        ident: tuple = (&quot;name&quot;, e.name, bot)
+    elif _is_controller(bot):
+        ident = (&quot;ready&quot;, id(bot))
+    elif callable(bot):
+        ident = (&quot;factory&quot;, e.name, id(bot))
+    else:
+        raise TypeError(
+            f&quot;Entrant.bot must be a bot name, a factory or a controller, got {bot!r}&quot;
+        )
+    key = seen.get(ident)
+    if key is None:
+        key = len(seen)
+        seen[ident] = key
+        if ident[0] == &quot;ready&quot;:
+            controllers[key] = bot
+        else:
+            built.append((key, e))
+    keys.append(key)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">build named / factory bots with spawned seeds</span>
+<span class="loc">arena/match.py:150–154</span>
+</summary>
+<pre><code>children = bot_ss.spawn(len(built)) if built else []
+for i, (key, e) in enumerate(built):
+    seed = int(children[i].generate_state(1)[0])
+    controllers[key] = make_bot(e.bot, seed) if isinstance(e.bot, str) else e.bot(seed)
+return controllers, tuple(keys)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def _deals</span><span class="desc"> – one HandSpec per deal: stacks (fixed, per seat or drawn), button, deck seed</span>
+<span class="loc">arena/match.py:157–182</span>
+</summary>
+<pre><code>def _deals(
+    n: int,
+    n_deals: int,
+    stacks: Union[float, Sequence[float], StackConfig],
+    deal_ss: np.random.SeedSequence,
+) -&gt; list[HandSpec]:
+    rng = np.random.Generator(np.random.PCG64(deal_ss))
+    fixed: Optional[tuple[float, ...]] = None
+    cfg: Optional[StackConfig] = None
+    if isinstance(stacks, StackConfig):
+        cfg = stacks
+    elif isinstance(stacks, (int, float)) and not isinstance(stacks, bool):
+        fixed = (float(stacks),) * n
+    else:
+        fixed = tuple(float(s) for s in stacks)  # type: ignore[union-attr]
+        if len(fixed) != n:
+            raise ValueError(f&quot;need {n} stacks, got {len(fixed)}&quot;)
+    if fixed is not None and any(not s &gt; 0 for s in fixed):
+        raise ValueError(f&quot;stacks must be positive, got {fixed}&quot;)
+    specs = []
+    for _ in range(n_deals):
+        st = draw_stacks(rng, n, cfg) if cfg is not None else fixed
+        button = int(rng.integers(n))
+        deck_seed = int(rng.integers(0, _SEED_HIGH, dtype=np.int64))
+        specs.append(HandSpec(n, st, button, deck_seed))  # type: ignore[arg-type]
+    return specs</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _name_stats</span><span class="desc"> – summarizes the chips of each report name; totals must sum to zero</span>
+<span class="loc">arena/match.py:188–214</span>
+</summary>
+<pre><code>def _name_stats(lineup: tuple[str, ...], position_chips: np.ndarray) -&gt; dict:
+    n = len(lineup)
+    order: list[str] = []
+    for name in lineup:
+        if name not in order:
+            order.append(name)
+    stats: dict[str, NameStats] = {}
+    total = 0
+    for name in order:
+        positions = tuple(p for p in range(n) if lineup[p] == name)
+        chips = position_chips[list(positions), :].sum(axis=0).astype(np.int64)
+        s = summarize(chips, len(positions), n, CHIPS_PER_BIG_BET)
+        total += s.total_chips
+        stats[name] = NameStats(
+            name=name,
+            positions=positions,
+            hands=s.hands,
+            deals=s.deals,
+            total_chips=s.total_chips,
+            total_bb=s.total_bb,
+            bb_per_100=s.bb_per_100,
+            ci95=s.ci95,
+            samples=s.samples,
+        )
+    if total != 0:
+        raise AccountingError(f&quot;report totals do not sum to zero: {total} chips&quot;)
+    return stats</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def play_match</span><span class="desc"> – plays a duplicate match</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">validate lineup, table size, deals, tables</span>
+<span class="loc">arena/match.py:238–248</span>
+</summary>
+<pre><code>entrants = _entrants(lineup)
+n = len(entrants)
+if not 2 &lt;= n &lt;= 10:
+    raise ValueError(f&quot;a lineup has 2..10 entrants, got {n}&quot;)
+if table_size is not None and table_size != n:
+    raise ValueError(f&quot;table_size {table_size} != lineup length {n}&quot;)
+if isinstance(n_deals, bool) or not isinstance(n_deals, (int, np.integer)) or n_deals &lt; 1:
+    raise ValueError(f&quot;n_deals must be a positive int, got {n_deals!r}&quot;)
+if isinstance(n_tables, bool) or not isinstance(n_tables, int) or n_tables &lt; 1:
+    raise ValueError(f&quot;n_tables must be a positive int, got {n_tables!r}&quot;)
+n_deals = int(n_deals)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">spawn seeds; deals, controllers, names</span>
+<span class="loc">arena/match.py:250–254</span>
+</summary>
+<pre><code>ss = np.random.SeedSequence(seed)
+deal_ss, bot_ss, hist_ss = ss.spawn(3)
+specs = _deals(n, n_deals, stacks, deal_ss)
+controllers, pos_keys = _controllers(entrants, bot_ss)
+names = tuple(e.name for e in entrants)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">pick the sampled hand-history jobs</span>
+<span class="loc">arena/match.py:256–264</span>
+</summary>
+<pre><code>total_jobs = n_deals * n
+n_hist = min(max(int(n_histories), 0), total_jobs)
+sampled: set[int] = set()
+if n_hist:
+    hist_rng = np.random.Generator(np.random.PCG64(hist_ss))
+    picks = hist_rng.choice(total_jobs, size=n_hist, replace=False)
+    sampled = {int(j) for j in picks}
+histories: dict[int, str] = {}
+records: dict[int, HandRecord] = {}</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">batch with observations only if needed; chip accumulator</span>
+<span class="loc">arena/match.py:266–271</span>
+</summary>
+<pre><code>needs_obs = any(getattr(c, &quot;wants_obs&quot;, True) for c in controllers.values())
+batch = TableBatch(
+    min(n_tables, total_jobs), chips_per_bb=CHIPS_PER_BB, observations=needs_obs
+)
+position_chips = np.zeros((n, n_deals), dtype=np.int64)
+jobs_of: dict[int, int] = {}  # hand id -&gt; job index (d * n + r)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">seat -&gt; controller key for a rotation</span>
+<span class="loc">arena/match.py:273–274</span>
+</summary>
+<pre><code>def seat_keys(r: int) -&gt; tuple[int, ...]:
+    return tuple(pos_keys[(s - r) % n] for s in range(n))</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">account a finished hand: zero-sum check, chips per position, optional history / record</span>
+<span class="loc">arena/match.py:276–302</span>
+</summary>
+<pre><code>def account(fh: FinishedHand) -&gt; None:
+    job = jobs_of.pop(fh.hand_id)
+    d, r = divmod(job, n)
+    chips = [to_chips(x, CHIPS_PER_BB) for x in fh.net_bb.tolist()]
+    if len(chips) != n or sum(chips) != 0:
+        raise AccountingError(
+            f&quot;deal {d}, rotation {r}: nets do not sum to zero in chips: &quot;
+            f&quot;{chips} (BB {fh.net_bb.tolist()})&quot;
+        )
+    for s in range(n):
+        position_chips[(s - r) % n, d] += chips[s]
+    if job in sampled or record_hands:
+        hole = batch.finished_hole_cards(fh.table)
+        seat_names = tuple(names[(s - r) % n] for s in range(n))
+        if job in sampled:
+            histories[job] = format_hand(d, r, fh.spec, seat_names, hole, fh.result)
+        if record_hands:
+            records[job] = HandRecord(
+                deal=d,
+                rotation=r,
+                spec=fh.spec,
+                names=seat_names,
+                positions=tuple((s - r) % n for s in range(n)),
+                chips=tuple(chips),
+                hole_cards=tuple(str(hole[s]) for s in range(n)),
+                board=str(fh.result.board),
+            )</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">main loop: start jobs on idle tables, step, account finished hands</span>
+<span class="loc">arena/match.py:304–321</span>
+</summary>
+<pre><code>t0 = time.perf_counter()
+next_job = 0
+done = 0
+while done &lt; total_jobs:
+    for t in batch.idle_tables():
+        if next_job &gt;= total_jobs:
+            break
+        d, r = divmod(next_job, n)
+        hand_id = batch.start_hand(t, specs[d], seat_keys(r))
+        jobs_of[hand_id] = next_job
+        next_job += 1
+    finished = batch.step(controllers)
+    if not finished and not batch.any_in_hand() and next_job &gt;= total_jobs:
+        raise RuntimeError(&quot;match stalled: no hand running and jobs unfinished&quot;)
+    for fh in finished:  # before any of these tables is restarted
+        account(fh)
+        done += 1
+wall = time.perf_counter() - t0</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">compute stats and return the MatchResult</span>
+<span class="loc">arena/match.py:323–337</span>
+</summary>
+<pre><code>lineup_names = names
+stats = _name_stats(lineup_names, position_chips)
+position_chips.setflags(write=False)
+return MatchResult(
+    table_size=n,
+    n_deals=n_deals,
+    seed=int(seed),
+    lineup=lineup_names,
+    stats=stats,
+    position_chips=position_chips,
+    histories=tuple(histories[j] for j in sorted(histories)),
+    hands=tuple(records[j] for j in sorted(records)) if record_hands else None,
+    wall_time=wall,
+    hands_per_second=total_jobs / wall if wall &gt; 0 else float(&quot;inf&quot;),
+)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def combine</span><span class="desc"> – concatenates matches with the same lineup and size and recomputes the stats</span>
+<span class="loc">arena/match.py:340–372</span>
+</summary>
+<pre><code>def combine(*results: MatchResult) -&gt; MatchResult:
+    &quot;&quot;&quot;Concatenate the deals of matches with the same lineup names and table
+    size (different seeds or more deals); stats are recomputed from the
+    concatenated chips per deal, histories (and hand records) concatenated.&quot;&quot;&quot;
+    if not results:
+        raise ValueError(&quot;need at least one match result&quot;)
+    first = results[0]
+    for r in results[1:]:
+        if r.lineup != first.lineup or r.table_size != first.table_size:
+            raise ValueError(
+                f&quot;cannot combine {r.lineup} ({r.table_size}p) with &quot;
+                f&quot;{first.lineup} ({first.table_size}p)&quot;
+            )
+    chips = np.concatenate([r.position_chips for r in results], axis=1).astype(np.int64)
+    stats = _name_stats(first.lineup, chips)
+    chips.setflags(write=False)
+    n_deals = sum(r.n_deals for r in results)
+    wall = sum(r.wall_time for r in results)
+    hands: Optional[tuple[HandRecord, ...]] = None
+    if all(r.hands is not None for r in results):
+        hands = tuple(h for r in results for h in r.hands)  # type: ignore[union-attr]
+    return MatchResult(
+        table_size=first.table_size,
+        n_deals=n_deals,
+        seed=first.seed,
+        lineup=first.lineup,
+        stats=stats,
+        position_chips=chips,
+        histories=tuple(h for r in results for h in r.histories),
+        hands=hands,
+        wall_time=wall,
+        hands_per_second=n_deals * first.table_size / wall if wall &gt; 0 else float(&quot;inf&quot;),
+    )</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">rules.py</span><span class="desc"> – RuleBot: a readable tight-aggressive baseline driven by RULE_PARAMS</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – preflop scoring, postflop classes and the nut definitions</span>
+<span class="loc">arena/rules.py:1–25</span>
+</summary>
+<pre><code>&quot;&quot;&quot;RuleBot: a simple, readable tight-aggressive baseline.
+
+All numbers live in `RULE_PARAMS` below: tuning means editing one block.
+
+Preflop it scores its four hole cards (`preflop_score`) and raises / calls /
+folds on the score. After the flop it asks the engine&#x27;s evaluator
+(`best_omaha`: exactly two hole cards and three board cards) for the high
+category and whether it has a qualifying low, and looks up the nut low, the
+nut-low draw and the nut-flush draw in tables over ranks and suits
+(`postflop_class`). No hand comparison is re-implemented: the nut-low table is
+built from `engine.evaluator.rank_low`.
+
+Design decisions (spec 1.4):
+- Nut low: the hand&#x27;s low equals the best low any two hole cards could make on
+  this board. Card removal by own hole cards is not considered; a nut low that
+  may be tied (quartered) still counts as the nut.
+- Nut-low draw (flop and turn): no nut low now, and some low rank not on the
+  board would give the hand the nut low.
+- Nut-flush draw (flop and turn): a suit with exactly two board cards and at
+  least two hole cards, one of which is the highest rank of that suit not on
+  the board (own cards not removed).
+
+RuleBot reads only `batch.views[i]` (own hole cards, board, street, `raises`)
+and `batch.legal[i]`; it is stateless and deterministic.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – Counter, combinations, numpy, engine, evaluator, entities, rl_env actions, bots</span>
+<span class="loc">arena/rules.py:27–42</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass
+from itertools import combinations
+from types import MappingProxyType
+from typing import Any, Iterable, Mapping
+
+import numpy as np
+
+from engine import LegalActions, TableView
+from engine.evaluator import best_omaha, rank_low
+from entities import Board, Card, Hand, Rank, Street, Suit
+from rl_env import BET_RAISE, CHECK_CALL, FOLD
+
+from .bots import Bot, _masked</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__</span>
+<span class="loc">arena/rules.py:44–54</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;RuleParams&quot;,
+    &quot;RULE_PARAMS&quot;,
+    &quot;PostflopClass&quot;,
+    &quot;NUT_LOW_PAIRS&quot;,
+    &quot;nut_low_pairs&quot;,
+    &quot;preflop_score&quot;,
+    &quot;postflop_class&quot;,
+    &quot;decide&quot;,
+    &quot;RuleBot&quot;,
+]</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">RuleParams</span><span class="desc"> – all scores and thresholds of the rules</span>
+<span class="loc">arena/rules.py:57–80</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class RuleParams:
+    # preflop: base low pair, only the best one counts
+    a2: int = 30
+    a3: int = 20
+    two_three: int = 15
+    extra_low: int = 6  # per distinct low rank (A..8) beyond 2, only with a base low pair
+    suited_ace: int = 10  # per suit holding an ace and another hole card (max 2 suits)
+    suited_other: int = 4  # per other suit with &gt;= 2 hole cards
+    aces: int = 10  # a pair of aces
+    big_two: int = 4  # exactly 2 distinct big ranks (T..A)
+    big_three: int = 10  # 3 or more distinct big ranks
+    connected: int = 3  # per adjacent pair of distinct ranks (ace both high and low)
+    trips: int = -20  # three of one rank
+    quads: int = -40  # four of one rank
+    nine: int = -6  # per nine
+    middle: int = -3  # per T/J/Q when the hand has no ace and no other card &gt;= T
+    # preflop thresholds
+    raise_at: int = 35
+    call_at: int = 18
+    # postflop
+    strong_high_cat: int = 3  # evaluator category: 3 = three of a kind, 4 = straight, ...
+    two_pair_cat: int = 2
+    value_raise_cap: int = 3  # one-sided strong hand: bet/raise while bets this street &lt; 3</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – RULE_PARAMS and the low values 1..8</span>
+<span class="loc">arena/rules.py:83–88</span>
+</summary>
+<pre><code>RULE_PARAMS = RuleParams()
+
+
+# --- nut-low table ------------------------------------------------------------------
+
+_LOW_VALUES = tuple(range(1, 9))  # ace = 1 .. eight</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _low_card</span><span class="desc"> – a card of a given low value</span>
+<span class="loc">arena/rules.py:91–94</span>
+</summary>
+<pre><code>def _low_card(v: int) -&gt; Card:
+    &quot;&quot;&quot;A card of low value `v` (suit irrelevant for the low).&quot;&quot;&quot;
+    rank = Rank.ACE if v == 1 else Rank(v)
+    return Card(rank, Suit.CLUBS)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – one card per low value</span>
+<span class="loc">arena/rules.py:97–97</span>
+</summary>
+<pre><code>_LOW_CARD = {v: _low_card(v) for v in _LOW_VALUES}</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _build_nut_low_pairs</span><span class="desc"> – table: board low-value set -&gt; hole low pairs that make the nut low (built with rank_low)</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">for every board of 3..5 distinct low values</span>
+<span class="loc">arena/rules.py:106–110</span>
+</summary>
+<pre><code>table: dict[frozenset, frozenset] = {}
+pairs = list(combinations(_LOW_VALUES, 2))
+for size in (3, 4, 5):
+    for board in combinations(_LOW_VALUES, size):
+        triples = list(combinations(board, 3))</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">find the best low of each hole pair and keep the pairs reaching the best</span>
+<span class="loc">arena/rules.py:111–127</span>
+</summary>
+<pre><code>        best = None
+        winners: list[tuple[int, int]] = []
+        for pair in pairs:
+            low = None
+            for tri in triples:
+                r = rank_low([_LOW_CARD[v] for v in pair + tri])
+                if r is not None and (low is None or r &lt; low):
+                    low = r
+            if low is None:
+                continue
+            if best is None or low &lt; best:
+                best = low
+                winners = [pair]
+            elif low == best:
+                winners.append(pair)
+        table[frozenset(board)] = frozenset(frozenset(p) for p in winners)
+return MappingProxyType(table)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – NUT_LOW_PAIRS table and empty set</span>
+<span class="loc">arena/rules.py:130–131</span>
+</summary>
+<pre><code>NUT_LOW_PAIRS: Mapping[frozenset, frozenset] = _build_nut_low_pairs()
+_NO_PAIRS: frozenset = frozenset()</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def nut_low_pairs</span><span class="desc"> – nut pairs for a board&#x27;s low values</span>
+<span class="loc">arena/rules.py:134–137</span>
+</summary>
+<pre><code>def nut_low_pairs(board_low_values: Iterable[int]) -&gt; frozenset:
+    &quot;&quot;&quot;The nut hole low-value pairs for a board&#x27;s distinct low values (empty
+    when the board has fewer than three).&quot;&quot;&quot;
+    return NUT_LOW_PAIRS.get(frozenset(board_low_values), _NO_PAIRS)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _hole_low_pairs / def _board_low_values</span><span class="desc"> – low-value pairs in the hole / low values on the board</span>
+<span class="loc">arena/rules.py:140–146</span>
+</summary>
+<pre><code>def _hole_low_pairs(hand: Hand) -&gt; list[frozenset]:
+    values = sorted({c.rank.low_value for c in hand if c.rank.low_value &lt;= 8})
+    return [frozenset(p) for p in combinations(values, 2)]
+
+
+def _board_low_values(board: Board) -&gt; frozenset:
+    return frozenset(c.rank.low_value for c in board if c.rank.low_value &lt;= 8)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _has_nut_low</span><span class="desc"> – a hole pair is among the nut pairs</span>
+<span class="loc">arena/rules.py:149–151</span>
+</summary>
+<pre><code>def _has_nut_low(pairs: list[frozenset], board_lows: frozenset) -&gt; bool:
+    nut = NUT_LOW_PAIRS.get(board_lows)
+    return bool(nut) and any(p in nut for p in pairs)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _has_nut_low_draw</span><span class="desc"> – some missing low value would give the nut low</span>
+<span class="loc">arena/rules.py:154–160</span>
+</summary>
+<pre><code>def _has_nut_low_draw(pairs: list[frozenset], board_lows: frozenset) -&gt; bool:
+    for r in _LOW_VALUES:
+        if r in board_lows:
+            continue
+        if _has_nut_low(pairs, board_lows | {r}):
+            return True
+    return False</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _has_nut_flush_draw</span><span class="desc"> – two board cards of a suit and the top missing rank of it in the hole</span>
+<span class="loc">arena/rules.py:163–174</span>
+</summary>
+<pre><code>def _has_nut_flush_draw(hand: Hand, board: Board) -&gt; bool:
+    for suit in Suit:
+        on_board = {int(c.rank) for c in board if c.suit is suit}
+        if len(on_board) != 2:
+            continue
+        mine = [int(c.rank) for c in hand if c.suit is suit]
+        if len(mine) &lt; 2:
+            continue
+        top = next(r for r in range(14, 1, -1) if r not in on_board)
+        if top in mine:
+            return True
+    return False</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def preflop_score</span><span class="desc"> – scores four hole cards</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">prepare ranks, counts, ace flag, low values</span>
+<span class="loc">arena/rules.py:182–187</span>
+</summary>
+<pre><code>p = params
+cards = tuple(hand)
+ranks = [int(c.rank) for c in cards]
+counts = Counter(ranks)
+ace = Rank.ACE in counts
+lows = {c.rank.low_value for c in cards if c.rank.low_value &lt;= 8}</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">base low pair (A2 / A3 / 23) plus extra low ranks</span>
+<span class="loc">arena/rules.py:189–199</span>
+</summary>
+<pre><code>if ace and Rank.TWO in counts:
+    base = p.a2
+elif ace and Rank.THREE in counts:
+    base = p.a3
+elif Rank.TWO in counts and Rank.THREE in counts:
+    base = p.two_three
+else:
+    base = 0
+score = base
+if base:
+    score += p.extra_low * max(0, len(lows) - 2)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">suited aces / other suits</span>
+<span class="loc">arena/rules.py:201–209</span>
+</summary>
+<pre><code>suited_aces = suited_others = 0
+for suit in Suit:
+    group = [c for c in cards if c.suit is suit]
+    if len(group) &gt;= 2:
+        if any(c.rank is Rank.ACE for c in group):
+            suited_aces += 1
+        else:
+            suited_others += 1
+score += p.suited_ace * min(suited_aces, 2) + p.suited_other * suited_others</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">pair of aces</span>
+<span class="loc">arena/rules.py:211–212</span>
+</summary>
+<pre><code>if counts[Rank.ACE] &gt;= 2:
+    score += p.aces</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">big cards</span>
+<span class="loc">arena/rules.py:214–218</span>
+</summary>
+<pre><code>big = sum(1 for r in counts if r &gt;= Rank.TEN)
+if big == 2:
+    score += p.big_two
+elif big &gt;= 3:
+    score += p.big_three</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">connected ranks</span>
+<span class="loc">arena/rules.py:220–223</span>
+</summary>
+<pre><code>values = set(counts)
+if ace:
+    values.add(1)
+score += p.connected * sum(1 for v in values if v + 1 in values)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">trips / quads penalty</span>
+<span class="loc">arena/rules.py:225–229</span>
+</summary>
+<pre><code>for c in counts.values():
+    if c == 3:
+        score += p.trips
+    elif c == 4:
+        score += p.quads</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">nines penalty</span>
+<span class="loc">arena/rules.py:231–231</span>
+</summary>
+<pre><code>score += p.nine * counts[Rank.NINE]</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">lone middle cards without an ace</span>
+<span class="loc">arena/rules.py:233–239</span>
+</summary>
+<pre><code>if not ace:
+    for i, r in enumerate(ranks):
+        if Rank.TEN &lt;= r &lt;= Rank.QUEEN and not any(
+            ranks[j] &gt;= Rank.TEN for j in range(len(ranks)) if j != i
+        ):
+            score += p.middle
+return score</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">PostflopClass</span><span class="desc"> – high category, has low, nut low, nut-low draw, nut-flush draw</span>
+<span class="loc">arena/rules.py:245–251</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class PostflopClass:
+    high_cat: int  # evaluator category 0 (high card) .. 8 (straight flush)
+    has_low: bool  # a qualifying 8-or-better low
+    nut_low: bool
+    nut_low_draw: bool  # flop and turn only
+    nut_flush_draw: bool  # flop and turn only</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def postflop_class</span><span class="desc"> – classifies a hand on a 3..5 card board with one evaluator call</span>
+<span class="loc">arena/rules.py:254–267</span>
+</summary>
+<pre><code>def postflop_class(hand: Hand, board: Board) -&gt; PostflopClass:
+    &quot;&quot;&quot;The hand&#x27;s class on a board of 3..5 cards (one evaluator call).&quot;&quot;&quot;
+    high, low = best_omaha(hand, board)
+    pairs = _hole_low_pairs(hand)
+    board_lows = _board_low_values(board)
+    nut = _has_nut_low(pairs, board_lows)
+    drawing = len(board) &lt; 5
+    return PostflopClass(
+        high_cat=high[0],
+        has_low=low is not None,
+        nut_low=nut,
+        nut_low_draw=drawing and not nut and _has_nut_low_draw(pairs, board_lows),
+        nut_flush_draw=drawing and _has_nut_flush_draw(hand, board),
+    )</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _allowed</span><span class="desc"> – fold when checking is free -&gt; check; disallowed raise -&gt; call</span>
+<span class="loc">arena/rules.py:273–279</span>
+</summary>
+<pre><code>def _allowed(action: int, legal: LegalActions) -&gt; int:
+    &quot;&quot;&quot;Fold when checking is free -&gt; check; raise when not allowed -&gt; call.&quot;&quot;&quot;
+    if action == FOLD and legal.can_check:
+        return CHECK_CALL
+    if action == BET_RAISE and not legal.can_raise:
+        return CHECK_CALL
+    return action</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _check_or_fold</span><span class="desc"> – check if free, else fold</span>
+<span class="loc">arena/rules.py:282–283</span>
+</summary>
+<pre><code>def _check_or_fold(legal: LegalActions) -&gt; int:
+    return CHECK_CALL if legal.can_check else FOLD</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _preflop</span><span class="desc"> – raise / call / fold on the preflop score</span>
+<span class="loc">arena/rules.py:286–294</span>
+</summary>
+<pre><code>def _preflop(view: TableView, legal: LegalActions, p: RuleParams) -&gt; int:
+    score = preflop_score(view.hole_cards, p)  # type: ignore[arg-type]
+    if score &gt;= p.raise_at:
+        return BET_RAISE
+    if score &gt;= p.call_at:
+        if legal.can_check or view.raises &lt;= 1:
+            return CHECK_CALL
+        return FOLD
+    return _check_or_fold(legal)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _postflop</span><span class="desc"> – bet strong / nut hands, continue with made hands and nut draws, fold the rest</span>
+<span class="loc">arena/rules.py:297–314</span>
+</summary>
+<pre><code>def _postflop(view: TableView, legal: LegalActions, p: RuleParams) -&gt; int:
+    cls = postflop_class(view.hole_cards, view.board)  # type: ignore[arg-type]
+    n = view.raises
+    strong_high = cls.high_cat &gt;= p.strong_high_cat
+    if strong_high and cls.nut_low:
+        return BET_RAISE
+    if strong_high or cls.nut_low:
+        return BET_RAISE if n &lt; p.value_raise_cap else CHECK_CALL
+    made = cls.has_low or cls.high_cat &gt;= p.two_pair_cat
+    if view.board.street is not Street.RIVER:
+        if made or cls.nut_low_draw or cls.nut_flush_draw:
+            return CHECK_CALL
+        return _check_or_fold(legal)
+    if made:
+        if legal.can_check or n == 1:
+            return CHECK_CALL
+        return FOLD
+    return _check_or_fold(legal)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def decide</span><span class="desc"> – RuleBot&#x27;s mask-safe action for one decision</span>
+<span class="loc">arena/rules.py:317–325</span>
+</summary>
+<pre><code>def decide(view: TableView, legal: LegalActions, params: RuleParams = RULE_PARAMS) -&gt; int:
+    &quot;&quot;&quot;RuleBot&#x27;s action for one decision, always allowed by the mask.&quot;&quot;&quot;
+    if view.hole_cards is None:
+        raise ValueError(&quot;RuleBot needs the acting player&#x27;s hole cards in the view&quot;)
+    if view.board.street is Street.PREFLOP:
+        action = _preflop(view, legal, params)
+    else:
+        action = _postflop(view, legal, params)
+    return _allowed(action, legal)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">RuleBot</span><span class="desc"> – the rule-based bot as a Controller (reads views)</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – name &quot;rule&quot;, wants_views True, wants_obs False</span>
+<span class="loc">arena/rules.py:328–334</span>
+</summary>
+<pre><code>class RuleBot(Bot):
+    &quot;&quot;&quot;Tight-aggressive rule-based baseline (reads views).&quot;&quot;&quot;
+
+    name = &quot;rule&quot;
+    wants_views = True
+    wants_obs = False</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – keeps the parameters</span>
+<span class="loc">arena/rules.py:335–336</span>
+</summary>
+<pre><code>def __init__(self, params: RuleParams = RULE_PARAMS) -&gt; None:
+    self.params = params</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def act</span><span class="desc"> – decide for every row and apply the mask</span>
+<span class="loc">arena/rules.py:338–346</span>
+</summary>
+<pre><code>def act(self, batch: Any) -&gt; np.ndarray:
+    views = batch.views
+    if views is None:
+        raise ValueError(&quot;RuleBot needs DecisionBatch.views (wants_views = True)&quot;)
+    params = self.params
+    out = np.array(
+        [decide(v, lg, params) for v, lg in zip(views, batch.legal)], dtype=np.int64
+    )
+    return _masked(out, batch.mask)</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">stats.py</span><span class="desc"> – pure accounting: chips per deal -&gt; big bets per 100 hands with a 95% interval</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – units and the per-rotation-group sample</span>
+<span class="loc">arena/stats.py:1–10</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Pure accounting: per-deal chips -&gt; big bets per 100 hands and a 95% interval.
+
+No engine, no tables. Results are integers (chips) until here; they are
+converted to big bets (1 big bet = 2 BB = 200 chips at 100 chips/BB) only in
+`summarize`.
+
+One sample = one rotation group (all `table_size` hands of a deal), expressed
+per hand, so the correlation between the rotations of one deal is accounted
+for: `ci95 = 100 * 1.96 * sd(samples) / sqrt(deals)` (in bb/100).
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – math, dataclass, numpy</span>
+<span class="loc">arena/stats.py:12–18</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import Sequence
+
+import numpy as np</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, CHIPS_PER_BB = 100, CHIPS_PER_BIG_BET = 200, Z95</span>
+<span class="loc">arena/stats.py:20–32</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;CHIPS_PER_BB&quot;,
+    &quot;CHIPS_PER_BIG_BET&quot;,
+    &quot;Z95&quot;,
+    &quot;AccountingError&quot;,
+    &quot;Summary&quot;,
+    &quot;summarize&quot;,
+    &quot;to_chips&quot;,
+]
+
+CHIPS_PER_BB = 100  # rl_env tables run at 100 chips per big blind
+CHIPS_PER_BIG_BET = 2 * CHIPS_PER_BB  # one big bet = 2 BB
+Z95 = 1.96</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">AccountingError</span><span class="desc"> – nets or totals do not sum to zero in chips</span>
+<span class="loc">arena/stats.py:35–37</span>
+</summary>
+<pre><code>class AccountingError(RuntimeError):
+    &quot;&quot;&quot;Nets of a hand, or the totals of a match, do not sum to zero in chips.
+    Never &quot;fixed up&quot;: it is a bug somewhere and must be looked at.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def to_chips</span><span class="desc"> – net BB as integer chips</span>
+<span class="loc">arena/stats.py:40–42</span>
+</summary>
+<pre><code>def to_chips(net_bb: float, chips_per_bb: int = CHIPS_PER_BB) -&gt; int:
+    &quot;&quot;&quot;A net amount in BB as integer chips (rounded once).&quot;&quot;&quot;
+    return int(round(float(net_bb) * chips_per_bb))</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Summary</span><span class="desc"> – hands, deals, chips, big bets, bb/100, CI, samples</span>
+<span class="loc">arena/stats.py:45–53</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class Summary:
+    hands: int  # k * n * deals: hands played by the name&#x27;s seats
+    deals: int
+    total_chips: int
+    total_bb: float  # big bets
+    bb_per_100: float  # big bets per 100 hands
+    ci95: float  # half-width of the 95% interval, in bb/100 (nan with one deal)
+    samples: np.ndarray  # float64 (deals,), big bets per hand per rotation group</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def summarize</span><span class="desc"> – statistics of one report name holding k of n positions</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">validate k / n and the chips array</span>
+<span class="loc">arena/stats.py:67–75</span>
+</summary>
+<pre><code>if k &lt; 1 or n &lt; 1 or k &gt; n:
+    raise ValueError(f&quot;need 1 &lt;= k &lt;= n, got k={k}, n={n}&quot;)
+chips = np.asarray(chips_per_deal)
+if chips.ndim != 1 or chips.shape[0] &lt; 1:
+    raise ValueError(&quot;need a 1-d array with at least one deal&quot;)
+if not np.issubdtype(chips.dtype, np.integer):
+    raise ValueError(f&quot;chips must be integers, got dtype {chips.dtype}&quot;)
+chips = chips.astype(np.int64)
+deals = int(chips.shape[0])</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">totals, per-group samples, bb/100 and the 95% interval</span>
+<span class="loc">arena/stats.py:76–95</span>
+</summary>
+<pre><code>per_group = k * n
+hands = per_group * deals
+total_chips = int(chips.sum())
+total_bb = total_chips / chips_per_big_bet
+samples = chips.astype(np.float64) / per_group / chips_per_big_bet
+bb_per_100 = 100.0 * total_chips / (chips_per_big_bet * hands)
+if deals &gt; 1:
+    ci95 = 100.0 * Z95 * float(np.std(samples, ddof=1)) / math.sqrt(deals)
+else:
+    ci95 = float(&quot;nan&quot;)
+samples.setflags(write=False)
+return Summary(
+    hands=hands,
+    deals=deals,
+    total_chips=total_chips,
+    total_bb=total_bb,
+    bb_per_100=bb_per_100,
+    ci95=ci95,
+    samples=samples,
+)</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d0"><summary><span class="name ">./bin</span><span class="desc"> – binary entry point of //arena:match</span>
+</summary>
+<div class="kids">
+<details class="d1"><summary><span class="name ">match.py</span><span class="desc"> – runs arena.cli.main</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – usage</span>
+<span class="loc">bin/match.py:1–4</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Command-line evaluator: buck2 run //arena:match -- [options]
+
+The code lives in `arena.cli` (part of the library, so tests can call it).
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – sys and arena.cli.main</span>
+<span class="loc">bin/match.py:6–8</span>
+</summary>
+<pre><code>import sys
+
+from arena.cli import main</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">run as script</span><span class="desc"> – exits with main()&#x27;s status</span>
+<span class="loc">bin/match.py:10–11</span>
+</summary>
+<pre><code>if __name__ == &quot;__main__&quot;:
+    sys.exit(main())</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+</main>
+<script>
+function setAll(open) { document.querySelectorAll('details').forEach(d => d.open = open); }
+function expandTo(depth) {
+  document.querySelectorAll('details').forEach(d => {
+    const m = d.className.match(/d(\d+)/); d.open = m && +m[1] < depth;
+  });
+}
+function filter(q) {
+  q = q.trim().toLowerCase();
+  const all = document.querySelectorAll('details');
+  if (!q) { all.forEach(d => d.style.display = ''); expandTo(1); return; }
+  all.forEach(d => { d.style.display = 'none'; d.open = false; });
+  all.forEach(d => {
+    const s = d.querySelector(':scope > summary').textContent.toLowerCase();
+    if (s.includes(q)) {
+      d.style.display = '';
+      let p = d.parentElement;
+      while (p) { if (p.tagName === 'DETAILS') { p.style.display = ''; p.open = true; } p = p.parentElement; }
+    }
+  });
+}
+expandTo(1);
+</script>
+</body>
+</html>

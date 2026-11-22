@@ -1,0 +1,3417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cli_client documentation</title>
+<style>
+:root {
+  --bg: #fbfaf7; --fg: #1f2328; --muted: #6a6f76; --line: #e3e0d8;
+  --name: #0b5cad; --def: #7a3e9d; --code-bg: #f2efe8; --loc: #8a8f96;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a8; --line: #2c3036;
+    --name: #6cb6ff; --def: #d2a8ff; --code-bg: #1e2228; --loc: #7d838c;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a8; --line: #2c3036;
+  --name: #6cb6ff; --def: #d2a8ff; --code-bg: #1e2228; --loc: #7d838c;
+}
+body { background: var(--bg); color: var(--fg); margin: 0;
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+p.lead { color: var(--muted); margin: 0 0 16px; }
+.toolbar button { font: inherit; font-size: 13px; padding: 4px 10px; margin-right: 6px;
+  border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 6px; cursor: pointer; }
+.toolbar { margin-bottom: 16px; }
+details { margin: 2px 0; }
+.kids { margin-left: 18px; padding-left: 10px; border-left: 1px solid var(--line); }
+summary { cursor: pointer; padding: 2px 0; list-style-position: outside; }
+summary:hover { background: color-mix(in srgb, var(--line) 40%, transparent); }
+.name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; color: var(--name); font-weight: 600; }
+.name.def { color: var(--def); }
+.desc { color: var(--fg); }
+.d0 > summary .desc, .kids .desc { }
+.loc { float: right; font: 12px ui-monospace, Menlo, monospace; color: var(--loc); margin-left: 12px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;
+  margin: 6px 0 8px 18px; overflow-x: auto; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+input#q { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: transparent; color: var(--fg); width: 220px; max-width: 100%; }
+mark { background: #ffe48a; color: #000; }
+</style>
+</head>
+<body>
+<main>
+<h1>cli_client</h1>
+<p class="lead">Full-screen terminal client for a human player at a cli_server Omaha Hi-Lo 8-or-better table, and the networking library shared with bot_client.
+Tree: folders → files → classes / functions → logical blocks → code. Only <code>.py</code> sources are covered (BUCK, JSON test sets, markdown and unit tests are omitted).</p>
+<div class="toolbar">
+<button onclick="setAll(true)">Expand all</button>
+<button onclick="setAll(false)">Collapse all</button>
+<button onclick="expandTo(1)">Files</button>
+<button onclick="expandTo(2)">Classes &amp; functions</button>
+<input id="q" placeholder="Filter by name / description" oninput="filter(this.value)">
+</div>
+<details class="d0"><summary><span class="name ">./cli_client</span><span class="desc"> – full-screen curses terminal client for a human player at a cli_server Omaha Hi-Lo table, plus the reusable networking library</span>
+</summary>
+<div class="kids">
+<details class="d1"><summary><span class="name ">__init__.py</span><span class="desc"> – package marker, kept free of imports so cli_client.net loads alone</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – why the package has no imports</span>
+<span class="loc">cli_client/__init__.py:1–5</span>
+</summary>
+<pre><code>&quot;&quot;&quot;cli_client: a full-screen terminal client for the //cli_server Omaha Hi-Lo table.
+
+Package marker only, owned by the `:net` target: keep it free of imports, so
+`import cli_client.net` loads nothing else from the package.
+&quot;&quot;&quot;</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">cards.py</span><span class="desc"> – card / suit text and colours, amount formatting and hand descriptions</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – the four-colour deck and style names</span>
+<span class="loc">cli_client/cards.py:1–6</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Card / suit text and colours, amounts and hand descriptions.
+
+The spec&#x27;s four-colour deck: hearts red, diamonds blue, spades yellow, clubs
+green. Styles are names (see `render.STYLES`); `ui.py` maps them to curses
+colours.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – entities, engine evaluator categories and best_omaha</span>
+<span class="loc">cli_client/cards.py:8–24</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from typing import Iterable, Optional
+
+from entities import Board, Card, Hand, Rank, Suit
+from engine.evaluator import (
+    FLUSH,
+    FULL_HOUSE,
+    HIGH_CARD,
+    PAIR,
+    QUADS,
+    STRAIGHT,
+    STRAIGHT_FLUSH,
+    TRIPS,
+    TWO_PAIR,
+    best_omaha,
+)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, Segment type, suit symbols / letters / styles / colours, card back and empty slot</span>
+<span class="loc">cli_client/cards.py:26–61</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;Segment&quot;,
+    &quot;SUIT_SYMBOLS&quot;,
+    &quot;SUIT_LETTERS&quot;,
+    &quot;SUIT_STYLES&quot;,
+    &quot;SUIT_COLORS&quot;,
+    &quot;card_text&quot;,
+    &quot;suit_style&quot;,
+    &quot;suit_color&quot;,
+    &quot;card_segments&quot;,
+    &quot;back_segments&quot;,
+    &quot;empty_slot_segments&quot;,
+    &quot;segments_text&quot;,
+    &quot;fmt_amount&quot;,
+    &quot;describe_high&quot;,
+    &quot;describe_low&quot;,
+    &quot;describe_hand&quot;,
+]
+
+# (text, style); style None means &quot;the surrounding style&quot;.
+Segment = tuple[str, Optional[str]]
+
+SUIT_SYMBOLS = {Suit.HEARTS: &quot;♥&quot;, Suit.DIAMONDS: &quot;♦&quot;, Suit.SPADES: &quot;♠&quot;, Suit.CLUBS: &quot;♣&quot;}
+SUIT_LETTERS = {Suit.HEARTS: &quot;h&quot;, Suit.DIAMONDS: &quot;d&quot;, Suit.SPADES: &quot;s&quot;, Suit.CLUBS: &quot;c&quot;}
+SUIT_STYLES = {
+    Suit.HEARTS: &quot;hearts&quot;,
+    Suit.DIAMONDS: &quot;diamonds&quot;,
+    Suit.SPADES: &quot;spades&quot;,
+    Suit.CLUBS: &quot;clubs&quot;,
+}
+# The colour of each suit style (used by ui.py).
+SUIT_COLORS = {&quot;hearts&quot;: &quot;red&quot;, &quot;diamonds&quot;: &quot;blue&quot;, &quot;spades&quot;: &quot;yellow&quot;, &quot;clubs&quot;: &quot;green&quot;}
+
+CARD_BACK = &quot;▒▒&quot;
+CARD_BACK_ASCII = &quot;##&quot;
+EMPTY_SLOT = &quot;  &quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def card_text</span><span class="desc"> – &quot;A♥&quot; (or &quot;Ah&quot; in ASCII)</span>
+<span class="loc">cli_client/cards.py:64–67</span>
+</summary>
+<pre><code>def card_text(card: Card, ascii: bool = False) -&gt; str:
+    &quot;&quot;&quot;&#x27;A♥&#x27; (or &#x27;Ah&#x27; with `ascii`).&quot;&quot;&quot;
+    suits = SUIT_LETTERS if ascii else SUIT_SYMBOLS
+    return card.rank.symbol + suits[card.suit]</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def suit_style</span><span class="desc"> – style name of a suit</span>
+<span class="loc">cli_client/cards.py:70–71</span>
+</summary>
+<pre><code>def suit_style(suit: Suit) -&gt; str:
+    return SUIT_STYLES[suit]</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def suit_color</span><span class="desc"> – colour name of a suit</span>
+<span class="loc">cli_client/cards.py:74–75</span>
+</summary>
+<pre><code>def suit_color(suit: Suit) -&gt; str:
+    return SUIT_COLORS[SUIT_STYLES[suit]]</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def card_segments</span><span class="desc"> – one styled segment per card, optionally bracketed and separated</span>
+<span class="loc">cli_client/cards.py:78–88</span>
+</summary>
+<pre><code>def card_segments(
+    cards: Iterable[Card], ascii: bool = False, brackets: bool = True, sep: str = &quot;&quot;
+) -&gt; list[Segment]:
+    &quot;&quot;&quot;`[A♥][K♦]`: one segment per card, in its suit style.&quot;&quot;&quot;
+    out: list[Segment] = []
+    for i, card in enumerate(cards):
+        if i and sep:
+            out.append((sep, None))
+        text = card_text(card, ascii)
+        out.append((f&quot;[{text}]&quot; if brackets else text, suit_style(card.suit)))
+    return out</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def back_segments</span><span class="desc"> – n face-down cards</span>
+<span class="loc">cli_client/cards.py:91–99</span>
+</summary>
+<pre><code>def back_segments(n: int, ascii: bool = False, brackets: bool = True, sep: str = &quot;&quot;) -&gt; list[Segment]:
+    &quot;&quot;&quot;`n` face-down cards: `[▒▒]` (or `[##]`).&quot;&quot;&quot;
+    back = CARD_BACK_ASCII if ascii else CARD_BACK
+    out: list[Segment] = []
+    for i in range(n):
+        if i and sep:
+            out.append((sep, None))
+        out.append((f&quot;[{back}]&quot; if brackets else back, &quot;card_back&quot;))
+    return out</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def empty_slot_segments</span><span class="desc"> – n empty board slots</span>
+<span class="loc">cli_client/cards.py:102–104</span>
+</summary>
+<pre><code>def empty_slot_segments(n: int) -&gt; list[Segment]:
+    &quot;&quot;&quot;`n` empty board slots `[  ]`.&quot;&quot;&quot;
+    return [(f&quot;[{EMPTY_SLOT}]&quot;, &quot;empty_slot&quot;) for _ in range(n)]</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def segments_text</span><span class="desc"> – plain text of segments</span>
+<span class="loc">cli_client/cards.py:107–108</span>
+</summary>
+<pre><code>def segments_text(segments: Iterable[Segment]) -&gt; str:
+    return &quot;&quot;.join(text for text, _ in segments)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def fmt_amount</span><span class="desc"> – big blinds without trailing zeros (&quot;?&quot; for None)</span>
+<span class="loc">cli_client/cards.py:111–118</span>
+</summary>
+<pre><code>def fmt_amount(amount: Optional[float]) -&gt; str:
+    &quot;&quot;&quot;Big blinds without trailing zeros: 2.0 -&gt; &#x27;2&#x27;, 1.5 -&gt; &#x27;1.5&#x27;.&quot;&quot;&quot;
+    if amount is None:
+        return &quot;?&quot;
+    value = round(float(amount), 2)
+    if value == int(value):
+        return str(int(value))
+    return f&quot;{value:g}&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _rank</span><span class="desc"> – rank symbol of a value</span>
+<span class="loc">cli_client/cards.py:124–125</span>
+</summary>
+<pre><code>def _rank(value: int) -&gt; str:
+    return Rank(value).symbol</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _plural</span><span class="desc"> – plural rank (&quot;Ks&quot;)</span>
+<span class="loc">cli_client/cards.py:128–129</span>
+</summary>
+<pre><code>def _plural(value: int) -&gt; str:
+    return _rank(value) + &quot;s&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def describe_high</span><span class="desc"> – readable high hand from a rank_high tuple</span>
+<span class="loc">cli_client/cards.py:132–153</span>
+</summary>
+<pre><code>def describe_high(rank: tuple[int, ...]) -&gt; str:
+    &quot;&quot;&quot;&#x27;Flush, A high&#x27;, &#x27;Two pair, Ks and 7s&#x27;, ... from a `rank_high` tuple.&quot;&quot;&quot;
+    category, rest = rank[0], rank[1:]
+    if category == STRAIGHT_FLUSH:
+        return &quot;Royal flush&quot; if rest[0] == int(Rank.ACE) else f&quot;Straight flush, {_rank(rest[0])} high&quot;
+    if category == QUADS:
+        return f&quot;Four of a kind, {_plural(rest[0])}&quot;
+    if category == FULL_HOUSE:
+        return f&quot;Full house, {_plural(rest[0])} full of {_plural(rest[1])}&quot;
+    if category == FLUSH:
+        return f&quot;Flush, {_rank(rest[0])} high&quot;
+    if category == STRAIGHT:
+        return f&quot;Straight, {_rank(rest[0])} high&quot;
+    if category == TRIPS:
+        return f&quot;Three of a kind, {_plural(rest[0])}&quot;
+    if category == TWO_PAIR:
+        return f&quot;Two pair, {_plural(rest[0])} and {_plural(rest[1])}&quot;
+    if category == PAIR:
+        return f&quot;Pair of {_plural(rest[0])}&quot;
+    if category == HIGH_CARD:
+        return f&quot;High card, {_rank(rest[0])}&quot;
+    return &quot;Unknown hand&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def describe_low</span><span class="desc"> – &quot;7-5-4-2-A low&quot; or &quot;no low&quot;</span>
+<span class="loc">cli_client/cards.py:156–160</span>
+</summary>
+<pre><code>def describe_low(low: Optional[tuple[int, ...]]) -&gt; str:
+    &quot;&quot;&quot;&#x27;7-5-4-2-A low&#x27;, or &#x27;no low&#x27;.&quot;&quot;&quot;
+    if low is None:
+        return &quot;no low&quot;
+    return &quot;-&quot;.join(&quot;A&quot; if v == 1 else _rank(v) for v in low) + &quot; low&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def describe_hand</span><span class="desc"> – high and low description via the engine evaluator (empty before the flop)</span>
+<span class="loc">cli_client/cards.py:163–169</span>
+</summary>
+<pre><code>def describe_hand(hand: Hand, board: Board) -&gt; str:
+    &quot;&quot;&quot;&#x27;Flush, A high; 7-5-4-2-A low&#x27;. Uses the engine&#x27;s evaluator, so the Omaha
+    exactly-two-hole-cards rule applies. Empty before the flop.&quot;&quot;&quot;
+    if len(board.cards) &lt; 3:
+        return &quot;&quot;
+    high, low = best_omaha(hand, board)
+    return f&quot;{describe_high(high)}; {describe_low(low)}&quot;</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">controller.py</span><span class="desc"> – Client: headless UI logic (message handling, menus, key handling, replies, presets)</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – headless design and key names</span>
+<span class="loc">cli_client/controller.py:1–6</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Client: message handling, menus, replies and presets. No curses code, so tests
+can drive it headless through `drain()`, `handle_key(key)` and `tick(now)`.
+
+Keys are strings: printable characters as themselves, plus &quot;up&quot;, &quot;down&quot;,
+&quot;enter&quot;, &quot;esc&quot;, &quot;backspace&quot;, &quot;pgup&quot;, &quot;pgdn&quot;, &quot;F2&quot;, &quot;F3&quot; and &quot;ctrl-c&quot;.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – engine, cli_server protocol, cards, net, state</span>
+<span class="loc">cli_client/controller.py:8–40</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import logging
+import math
+import queue
+import time
+from dataclasses import dataclass, field
+from typing import Any, Callable, Optional
+
+from engine import HandStarted, LegalActions, PlayerActed, TableView
+from engine.events import FOLD_TIMEOUT
+
+from cli_server.protocol import (
+    LobbyStatus,
+    ProtocolError,
+    TableSettings,
+    action_request,
+    decode_acting,
+    decode_event,
+    decode_hand,
+    decode_hand_result,
+    decode_legal,
+    decode_lobby,
+    decode_table_view,
+    hand_end_request,
+    leave_request,
+    rebuy_request,
+    sit_in_request,
+)
+
+from .cards import fmt_amount
+from .net import ConnectionLost
+from .state import TableState</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, logger, presets and labels, log page size, help lines</span>
+<span class="loc">cli_client/controller.py:42–72</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;ClientSettings&quot;,
+    &quot;MenuItem&quot;,
+    &quot;UIView&quot;,
+    &quot;Client&quot;,
+    &quot;PRESET_CHECK_FOLD&quot;,
+    &quot;PRESET_CALL_ANY&quot;,
+    &quot;PRESET_LABELS&quot;,
+    &quot;preset_action&quot;,
+]
+
+_log = logging.getLogger(&quot;cli_client&quot;)
+
+PRESET_CHECK_FOLD = &quot;check_fold&quot;
+PRESET_CALL_ANY = &quot;call_any&quot;
+PRESET_LABELS = {PRESET_CHECK_FOLD: &quot;Check/Fold&quot;, PRESET_CALL_ANY: &quot;Call any&quot;}
+
+LOG_PAGE = 10
+_EPS = 1e-9
+
+HELP_LINES = (
+    &quot;1-9 / ↑↓ Enter   choose a menu option&quot;,
+    &quot;f c r            fold, check/call, bet/raise&quot;,
+    &quot;x or F2          preset Check/Fold&quot;,
+    &quot;a or F3          preset Call any&quot;,
+    &quot;t                top up (after this hand)&quot;,
+    &quot;r / s            rebuy / sit in (sitting out)&quot;,
+    &quot;l q Ctrl-C       leave the table&quot;,
+    &quot;PgUp PgDn        scroll the table log&quot;,
+    &quot;?                close this help&quot;,
+)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">ClientSettings</span><span class="desc"> – stack / rebuy target, hand-end timeout, ASCII, exit delay</span>
+<span class="loc">cli_client/controller.py:75–80</span>
+</summary>
+<pre><code>@dataclass
+class ClientSettings:
+    stack_bb: float = 100.0  # buy-in, and the default rebuy / top-up target
+    hand_end_timeout: float = 20.0  # rebuy / sit-in menu: default answer after this
+    ascii: bool = False
+    exit_delay: float = 1.5  # seconds the screen stays up after `left`</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">MenuItem</span><span class="desc"> – label, kind, hotkey and amount of one menu option</span>
+<span class="loc">cli_client/controller.py:83–88</span>
+</summary>
+<pre><code>@dataclass
+class MenuItem:
+    label: str
+    kind: str  # action: fold/check/call/raise/leave; hand end: rebuy/sit_out/sit_in/keep_out/leave_table
+    hotkey: Optional[str] = None
+    amount: Optional[float] = None</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">UIView</span><span class="desc"> – everything the renderer needs besides the TableState</span>
+<span class="loc">cli_client/controller.py:91–108</span>
+</summary>
+<pre><code>@dataclass
+class UIView:
+    &quot;&quot;&quot;What the renderer needs besides the TableState.&quot;&quot;&quot;
+
+    now: float = 0.0
+    ascii: bool = False
+    menu_title: str = &quot;&quot;
+    menu: list[MenuItem] = field(default_factory=list)
+    selected: int = 0
+    countdown: Optional[float] = None  # seconds left for my turn / hand-end menu
+    preset: Optional[str] = None  # label of the active preset
+    prompt: Optional[str] = None  # confirmation or input line
+    status: str = &quot;&quot;
+    error: str = &quot;&quot;
+    lobby_text: Optional[str] = None
+    show_help: bool = False
+    help_lines: tuple[str, ...] = HELP_LINES
+    log_scroll: int = 0</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">_Input</span><span class="desc"> – an amount input line with its submit callback</span>
+<span class="loc">cli_client/controller.py:111–115</span>
+</summary>
+<pre><code>@dataclass
+class _Input:
+    prompt: str
+    text: str
+    on_submit: Callable[[float], None]</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def preset_action</span><span class="desc"> – the action a preset sends at the next turn</span>
+<span class="loc">cli_client/controller.py:118–122</span>
+</summary>
+<pre><code>def preset_action(preset: str, legal: LegalActions) -&gt; str:
+    &quot;&quot;&quot;The action a preset sends at the next turn.&quot;&quot;&quot;
+    if preset == PRESET_CHECK_FOLD:
+        return &quot;check&quot; if legal.can_check else &quot;fold&quot;
+    return &quot;check&quot; if legal.can_check else &quot;call&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _is_stale_turn / def _is_during_hand</span><span class="desc"> – classify server error texts</span>
+<span class="loc">cli_client/controller.py:125–130</span>
+</summary>
+<pre><code>def _is_stale_turn(error: str) -&gt; bool:
+    return &quot;pending turn&quot; in error
+
+
+def _is_during_hand(error: str) -&gt; bool:
+    return &quot;during&quot; in error</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Client</span><span class="desc"> – the client&#x27;s state machine, driven by drain / handle_key / tick</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – creates the TableState and initialises all state</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">collaborators, settings and the table model</span>
+<span class="loc">cli_client/controller.py:144–152</span>
+</summary>
+<pre><code>self.name = name
+self.conn = conn
+self.inbox = inbox
+self.clock = clock
+self.settings = settings or ClientSettings()
+self.table = table
+self.state = TableState(name, table, ascii=self.settings.ascii)
+self.state.queued = queued
+self.now = clock()</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">my turn</span>
+<span class="loc">cli_client/controller.py:153–155</span>
+</summary>
+<pre><code># my turn
+self.pending_turn: Optional[tuple[int, LegalActions]] = None
+self.turn_deadline: Optional[float] = None</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">hand end</span>
+<span class="loc">cli_client/controller.py:156–162</span>
+</summary>
+<pre><code># hand end
+self.pending_hand_end: Optional[int] = None
+self.hand_end_deadline: Optional[float] = None
+self.hand_end_default: dict = {}
+self.rebuy_amount: Optional[float] = None
+self.last_result: Any = None
+self.model_stacks_at_hand_end: dict[str, float] = {}</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">menus and prompts</span>
+<span class="loc">cli_client/controller.py:163–169</span>
+</summary>
+<pre><code># menus and prompts
+self.menu: list[MenuItem] = []
+self.menu_kind: Optional[str] = None  # &quot;action&quot; | &quot;hand_end&quot;
+self.menu_title = &quot;&quot;
+self.selected = 0
+self.confirm: Optional[tuple[str, Callable[[], None]]] = None
+self.input: Optional[_Input] = None</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">queued choices: preset, top-up, leave, deferred request</span>
+<span class="loc">cli_client/controller.py:170–175</span>
+</summary>
+<pre><code># queued choices
+self.preset: Optional[str] = None
+self.queued_topup: Optional[float] = None
+self.queued_leave = False
+self.deferred: Optional[str] = None  # &quot;rebuy&quot; | &quot;sit_in&quot;, rejected during a hand
+self.leaving = False</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">display flags</span>
+<span class="loc">cli_client/controller.py:176–183</span>
+</summary>
+<pre><code># display
+self.lobby: Optional[tuple[LobbyStatus, float]] = None
+self.status = &quot;&quot;
+self.error = &quot;&quot;
+self.show_help = False
+self.log_scroll = 0
+self.dirty = True
+self.bell = False</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">lifecycle and queued status text</span>
+<span class="loc">cli_client/controller.py:184–193</span>
+</summary>
+<pre><code># lifecycle
+self.done = False
+self.exit_code = 0
+self.exit_at: Optional[float] = None
+self.final_stack: Optional[float] = None
+self.hands_played = 0
+self.server_closed = False
+self._ctrl_c = 0
+if queued:
+    self.status = &quot;A hand is running: you will be seated when it ends&quot;</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def drain</span><span class="desc"> – handles every waiting inbox message</span>
+<span class="loc">cli_client/controller.py:197–209</span>
+</summary>
+<pre><code>def drain(self) -&gt; int:
+    &quot;&quot;&quot;Handle every message waiting in the inbox. Returns how many.&quot;&quot;&quot;
+    n = 0
+    while True:
+        try:
+            msg = self.inbox.get_nowait()
+        except queue.Empty:
+            break
+        self.handle_message(msg)
+        n += 1
+    if n:
+        self.dirty = True
+    return n</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def tick</span><span class="desc"> – hand-end default answer, exit delay, per-second redraw</span>
+<span class="loc">cli_client/controller.py:211–231</span>
+</summary>
+<pre><code>def tick(self, now: Optional[float] = None) -&gt; None:
+    &quot;&quot;&quot;Timers: the hand-end default answer, the exit delay, countdown redraws.&quot;&quot;&quot;
+    now = self.clock() if now is None else now
+    previous, self.now = self.now, now
+    if (
+        self.pending_hand_end is not None
+        and self.hand_end_deadline is not None
+        and now &gt;= self.hand_end_deadline
+    ):
+        self.input = None
+        self.confirm = None
+        default = dict(self.hand_end_default)
+        self._send_hand_end(**default)
+        self.status = &quot;No answer in time: &quot; + (
+            &quot;leaving&quot; if default.get(&quot;leave&quot;) else &quot;sitting out&quot;
+        )
+        self.dirty = True
+    if self.exit_at is not None and now &gt;= self.exit_at:
+        self.done = True
+    if math.floor(previous) != math.floor(now):
+        self.dirty = True</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def handle_message</span><span class="desc"> – dispatches a message by type (disconnect marker, unknown types ignored)</span>
+<span class="loc">cli_client/controller.py:235–251</span>
+</summary>
+<pre><code>def handle_message(self, msg: Any) -&gt; None:
+    self.now = self.clock()
+    self.dirty = True
+    if isinstance(msg, tuple):
+        if msg and msg[0] == &quot;disconnected&quot;:
+            self._on_closed()
+        return
+    if not isinstance(msg, dict):
+        return
+    kind = msg.get(&quot;type&quot;)
+    handler = _HANDLERS.get(kind) if isinstance(kind, str) else None
+    if handler is None:
+        return  # unknown message type: forward compatible
+    try:
+        handler(self, msg)
+    except (ProtocolError, KeyError) as e:
+        _log.warning(&quot;cannot handle %r message: %s&quot;, kind, e)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _msg_seated</span><span class="desc"> – applies the view; logs the seat</span>
+<span class="loc">cli_client/controller.py:253–259</span>
+</summary>
+<pre><code>def _msg_seated(self, msg: dict) -&gt; None:
+    view = decode_table_view(msg[&quot;view&quot;])
+    self.state.apply_view(view, hand_running=False)
+    self.state.queued = False
+    if self.status.startswith(&quot;A hand is running&quot;):
+        self.status = &quot;&quot;
+    self.state.add_log(f&quot;You sit down at seat {view.seat + 1}&quot;, mine=True)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _msg_hole_cards</span><span class="desc"> – applies the view and stores my cards</span>
+<span class="loc">cli_client/controller.py:261–265</span>
+</summary>
+<pre><code>def _msg_hole_cards(self, msg: dict) -&gt; None:
+    view = decode_table_view(msg[&quot;view&quot;])
+    self.state.apply_view(view, hand_running=True)
+    self.state.my_cards = decode_hand(msg[&quot;cards&quot;])
+    self.hands_played += 1</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _msg_event</span><span class="desc"> – applies a table event; resets per-hand UI; notices a timed-out turn</span>
+<span class="loc">cli_client/controller.py:267–286</span>
+</summary>
+<pre><code>def _msg_event(self, msg: dict) -&gt; None:
+    try:
+        event = decode_event(msg[&quot;event&quot;])
+    except ProtocolError:
+        return  # unknown event type: ignored
+    self.state.apply_event(event)
+    if isinstance(event, HandStarted):
+        self.lobby = None
+        self.preset = None
+        self.error = &quot;&quot;
+        self.log_scroll = 0 if self.log_scroll == 0 else self.log_scroll
+    elif isinstance(event, PlayerActed) and event.name == self.name:
+        if self.pending_turn is not None:
+            # The dealer moved on without us (timeout).
+            self.pending_turn = None
+            self.turn_deadline = None
+            if self.menu_kind == &quot;action&quot;:
+                self._clear_menu()
+        if event.reason == FOLD_TIMEOUT:
+            self.status = &quot;You did not act in time and will sit out&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _msg_turn</span><span class="desc"> – my turn: deadline, preset auto-answer or the action menu</span>
+<span class="loc">cli_client/controller.py:288–306</span>
+</summary>
+<pre><code>def _msg_turn(self, msg: dict) -&gt; None:
+    seq = msg[&quot;seq&quot;]
+    view = decode_table_view(msg[&quot;view&quot;])
+    legal = decode_legal(msg[&quot;legal&quot;])
+    timeout = msg.get(&quot;timeout&quot;)
+    self.state.apply_view(view, hand_running=True)
+    self.pending_turn = (seq, legal)
+    self.turn_deadline = (
+        self.now + float(timeout) if isinstance(timeout, (int, float)) and timeout &gt; 0 else None
+    )
+    self.state.acting = (view.seat, self.turn_deadline)
+    self.error = &quot;&quot;
+    if self.preset is not None:
+        action = preset_action(self.preset, legal)
+        self.preset = None
+        self._send_action(action)
+        return
+    self._build_action_menu(view, legal)
+    self.bell = True</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _msg_hand_end</span><span class="desc"> – applies the result, then leave / busted menu / sitting-out menu / auto reply with top-up</span>
+<span class="loc">cli_client/controller.py:308–341</span>
+</summary>
+<pre><code>def _msg_hand_end(self, msg: dict) -&gt; None:
+    seq = msg[&quot;seq&quot;]
+    seat = msg.get(&quot;seat&quot;)
+    result = decode_hand_result(msg[&quot;result&quot;])
+    self.model_stacks_at_hand_end = {s.name: s.stack for s in self.state.seats}
+    self.state.apply_result(result)
+    self.last_result = result
+    self.preset = None
+    self.pending_turn = None
+    self.turn_deadline = None
+    if self.menu_kind == &quot;action&quot;:
+        self._clear_menu()
+    self.pending_hand_end = seq
+    self.hand_end_deadline = None
+    stack = result.stacks.get(seat) if isinstance(seat, int) else None
+    if stack is None:
+        me = self.state.me
+        stack = me.stack if me is not None else None
+    if self.queued_leave:
+        self.queued_leave = False
+        self._send_hand_end(leave=True)
+        return
+    if stack is not None and stack &lt;= _EPS:
+        self.rebuy_amount = self._default_rebuy(0.0)
+        self._build_busted_menu()
+    elif self.state.sitting_out:
+        self._build_sitting_out_menu()
+    else:
+        topup, self.queued_topup = self.queued_topup, None
+        self._send_hand_end(rebuy_bb=topup)
+        return
+    self.hand_end_deadline = self.now + self.settings.hand_end_timeout
+    self.hand_end_default = {}
+    self.bell = True</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _msg_sat_out</span><span class="desc"> – marks me sitting out</span>
+<span class="loc">cli_client/controller.py:343–350</span>
+</summary>
+<pre><code>def _msg_sat_out(self, msg: dict) -&gt; None:
+    self.state.sitting_out = True
+    me = self.state.me
+    if me is not None:
+        from engine import PlayerStatus
+
+        me.status = PlayerStatus.SITTING_OUT
+    self.status = &quot;You are sitting out&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _msg_returned</span><span class="desc"> – marks me back in</span>
+<span class="loc">cli_client/controller.py:352–360</span>
+</summary>
+<pre><code>def _msg_returned(self, msg: dict) -&gt; None:
+    self.state.sitting_out = False
+    me = self.state.me
+    if me is not None:
+        from engine import PlayerStatus
+
+        me.status = PlayerStatus.ACTIVE
+    self.status = &quot;You are back in the game&quot;
+    self.deferred = None</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _msg_left</span><span class="desc"> – records the final stack and schedules exit</span>
+<span class="loc">cli_client/controller.py:362–371</span>
+</summary>
+<pre><code>def _msg_left(self, msg: dict) -&gt; None:
+    self.state.left = True
+    final = msg.get(&quot;final_stack_bb&quot;)
+    if isinstance(final, (int, float)):
+        self.final_stack = float(final)
+    self._clear_pending()
+    self.state.add_log(f&quot;You left the table with {fmt_amount(self.final_stack)} BB&quot;, mine=True)
+    self.status = &quot;You left the table&quot;
+    self.exit_code = 0
+    self.exit_at = self.now + self.settings.exit_delay</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _msg_close</span><span class="desc"> – server closed the table</span>
+<span class="loc">cli_client/controller.py:373–374</span>
+</summary>
+<pre><code>def _msg_close(self, msg: dict) -&gt; None:
+    self._on_closed()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _msg_acting</span><span class="desc"> – whose turn it is and its deadline</span>
+<span class="loc">cli_client/controller.py:376–382</span>
+</summary>
+<pre><code>def _msg_acting(self, msg: dict) -&gt; None:
+    acting = decode_acting(msg)
+    seat = self.state.seat_of(acting.name)
+    if seat is None:
+        seat = acting.seat
+    deadline = None if acting.timeout is None else self.now + acting.timeout
+    self.state.acting = (seat, deadline)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _msg_lobby</span><span class="desc"> – stores the lobby status</span>
+<span class="loc">cli_client/controller.py:384–385</span>
+</summary>
+<pre><code>def _msg_lobby(self, msg: dict) -&gt; None:
+    self.lobby = (decode_lobby(msg), self.now)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_closed</span><span class="desc"> – table closed: schedule exit or show the error (exit 1)</span>
+<span class="loc">cli_client/controller.py:387–398</span>
+</summary>
+<pre><code>def _on_closed(self) -&gt; None:
+    if self.state.left:
+        if self.exit_at is None:
+            self.exit_at = self.now + self.settings.exit_delay
+        return
+    if self.server_closed:
+        return
+    self.server_closed = True
+    self.exit_code = 1
+    self._clear_pending()
+    self.status = &quot;Server closed the table — press any key to exit&quot;
+    self.state.add_log((&quot;Server closed the table&quot;, &quot;error&quot;))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _connection_lost</span><span class="desc"> – connection lost: show the error (exit 1)</span>
+<span class="loc">cli_client/controller.py:400–407</span>
+</summary>
+<pre><code>def _connection_lost(self) -&gt; None:
+    if self.server_closed:
+        return
+    self.server_closed = True
+    self.exit_code = 1
+    self._clear_pending()
+    self.status = &quot;Connection to server lost — press any key to exit&quot;
+    self.state.add_log((&quot;Connection to server lost&quot;, &quot;error&quot;))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _clear_pending</span><span class="desc"> – drops pending turn / hand end, prompts and menu</span>
+<span class="loc">cli_client/controller.py:409–416</span>
+</summary>
+<pre><code>def _clear_pending(self) -&gt; None:
+    self.pending_turn = None
+    self.turn_deadline = None
+    self.pending_hand_end = None
+    self.hand_end_deadline = None
+    self.confirm = None
+    self.input = None
+    self._clear_menu()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _request</span><span class="desc"> – one server request; ConnectionLost handled</span>
+<span class="loc">cli_client/controller.py:420–425</span>
+</summary>
+<pre><code>def _request(self, msg: dict) -&gt; Optional[dict]:
+    try:
+        return self.conn.request(msg)
+    except ConnectionLost:
+        self._connection_lost()
+        return None</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _send_action</span><span class="desc"> – sends the turn&#x27;s action; handles stale / other rejections</span>
+<span class="loc">cli_client/controller.py:427–452</span>
+</summary>
+<pre><code>def _send_action(self, action: str) -&gt; None:
+    if self.pending_turn is None:
+        return
+    seq, _legal = self.pending_turn
+    response = self._request(action_request(self.name, seq, action))
+    if response is None:
+        return
+    if response.get(&quot;ok&quot;):
+        self.pending_turn = None
+        self.turn_deadline = None
+        self.error = &quot;&quot;
+        if self.menu_kind == &quot;action&quot;:
+            self._clear_menu()
+        if action == &quot;leave&quot;:
+            self.leaving = True
+            self.status = &quot;Leaving after this hand…&quot;
+        return
+    error = str(response.get(&quot;error&quot;) or &quot;action rejected&quot;)
+    if _is_stale_turn(error):
+        self.pending_turn = None
+        self.turn_deadline = None
+        if self.menu_kind == &quot;action&quot;:
+            self._clear_menu()
+        self.error = f&quot;Too late: {error}&quot;
+    else:
+        self.error = error  # the turn is still pending: the menu stays</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _send_hand_end</span><span class="desc"> – sends the hand_end reply and updates the status</span>
+<span class="loc">cli_client/controller.py:454–478</span>
+</summary>
+<pre><code>def _send_hand_end(
+    self, rebuy_bb: Optional[float] = None, sit_in: bool = False, leave: bool = False
+) -&gt; None:
+    seq = self.pending_hand_end
+    if seq is None:
+        return
+    self.pending_hand_end = None
+    self.hand_end_deadline = None
+    if self.menu_kind == &quot;hand_end&quot;:
+        self._clear_menu()
+    response = self._request(hand_end_request(self.name, seq, rebuy_bb, sit_in, leave))
+    if response is None:
+        return
+    if not response.get(&quot;ok&quot;):
+        self.error = str(response.get(&quot;error&quot;) or &quot;reply rejected&quot;)
+        return
+    if rebuy_bb or sit_in:
+        self.deferred = None
+    if rebuy_bb:
+        self.status = f&quot;Rebuy of {fmt_amount(rebuy_bb)} BB requested&quot;
+    elif sit_in:
+        self.status = &quot;Sitting in for the next hand&quot;
+    if leave:
+        self.leaving = True
+        self.status = &quot;Leaving the table…&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _set_menu / def _clear_menu</span><span class="desc"> – set or clear the current menu</span>
+<span class="loc">cli_client/controller.py:482–492</span>
+</summary>
+<pre><code>def _set_menu(self, kind: str, title: str, items: list[MenuItem], selected: int = 0) -&gt; None:
+    self.menu_kind = kind
+    self.menu_title = title
+    self.menu = items
+    self.selected = max(0, min(selected, len(items) - 1))
+
+def _clear_menu(self) -&gt; None:
+    self.menu = []
+    self.menu_kind = None
+    self.menu_title = &quot;&quot;
+    self.selected = 0</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _build_action_menu</span><span class="desc"> – fold / check or call / bet or raise / leave, with all-in labels</span>
+<span class="loc">cli_client/controller.py:494–513</span>
+</summary>
+<pre><code>def _build_action_menu(self, view: TableView, legal: LegalActions) -&gt; None:
+    me = view.seats[view.seat] if 0 &lt;= view.seat &lt; len(view.seats) else None
+    stack = me.stack if me is not None else math.inf
+    street_bet = me.street_bet if me is not None else 0.0
+    items = [MenuItem(&quot;Fold&quot;, &quot;fold&quot;, &quot;f&quot;)]
+    if legal.can_check:
+        items.append(MenuItem(&quot;Check&quot;, &quot;check&quot;, &quot;c&quot;))
+    elif legal.call_amount &gt; 0:
+        label = f&quot;Call {fmt_amount(legal.call_amount)}&quot;
+        if legal.call_amount &gt;= stack - _EPS:
+            label += &quot; (all-in)&quot;
+        items.append(MenuItem(label, &quot;call&quot;, &quot;c&quot;, legal.call_amount))
+    if legal.can_raise:
+        verb = &quot;Bet&quot; if view.current_bet &lt;= _EPS else &quot;Raise to&quot;
+        label = f&quot;{verb} {fmt_amount(legal.raise_to)}&quot;
+        if legal.raise_to - street_bet &gt;= stack - _EPS:
+            label += &quot; (all-in)&quot;
+        items.append(MenuItem(label, &quot;raise&quot;, &quot;r&quot;, legal.raise_to))
+    items.append(MenuItem(&quot;Leave table&quot;, &quot;leave&quot;, &quot;l&quot;))
+    self._set_menu(&quot;action&quot;, &quot;Your turn&quot;, items, selected=1)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _build_busted_menu</span><span class="desc"> – rebuy / sit out / leave</span>
+<span class="loc">cli_client/controller.py:515–525</span>
+</summary>
+<pre><code>def _build_busted_menu(self) -&gt; None:
+    amount = self.rebuy_amount
+    items = []
+    if amount is not None and amount &gt; 0:
+        items.append(MenuItem(f&quot;Rebuy {fmt_amount(amount)} BB&quot;, &quot;rebuy&quot;, &quot;r&quot;, amount))
+    items.append(MenuItem(&quot;Sit out&quot;, &quot;sit_out&quot;))
+    items.append(MenuItem(&quot;Leave table&quot;, &quot;leave_table&quot;, &quot;l&quot;))
+    title = &quot;You are out of chips&quot;
+    if amount is not None:
+        title += &quot; ([e] edits the amount)&quot;
+    self._set_menu(&quot;hand_end&quot;, title, items, selected=0)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _build_sitting_out_menu</span><span class="desc"> – sit in / keep out / leave</span>
+<span class="loc">cli_client/controller.py:527–534</span>
+</summary>
+<pre><code>def _build_sitting_out_menu(self) -&gt; None:
+    items = [
+        MenuItem(&quot;Sit in&quot;, &quot;sit_in&quot;, &quot;s&quot;),
+        MenuItem(&quot;Keep sitting out&quot;, &quot;keep_out&quot;),
+        MenuItem(&quot;Leave table&quot;, &quot;leave_table&quot;, &quot;l&quot;),
+    ]
+    selected = 0 if self.deferred == &quot;sit_in&quot; else 1
+    self._set_menu(&quot;hand_end&quot;, &quot;You are sitting out&quot;, items, selected=selected)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _max_add</span><span class="desc"> – room left under the max buy-in</span>
+<span class="loc">cli_client/controller.py:536–538</span>
+</summary>
+<pre><code>def _max_add(self, current: float) -&gt; Optional[float]:
+    cap = self.table.max_buy_in_bb if self.table is not None else None
+    return None if cap is None else round(cap - current, 2)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _default_rebuy</span><span class="desc"> – back to --stack, capped by the max buy-in</span>
+<span class="loc">cli_client/controller.py:540–546</span>
+</summary>
+<pre><code>def _default_rebuy(self, current: float) -&gt; Optional[float]:
+    &quot;&quot;&quot;Back to --stack, capped by the max buy-in when known.&quot;&quot;&quot;
+    amount = round(self.settings.stack_bb - current, 2)
+    cap = self._max_add(current)
+    if cap is not None:
+        amount = min(amount, cap)
+    return amount if amount &gt; 0 else None</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _choose</span><span class="desc"> – executes a menu item (confirms folding when checking is free and leaving)</span>
+<span class="loc">cli_client/controller.py:548–572</span>
+</summary>
+<pre><code>def _choose(self, item: MenuItem) -&gt; None:
+    kind = item.kind
+    if self.menu_kind == &quot;action&quot;:
+        if kind == &quot;fold&quot;:
+            legal = self.pending_turn[1] if self.pending_turn is not None else None
+            if legal is not None and legal.can_check:
+                self.confirm = (&quot;Fold instead of checking? [y/N]&quot;, lambda: self._send_action(&quot;fold&quot;))
+            else:
+                self._send_action(&quot;fold&quot;)
+        elif kind in (&quot;check&quot;, &quot;call&quot;, &quot;raise&quot;):
+            self._send_action(kind)
+        elif kind == &quot;leave&quot;:
+            self.confirm = (
+                &quot;Leave the table? Your hand is folded. [y/N]&quot;,
+                lambda: self._send_action(&quot;leave&quot;),
+            )
+    elif self.menu_kind == &quot;hand_end&quot;:
+        if kind == &quot;rebuy&quot;:
+            self._send_hand_end(rebuy_bb=item.amount)
+        elif kind == &quot;sit_in&quot;:
+            self._send_hand_end(sit_in=True)
+        elif kind in (&quot;sit_out&quot;, &quot;keep_out&quot;):
+            self._send_hand_end()
+        elif kind == &quot;leave_table&quot;:
+            self._send_hand_end(leave=True)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def handle_key</span><span class="desc"> – key dispatch: ctrl-c, exit, help, input, confirm, log scroll, menu, global hotkeys</span>
+<span class="loc">cli_client/controller.py:576–622</span>
+</summary>
+<pre><code>def handle_key(self, key: str) -&gt; None:
+    self.now = self.clock()
+    self.dirty = True
+    if key == &quot;ctrl-c&quot;:
+        self._ctrl_c_key()
+        return
+    if self.server_closed or self.state.left:
+        self.done = True
+        return
+    if self.show_help:
+        self.show_help = False
+        return
+    if self.input is not None:
+        self._input_key(key)
+        return
+    if self.confirm is not None:
+        prompt, action = self.confirm
+        self.confirm = None
+        if key in (&quot;y&quot;, &quot;Y&quot;):
+            action()
+        return
+    if key == &quot;pgup&quot;:
+        self.log_scroll = min(self.log_scroll + LOG_PAGE, max(0, len(self.state.log) - 1))
+        return
+    if key == &quot;pgdn&quot;:
+        self.log_scroll = max(0, self.log_scroll - LOG_PAGE)
+        return
+    if key == &quot;?&quot;:
+        self.show_help = True
+        return
+    if key == &quot;esc&quot;:
+        self.error = &quot;&quot;
+        return
+    if self.menu and self._menu_key(key):
+        return
+    if key in (&quot;x&quot;, &quot;F2&quot;):
+        self._toggle_preset(PRESET_CHECK_FOLD)
+    elif key in (&quot;a&quot;, &quot;F3&quot;):
+        self._toggle_preset(PRESET_CALL_ANY)
+    elif key == &quot;t&quot;:
+        self._top_up_key()
+    elif key == &quot;r&quot;:
+        self._rebuy_key()
+    elif key == &quot;s&quot;:
+        self._sit_in_key()
+    elif key in (&quot;l&quot;, &quot;q&quot;):
+        self._leave_key()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _menu_key</span><span class="desc"> – digits, arrows, enter, edit rebuy amount, item hotkeys</span>
+<span class="loc">cli_client/controller.py:624–651</span>
+</summary>
+<pre><code>def _menu_key(self, key: str) -&gt; bool:
+    if len(key) == 1 and key.isdigit() and key != &quot;0&quot;:
+        index = int(key) - 1
+        if index &lt; len(self.menu):
+            self.selected = index
+            self._choose(self.menu[index])
+            return True
+        return False
+    if key == &quot;up&quot;:
+        self.selected = (self.selected - 1) % len(self.menu)
+        return True
+    if key == &quot;down&quot;:
+        self.selected = (self.selected + 1) % len(self.menu)
+        return True
+    if key == &quot;enter&quot;:
+        self._choose(self.menu[self.selected])
+        return True
+    if key == &quot;e&quot; and self.menu_kind == &quot;hand_end&quot; and any(i.kind == &quot;rebuy&quot; for i in self.menu):
+        self.input = _Input(
+            &quot;Rebuy amount (BB): &quot;, fmt_amount(self.rebuy_amount), self._submit_rebuy_amount
+        )
+        return True
+    for i, item in enumerate(self.menu):
+        if item.hotkey is not None and item.hotkey == key:
+            self.selected = i
+            self._choose(item)
+            return True
+    return False</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _input_key</span><span class="desc"> – edits and submits an amount input</span>
+<span class="loc">cli_client/controller.py:653–672</span>
+</summary>
+<pre><code>def _input_key(self, key: str) -&gt; None:
+    inp = self.input
+    assert inp is not None
+    if key == &quot;esc&quot;:
+        self.input = None
+    elif key == &quot;backspace&quot;:
+        inp.text = inp.text[:-1]
+    elif key == &quot;enter&quot;:
+        self.input = None
+        try:
+            amount = float(inp.text)
+        except ValueError:
+            self.error = f&quot;Not an amount: {inp.text!r}&quot;
+            return
+        if not math.isfinite(amount) or amount &lt;= 0:
+            self.error = &quot;The amount must be positive&quot;
+            return
+        inp.on_submit(round(amount, 2))
+    elif len(key) == 1 and (key.isdigit() or key == &quot;.&quot;):
+        inp.text += key</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _ctrl_c_key</span><span class="desc"> – first ctrl-c leaves, second exits now</span>
+<span class="loc">cli_client/controller.py:674–687</span>
+</summary>
+<pre><code>def _ctrl_c_key(self) -&gt; None:
+    self._ctrl_c += 1
+    if self._ctrl_c &gt;= 2 or self.server_closed or self.state.left:
+        if not self.leaving and not self.state.left and not self.server_closed:
+            try:
+                self.conn.request(leave_request(self.name))
+            except ConnectionLost:
+                pass
+        self.done = True
+        return
+    self.input = None
+    self.confirm = None
+    self.show_help = False
+    self._leave_key()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _toggle_preset</span><span class="desc"> – toggles Check/Fold or Call any while in a hand</span>
+<span class="loc">cli_client/controller.py:689–697</span>
+</summary>
+<pre><code>def _toggle_preset(self, preset: str) -&gt; None:
+    me = self.state.me
+    if self.pending_turn is not None:
+        return  # it is my turn: use the menu
+    if not self.state.in_hand or me is None or me.all_in:
+        self.error = &quot;Presets are available while you are in a hand&quot;
+        return
+    self.preset = None if self.preset == preset else preset
+    self.error = &quot;&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _top_up_key</span><span class="desc"> – opens the top-up input</span>
+<span class="loc">cli_client/controller.py:699–705</span>
+</summary>
+<pre><code>def _top_up_key(self) -&gt; None:
+    me = self.state.me
+    if me is None:
+        self.error = &quot;You are not seated yet&quot;
+        return
+    default = self._default_rebuy(me.stack)
+    self.input = _Input(&quot;Top up (BB): &quot;, fmt_amount(default) if default else &quot;&quot;, self._submit_topup)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _submit_topup</span><span class="desc"> – top up now or queue it after the hand</span>
+<span class="loc">cli_client/controller.py:707–729</span>
+</summary>
+<pre><code>def _submit_topup(self, amount: float) -&gt; None:
+    me = self.state.me
+    cap = self._max_add(me.stack if me is not None else 0.0)
+    if cap is not None and amount &gt; cap + _EPS:
+        self.error = f&quot;The max buy-in allows at most {fmt_amount(cap)} BB more&quot;
+        return
+    if self.state.hand_running:
+        self.queued_topup = amount
+        self.status = f&quot;Top-up of {fmt_amount(amount)} BB will be added after this hand&quot;
+        return
+    response = self._request(rebuy_request(self.name, amount))
+    if response is None:
+        return
+    if response.get(&quot;ok&quot;):
+        self.status = f&quot;Added {fmt_amount(amount)} BB&quot;
+        self.error = &quot;&quot;
+        return
+    error = str(response.get(&quot;error&quot;) or &quot;rebuy rejected&quot;)
+    if _is_during_hand(error):
+        self.queued_topup = amount
+        self.status = f&quot;Top-up of {fmt_amount(amount)} BB will be added after this hand&quot;
+    else:
+        self.error = error</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _submit_rebuy_amount</span><span class="desc"> – sets the rebuy amount (capped) and rebuilds the menu</span>
+<span class="loc">cli_client/controller.py:731–738</span>
+</summary>
+<pre><code>def _submit_rebuy_amount(self, amount: float) -&gt; None:
+    cap = self._max_add(0.0)
+    if cap is not None and amount &gt; cap + _EPS:
+        amount = cap
+        self.status = f&quot;Capped by the max buy-in: {fmt_amount(cap)} BB&quot;
+    self.rebuy_amount = amount
+    if self.menu_kind == &quot;hand_end&quot;:
+        self._build_busted_menu()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _rebuy_key</span><span class="desc"> – rebuy when busted (deferred during a hand)</span>
+<span class="loc">cli_client/controller.py:740–762</span>
+</summary>
+<pre><code>def _rebuy_key(self) -&gt; None:
+    me = self.state.me
+    if me is None:
+        self.error = &quot;You are not seated yet&quot;
+        return
+    if me.stack &gt; _EPS:
+        self.error = &quot;You still have chips: press [t] to top up&quot;
+        return
+    amount = self._default_rebuy(0.0) or self.settings.stack_bb
+    response = self._request(rebuy_request(self.name, amount))
+    if response is None:
+        return
+    if response.get(&quot;ok&quot;):
+        self.status = f&quot;Rebought {fmt_amount(amount)} BB&quot;
+        self.error = &quot;&quot;
+        self.deferred = None
+        return
+    error = str(response.get(&quot;error&quot;) or &quot;rebuy rejected&quot;)
+    if _is_during_hand(error):
+        self.deferred = &quot;rebuy&quot;
+        self.status = &quot;A hand is running: you can rebuy when it ends&quot;
+    else:
+        self.error = error</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _sit_in_key</span><span class="desc"> – sit in when sitting out (deferred during a hand)</span>
+<span class="loc">cli_client/controller.py:764–787</span>
+</summary>
+<pre><code>def _sit_in_key(self) -&gt; None:
+    me = self.state.me
+    if me is None:
+        self.error = &quot;You are not seated yet&quot;
+        return
+    if not self.state.sitting_out:
+        self.error = &quot;You are not sitting out&quot;
+        return
+    if me.stack &lt;= _EPS:
+        self.error = &quot;You have no chips: press [r] to rebuy&quot;
+        return
+    response = self._request(sit_in_request(self.name))
+    if response is None:
+        return
+    if response.get(&quot;ok&quot;):
+        self.status = &quot;Sitting in…&quot;
+        self.error = &quot;&quot;
+        return
+    error = str(response.get(&quot;error&quot;) or &quot;sit-in rejected&quot;)
+    if _is_during_hand(error):
+        self.deferred = &quot;sit_in&quot;
+        self.status = &quot;A hand is running: you can sit in when it ends&quot;
+    else:
+        self.error = error</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _leave_key</span><span class="desc"> – leave via the hand-end reply, a confirmation or directly</span>
+<span class="loc">cli_client/controller.py:789–799</span>
+</summary>
+<pre><code>def _leave_key(self) -&gt; None:
+    if self.leaving:
+        self.status = &quot;Leaving after this hand…&quot;
+        return
+    if self.pending_hand_end is not None:
+        self._send_hand_end(leave=True)
+        return
+    if self.state.in_hand:
+        self.confirm = (&quot;Leave the table? Your hand is folded. [y/N]&quot;, self._leave)
+    else:
+        self._leave()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _leave</span><span class="desc"> – answers a pending turn with leave, else sends a leave request</span>
+<span class="loc">cli_client/controller.py:801–814</span>
+</summary>
+<pre><code>def _leave(self) -&gt; None:
+    if self.pending_turn is not None:
+        # The dealer is waiting for this turn: answer it with &quot;leave&quot;.
+        self._send_action(&quot;leave&quot;)
+        return
+    response = self._request(leave_request(self.name))
+    if response is None:
+        return
+    if response.get(&quot;ok&quot;):
+        self.leaving = True
+        self.preset = None
+        self.status = &quot;Leaving after this hand…&quot; if self.state.hand_running else &quot;Leaving…&quot;
+    else:
+        self.error = str(response.get(&quot;error&quot;) or &quot;leave rejected&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def lobby_text</span><span class="desc"> – waiting / starting / next-hand text with countdown</span>
+<span class="loc">cli_client/controller.py:818–837</span>
+</summary>
+<pre><code>def lobby_text(self) -&gt; Optional[str]:
+    if self.state.hand_running:
+        return None
+    if self.state.queued:
+        return &quot;Waiting for the current hand to finish&quot;
+    if self.lobby is not None:
+        status, received = self.lobby
+        remaining = None
+        if status.starts_in is not None:
+            remaining = max(0, math.ceil(status.starts_in - (self.now - received)))
+        if status.state == &quot;waiting&quot;:
+            return f&quot;Waiting for players ({status.active}/{status.needed})&quot;
+        if status.state == &quot;starting&quot;:
+            return &quot;Game starts soon&quot; if remaining is None else f&quot;Game starts in {remaining} s&quot;
+        if status.state == &quot;next_hand&quot;:
+            return &quot;Next hand soon&quot; if remaining is None else f&quot;Next hand in {remaining} s&quot;
+    active = sum(1 for s in self.state.seats if not s.sitting_out and s.stack &gt; _EPS)
+    if active &lt; 2 and self.state.hand_number == 0 or active &lt; 2:
+        return &quot;Waiting for players&quot;
+    return None</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def countdown</span><span class="desc"> – seconds left for my turn or the hand-end menu</span>
+<span class="loc">cli_client/controller.py:839–845</span>
+</summary>
+<pre><code>def countdown(self) -&gt; Optional[float]:
+    deadline = None
+    if self.pending_turn is not None:
+        deadline = self.turn_deadline
+    elif self.pending_hand_end is not None:
+        deadline = self.hand_end_deadline
+    return None if deadline is None else max(0.0, deadline - self.now)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def ui_view</span><span class="desc"> – builds the UIView for the renderer</span>
+<span class="loc">cli_client/controller.py:847–872</span>
+</summary>
+<pre><code>def ui_view(self) -&gt; UIView:
+    prompt = None
+    if self.input is not None:
+        prompt = f&quot;{self.input.prompt}{self.input.text}_  (Enter: OK, Esc: cancel)&quot;
+    elif self.confirm is not None:
+        prompt = self.confirm[0]
+    status = self.status
+    if self.leaving and not self.state.left and not status:
+        status = &quot;Leaving after this hand…&quot;
+    if self.queued_topup and not status:
+        status = f&quot;Top-up of {fmt_amount(self.queued_topup)} BB after this hand&quot;
+    return UIView(
+        now=self.now,
+        ascii=self.settings.ascii,
+        menu_title=self.menu_title,
+        menu=list(self.menu),
+        selected=self.selected,
+        countdown=self.countdown(),
+        preset=PRESET_LABELS.get(self.preset) if self.preset else None,
+        prompt=prompt,
+        status=status,
+        error=self.error,
+        lobby_text=self.lobby_text(),
+        show_help=self.show_help,
+        log_scroll=self.log_scroll,
+    )</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def summary</span><span class="desc"> – final &quot;name: N hands played, final stack X BB&quot;</span>
+<span class="loc">cli_client/controller.py:874–880</span>
+</summary>
+<pre><code>def summary(self) -&gt; str:
+    stack = self.final_stack
+    if stack is None:
+        me = self.state.me
+        stack = me.stack if me is not None else None
+    hands = &quot;1 hand&quot; if self.hands_played == 1 else f&quot;{self.hands_played} hands&quot;
+    return f&quot;{self.name}: {hands} played, final stack {fmt_amount(stack)} BB&quot;</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – _HANDLERS: message type -&gt; Client method</span>
+<span class="loc">cli_client/controller.py:883–895</span>
+</summary>
+<pre><code>_HANDLERS: dict[str, Callable[[Client, dict], None]] = {
+    &quot;seated&quot;: Client._msg_seated,
+    &quot;hole_cards&quot;: Client._msg_hole_cards,
+    &quot;event&quot;: Client._msg_event,
+    &quot;turn&quot;: Client._msg_turn,
+    &quot;hand_end&quot;: Client._msg_hand_end,
+    &quot;sat_out&quot;: Client._msg_sat_out,
+    &quot;returned&quot;: Client._msg_returned,
+    &quot;left&quot;: Client._msg_left,
+    &quot;close&quot;: Client._msg_close,
+    &quot;acting&quot;: Client._msg_acting,
+    &quot;lobby&quot;: Client._msg_lobby,
+}</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">main.py</span><span class="desc"> – cli_client entry point: command line, joining the table, running the UI</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – usage and exit codes</span>
+<span class="loc">cli_client/main.py:1–8</span>
+</summary>
+<pre><code>&quot;&quot;&quot;cli_client entry point: command line, joining the table, running the UI.
+
+    cli_client --server-port PORT --port PORT --name NICK [--stack BB] [--seat N]
+               [--ascii] [--hand-end-timeout SECONDS] [--log-file PATH]
+
+Exit codes: 0 after a normal leave, 1 if the server connection is lost or the
+server closes the table, 2 if startup or the join fails.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – argparse, logging, protocol, controller, net</span>
+<span class="loc">cli_client/main.py:10–23</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import argparse
+import logging
+import math
+import queue
+import sys
+import time
+from typing import Any, Callable, Optional, Sequence
+
+from cli_server.protocol import ProtocolError, decode_join_settings, join_request
+
+from .controller import Client, ClientSettings
+from .net import HOST, CallbackListener, ConnectionLost, ServerConnection</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, default server port, stack, hand-end timeout, logger</span>
+<span class="loc">cli_client/main.py:25–31</span>
+</summary>
+<pre><code>__all__ = [&quot;DEFAULT_SERVER_PORT&quot;, &quot;JoinError&quot;, &quot;build_parser&quot;, &quot;parse_args&quot;, &quot;join_table&quot;, &quot;main&quot;]
+
+DEFAULT_SERVER_PORT = 8008
+DEFAULT_STACK = 100.0
+DEFAULT_HAND_END_TIMEOUT = 20.0
+
+_log = logging.getLogger(&quot;cli_client&quot;)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">JoinError</span><span class="desc"> – the server cannot be reached or rejected the join</span>
+<span class="loc">cli_client/main.py:34–35</span>
+</summary>
+<pre><code>class JoinError(Exception):
+    &quot;&quot;&quot;The server cannot be reached or rejected the join.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _port</span><span class="desc"> – port 0..65535</span>
+<span class="loc">cli_client/main.py:38–45</span>
+</summary>
+<pre><code>def _port(text: str) -&gt; int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f&quot;not a port number: {text!r}&quot;) from None
+    if not 0 &lt;= value &lt;= 65535:
+        raise argparse.ArgumentTypeError(f&quot;port must be 0-65535, got {value}&quot;)
+    return value</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _server_port</span><span class="desc"> – non-zero port</span>
+<span class="loc">cli_client/main.py:48–52</span>
+</summary>
+<pre><code>def _server_port(text: str) -&gt; int:
+    value = _port(text)
+    if value == 0:
+        raise argparse.ArgumentTypeError(&quot;the server port cannot be 0&quot;)
+    return value</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _positive</span><span class="desc"> – finite positive number</span>
+<span class="loc">cli_client/main.py:55–62</span>
+</summary>
+<pre><code>def _positive(text: str) -&gt; float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f&quot;not a number: {text!r}&quot;) from None
+    if not math.isfinite(value) or value &lt;= 0:
+        raise argparse.ArgumentTypeError(f&quot;must be &gt; 0, got {text}&quot;)
+    return value</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _name</span><span class="desc"> – non-empty name</span>
+<span class="loc">cli_client/main.py:65–69</span>
+</summary>
+<pre><code>def _name(text: str) -&gt; str:
+    name = text.strip()
+    if not name:
+        raise argparse.ArgumentTypeError(&quot;the name cannot be empty&quot;)
+    return name</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _seat</span><span class="desc"> – integer seat offset</span>
+<span class="loc">cli_client/main.py:72–76</span>
+</summary>
+<pre><code>def _seat(text: str) -&gt; int:
+    try:
+        return int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f&quot;not an integer: {text!r}&quot;) from None</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def build_parser</span><span class="desc"> – options: server port, port, name, stack, seat, ascii, hand-end timeout, log file</span>
+<span class="loc">cli_client/main.py:79–120</span>
+</summary>
+<pre><code>def build_parser() -&gt; argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog=&quot;cli_client&quot;,
+        description=&quot;Play at a cli_server Omaha Hi-Lo 8-or-better table from the terminal.&quot;,
+    )
+    p.add_argument(
+        &quot;--server-port&quot;,
+        type=_server_port,
+        default=DEFAULT_SERVER_PORT,
+        help=f&quot;port of the running server (default {DEFAULT_SERVER_PORT})&quot;,
+    )
+    p.add_argument(
+        &quot;--port&quot;,
+        type=_port,
+        required=True,
+        help=&quot;own port to listen for server events (0 picks a free port)&quot;,
+    )
+    p.add_argument(&quot;--name&quot;, type=_name, required=True, help=&quot;player name (nick)&quot;)
+    p.add_argument(
+        &quot;--stack&quot;,
+        type=_positive,
+        default=DEFAULT_STACK,
+        metavar=&quot;BB&quot;,
+        help=&quot;buy-in in big blinds, also the default rebuy (default %(default)g)&quot;,
+    )
+    p.add_argument(
+        &quot;--seat&quot;,
+        type=_seat,
+        default=None,
+        metavar=&quot;N&quot;,
+        help=&quot;join offset from the button (default: join as the big blind)&quot;,
+    )
+    p.add_argument(&quot;--ascii&quot;, action=&quot;store_true&quot;, help=&quot;ASCII suits and boxes&quot;)
+    p.add_argument(
+        &quot;--hand-end-timeout&quot;,
+        type=_positive,
+        default=DEFAULT_HAND_END_TIMEOUT,
+        metavar=&quot;SECONDS&quot;,
+        help=&quot;time for the rebuy / sit-in menu before the default answer (default %(default)g)&quot;,
+    )
+    p.add_argument(&quot;--log-file&quot;, default=None, metavar=&quot;PATH&quot;, help=&quot;debug log of all messages&quot;)
+    return p</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def parse_args</span><span class="desc"> – parses the command line</span>
+<span class="loc">cli_client/main.py:123–124</span>
+</summary>
+<pre><code>def parse_args(argv: Optional[Sequence[str]] = None) -&gt; argparse.Namespace:
+    return build_parser().parse_args(argv)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def join_table</span><span class="desc"> – starts the callback listener, joins and returns a headless Client</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">the inbox</span>
+<span class="loc">cli_client/main.py:140–140</span>
+</summary>
+<pre><code>inbox: &quot;queue.Queue[Any]&quot; = queue.Queue()</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">listen, send the join, read the table settings, build the Client</span>
+<span class="loc">cli_client/main.py:141–169</span>
+</summary>
+<pre><code># Listening before `join`: the server connects to it while handling the join.
+listener = CallbackListener(name, inbox, host=host, port=port).start()
+conn = ServerConnection(server_port, host=host)
+try:
+    response = conn.request(join_request(name, stack_bb, listener.port, seat))
+except ConnectionLost as e:
+    listener.close()
+    conn.close()
+    raise JoinError(f&quot;cannot reach the server on port {server_port}: {e}&quot;) from None
+if not response.get(&quot;ok&quot;):
+    listener.close()
+    conn.close()
+    raise JoinError(str(response.get(&quot;error&quot;) or &quot;join rejected&quot;))
+try:
+    table = decode_join_settings(response)
+except ProtocolError:
+    table = None
+if settings is None:
+    settings = ClientSettings(stack_bb=stack_bb)
+client = Client(
+    name,
+    conn,
+    inbox,
+    clock=clock,
+    settings=settings,
+    table=table,
+    queued=bool(response.get(&quot;queued&quot;)),
+)
+return client, listener</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def _setup_logging</span><span class="desc"> – file or null handler (never stderr under curses)</span>
+<span class="loc">cli_client/main.py:172–182</span>
+</summary>
+<pre><code>def _setup_logging(path: Optional[str]) -&gt; None:
+    # curses owns the terminal: no logging to stderr.
+    logger = logging.getLogger(&quot;cli_client&quot;)
+    logger.propagate = False
+    if path:
+        handler: logging.Handler = logging.FileHandler(path)
+        handler.setFormatter(logging.Formatter(&quot;%(asctime)s %(levelname)s %(name)s: %(message)s&quot;))
+        logger.setLevel(logging.DEBUG)
+    else:
+        handler = logging.NullHandler()
+    logger.addHandler(handler)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def main</span><span class="desc"> – runs the client</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">parse, require a terminal, set up logging, join</span>
+<span class="loc">cli_client/main.py:186–203</span>
+</summary>
+<pre><code>args = parse_args(argv)
+if not (sys.stdin.isatty() and sys.stdout.isatty()):
+    print(&quot;cli_client: stdin and stdout must be a terminal&quot;, file=sys.stderr)
+    return 2
+_setup_logging(args.log_file)
+settings = ClientSettings(
+    stack_bb=args.stack, hand_end_timeout=args.hand_end_timeout, ascii=args.ascii
+)
+try:
+    client, listener = join_table(
+        args.name, args.server_port, args.port, args.stack, args.seat, settings
+    )
+except JoinError as e:
+    print(f&quot;cli_client: {e}&quot;, file=sys.stderr)
+    return 2
+except OSError as e:
+    print(f&quot;cli_client: cannot listen on port {args.port}: {e}&quot;, file=sys.stderr)
+    return 2</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">import curses UI lazily</span>
+<span class="loc">cli_client/main.py:205–205</span>
+</summary>
+<pre><code>from . import ui  # curses only once we know we have a terminal</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">run the UI, close everything, print the summary</span>
+<span class="loc">cli_client/main.py:207–213</span>
+</summary>
+<pre><code>try:
+    code = ui.run(client)
+finally:
+    listener.close()
+    client.conn.close()
+print(client.summary())
+return code</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">run as script</span><span class="desc"> – exits with main()&#x27;s status</span>
+<span class="loc">cli_client/main.py:216–217</span>
+</summary>
+<pre><code>if __name__ == &quot;__main__&quot;:
+    sys.exit(main())</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">net.py</span><span class="desc"> – networking library (//cli_client:net): requests to the server and the server&#x27;s callback channel</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – the two directions and the dependency rules</span>
+<span class="loc">cli_client/net.py:1–17</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Networking library (`//cli_client:net`): requests to the server port and the
+server&#x27;s callback channel.
+
+- `ServerConnection` (client -&gt; server): one persistent connection to the
+  server&#x27;s port, opened on the first request; each request line gets exactly
+  one response line.
+- `CallbackListener` (server -&gt; client): listens on the client&#x27;s own port. The
+  server opens one connection per joined player and sends notifications on it.
+  Every message goes, as a raw dict, on the caller&#x27;s inbox (any `queue.Queue`);
+  the end of the channel puts `DISCONNECTED` there.
+
+This module is also used by other projects (`//bot_client`). It imports only the
+standard library and `cli_server.protocol` — never `curses` or any other
+cli_client module — writes nothing to stdout / stderr, and logs to the
+`cli_client.net` logger without installing handlers. Building requests, sending
+them in order, checking `ok` and decoding messages are left to the caller.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – socket, threading, cli_server protocol line I/O</span>
+<span class="loc">cli_client/net.py:19–27</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import logging
+import queue
+import socket
+import threading
+from typing import Any, Optional
+
+from cli_server.protocol import LineTooLongError, ProtocolError, read_message, write_message</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, logger, HOST, DISCONNECTED marker, request timeout</span>
+<span class="loc">cli_client/net.py:29–35</span>
+</summary>
+<pre><code>__all__ = [&quot;HOST&quot;, &quot;DISCONNECTED&quot;, &quot;ConnectionLost&quot;, &quot;ServerConnection&quot;, &quot;CallbackListener&quot;]
+
+_log = logging.getLogger(&quot;cli_client.net&quot;)
+
+HOST = &quot;127.0.0.1&quot;
+DISCONNECTED = (&quot;disconnected&quot;,)  # inbox marker: the callback channel is gone
+REQUEST_TIMEOUT = 10.0</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">ConnectionLost</span><span class="desc"> – the server port cannot be reached or the connection was closed</span>
+<span class="loc">cli_client/net.py:38–40</span>
+</summary>
+<pre><code>class ConnectionLost(Exception):
+    &quot;&quot;&quot;The server port cannot be reached (socket error, timeout or an over-long
+    line, even after one reconnect), or the connection was closed.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _close</span><span class="desc"> – shuts down and closes a socket quietly</span>
+<span class="loc">cli_client/net.py:43–53</span>
+</summary>
+<pre><code>def _close(sock: Optional[socket.socket]) -&gt; None:
+    if sock is None:
+        return
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+    try:
+        sock.close()
+    except OSError:
+        pass</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">ServerConnection</span><span class="desc"> – client -&gt; server requests over one persistent, lock-serialised TCP connection</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring</span>
+<span class="loc">cli_client/net.py:56–68</span>
+</summary>
+<pre><code>class ServerConnection:
+    &quot;&quot;&quot;Client -&gt; server requests over one persistent TCP connection.
+
+    `request(msg)` returns the response (also `ok: false` ones; a malformed
+    response line comes back as `ok: false` with &quot;bad response: ...&quot;). A socket
+    error, timeout or over-long line drops the connection, reconnects and
+    resends once; if that fails too, `ConnectionLost` is raised. The server
+    tells clients apart by `name`, so a new connection is fine.
+
+    `request` is safe from any thread (a lock serialises calls). `close()` may
+    be called more than once; a `request` after it raises `ConnectionLost`.
+    &quot;&quot;&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – port, host, timeout, lock, empty socket</span>
+<span class="loc">cli_client/net.py:69–77</span>
+</summary>
+<pre><code>def __init__(self, port: int, host: str = HOST, timeout: float = REQUEST_TIMEOUT) -&gt; None:
+    self.port = port
+    self.host = host
+    self.timeout = timeout
+    self._lock = threading.Lock()
+    self._sock: Optional[socket.socket] = None
+    self._rfile: Any = None
+    self._wfile: Any = None
+    self._closed = False</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _open</span><span class="desc"> – connects with TCP_NODELAY and line files</span>
+<span class="loc">cli_client/net.py:79–88</span>
+</summary>
+<pre><code>def _open(self) -&gt; None:
+    sock = socket.create_connection((self.host, self.port), timeout=self.timeout)
+    sock.settimeout(self.timeout)
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except OSError:
+        pass
+    self._sock = sock
+    self._rfile = sock.makefile(&quot;rb&quot;)
+    self._wfile = sock.makefile(&quot;wb&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _drop</span><span class="desc"> – closes files and socket</span>
+<span class="loc">cli_client/net.py:90–98</span>
+</summary>
+<pre><code>def _drop(self) -&gt; None:
+    for f in (self._rfile, self._wfile):
+        try:
+            if f is not None:
+                f.close()
+        except (OSError, ValueError):
+            pass
+    _close(self._sock)
+    self._sock = self._rfile = self._wfile = None</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def request</span><span class="desc"> – writes one line and reads one response; reconnects and resends once</span>
+<span class="loc">cli_client/net.py:100–125</span>
+</summary>
+<pre><code>def request(self, msg: dict) -&gt; dict:
+    with self._lock:
+        if self._closed:
+            raise ConnectionLost(&quot;the connection is closed&quot;)
+        last: Optional[BaseException] = None
+        for _attempt in range(2):
+            try:
+                if self._sock is None:
+                    self._open()
+                write_message(self._wfile, msg)
+                response = read_message(self._rfile)
+                if response is None:
+                    raise ConnectionError(&quot;the server closed the connection&quot;)
+                _log.debug(&quot;request %s -&gt; %s&quot;, msg, response)
+                return response
+            except LineTooLongError as e:
+                last = e
+                self._drop()
+            except ProtocolError as e:
+                # One bad response line; the stream is still in sync.
+                _log.warning(&quot;bad response to %s: %s&quot;, msg, e)
+                return {&quot;type&quot;: &quot;response&quot;, &quot;ok&quot;: False, &quot;error&quot;: f&quot;bad response: {e}&quot;}
+            except (OSError, ValueError) as e:
+                last = e
+                self._drop()
+        raise ConnectionLost(str(last))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def close</span><span class="desc"> – marks closed and drops the connection</span>
+<span class="loc">cli_client/net.py:127–130</span>
+</summary>
+<pre><code>def close(self) -&gt; None:
+    with self._lock:
+        self._closed = True
+        self._drop()</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">CallbackListener</span><span class="desc"> – listens for the server&#x27;s callback connection and puts messages on the inbox</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring</span>
+<span class="loc">cli_client/net.py:133–144</span>
+</summary>
+<pre><code>class CallbackListener:
+    &quot;&quot;&quot;Listens on `host:port` (0 = a free port; see `self.port`) for the
+    server&#x27;s callback connection. Binding happens in the constructor, so bind
+    errors are raised there; `start()` launches the accept thread.
+
+    A new connection replaces the old one (which ends without `DISCONNECTED`).
+    Messages addressed to another player (`to`) are dropped and counted in
+    `dropped`. A malformed line is logged, counted in `malformed` and skipped;
+    the reader keeps going. Unknown message types are passed through. Nothing
+    is put on the inbox after `close()`. All threads are daemon threads.
+    &quot;&quot;&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – binds and listens (errors raised here), prepares the accept thread</span>
+<span class="loc">cli_client/net.py:145–166</span>
+</summary>
+<pre><code>def __init__(
+    self, name: str, inbox: &quot;queue.Queue[Any]&quot;, host: str = HOST, port: int = 0
+) -&gt; None:
+    self.name = name
+    self.inbox = inbox
+    self.dropped = 0
+    self.malformed = 0
+    self._lock = threading.Lock()
+    self._conn: Optional[socket.socket] = None
+    self._generation = 0
+    self._closed = False
+    self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind((host, port))
+        self._sock.listen(4)
+    except OSError:
+        self._sock.close()
+        raise
+    self._sock.settimeout(0.2)  # so close() can stop the accept loop
+    self.port: int = self._sock.getsockname()[1]
+    self._thread = threading.Thread(target=self._accept_loop, name=&quot;callback-accept&quot;, daemon=True)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def start</span><span class="desc"> – starts the accept thread</span>
+<span class="loc">cli_client/net.py:168–170</span>
+</summary>
+<pre><code>def start(self) -&gt; &quot;CallbackListener&quot;:
+    self._thread.start()
+    return self</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _accept_loop</span><span class="desc"> – accepts connections; a new one replaces the old</span>
+<span class="loc">cli_client/net.py:172–194</span>
+</summary>
+<pre><code>def _accept_loop(self) -&gt; None:
+    while True:
+        with self._lock:
+            if self._closed:
+                return
+        try:
+            conn, _ = self._sock.accept()
+        except socket.timeout:
+            continue
+        except OSError:
+            return
+        conn.settimeout(None)
+        with self._lock:
+            if self._closed:
+                _close(conn)
+                return
+            old, self._conn = self._conn, conn
+            self._generation += 1
+            generation = self._generation
+        _close(old)
+        threading.Thread(
+            target=self._read_loop, args=(conn, generation), name=&quot;callback-reader&quot;, daemon=True
+        ).start()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _read_loop</span><span class="desc"> – reads messages, drops ones for other players, skips malformed, signals DISCONNECTED</span>
+<span class="loc">cli_client/net.py:196–231</span>
+</summary>
+<pre><code>def _read_loop(self, conn: socket.socket, generation: int) -&gt; None:
+    f = conn.makefile(&quot;rb&quot;)
+    try:
+        while True:
+            try:
+                msg = read_message(f)
+            except LineTooLongError as e:
+                _log.warning(&quot;callback line too long: %s&quot;, e)
+                break
+            except ProtocolError as e:
+                self.malformed += 1
+                _log.warning(&quot;malformed callback message skipped: %s&quot;, e)
+                continue
+            except (OSError, ValueError):
+                break
+            if msg is None:
+                break
+            to = msg.get(&quot;to&quot;)
+            if to is not None and to != self.name:
+                self.dropped += 1
+                continue
+            with self._lock:
+                closed = self._closed
+            if closed:
+                break  # nothing goes on the inbox after close()
+            _log.debug(&quot;received %s&quot;, msg)
+            self.inbox.put(msg)
+    finally:
+        try:
+            f.close()
+        except (OSError, ValueError):
+            pass
+        with self._lock:
+            current = generation == self._generation and not self._closed
+        if current:
+            self.inbox.put(DISCONNECTED)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def close</span><span class="desc"> – stops accepting and closes the connection</span>
+<span class="loc">cli_client/net.py:233–241</span>
+</summary>
+<pre><code>def close(self) -&gt; None:
+    with self._lock:
+        self._closed = True
+        conn, self._conn = self._conn, None
+    _close(conn)
+    try:
+        self._sock.close()
+    except OSError:
+        pass</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">render.py</span><span class="desc"> – pure rendering: TableState + UIView -&gt; Frame of styled cells</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – no curses, testable layout</span>
+<span class="loc">cli_client/render.py:1–5</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Pure rendering: TableState + UIView -&gt; Frame (a grid of styled cells).
+
+No curses here: `ui.py` maps the style names to curses attributes, so the
+layout is unit-tested without a terminal.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – math, cards, controller UIView, state</span>
+<span class="loc">cli_client/render.py:7–21</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import math
+from typing import Iterable, Optional
+
+from .cards import (
+    Segment,
+    back_segments,
+    card_segments,
+    empty_slot_segments,
+    fmt_amount,
+    segments_text,
+)
+from .controller import UIView
+from .state import STREET_NAMES, SeatState, TableState</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, style names, minimum size, seat / panel sizes, box characters</span>
+<span class="loc">cli_client/render.py:23–82</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;STYLES&quot;,
+    &quot;MIN_WIDTH&quot;,
+    &quot;MIN_HEIGHT&quot;,
+    &quot;SEAT_W&quot;,
+    &quot;SEAT_H&quot;,
+    &quot;Frame&quot;,
+    &quot;render&quot;,
+    &quot;seat_positions&quot;,
+]
+
+STYLES = (
+    &quot;default&quot;,
+    &quot;border&quot;,
+    &quot;header&quot;,
+    &quot;felt&quot;,
+    &quot;pot&quot;,
+    &quot;lobby&quot;,
+    &quot;seat&quot;,
+    &quot;seat_me&quot;,
+    &quot;seat_acting&quot;,
+    &quot;folded&quot;,
+    &quot;winner&quot;,
+    &quot;hearts&quot;,
+    &quot;diamonds&quot;,
+    &quot;spades&quot;,
+    &quot;clubs&quot;,
+    &quot;card_back&quot;,
+    &quot;empty_slot&quot;,
+    &quot;chip&quot;,
+    &quot;button&quot;,
+    &quot;blind&quot;,
+    &quot;log&quot;,
+    &quot;log_me&quot;,
+    &quot;log_board&quot;,
+    &quot;log_hand&quot;,
+    &quot;log_win&quot;,
+    &quot;menu&quot;,
+    &quot;menu_title&quot;,
+    &quot;menu_selected&quot;,
+    &quot;prompt&quot;,
+    &quot;preset&quot;,
+    &quot;timer&quot;,
+    &quot;timer_low&quot;,
+    &quot;status&quot;,
+    &quot;error&quot;,
+    &quot;dim&quot;,
+    &quot;help&quot;,
+)
+
+MIN_WIDTH = 100
+MIN_HEIGHT = 30
+SEAT_W = 15
+SEAT_H = 5
+PANEL_H = 5
+
+BOX_UNICODE = {&quot;tl&quot;: &quot;┌&quot;, &quot;tr&quot;: &quot;┐&quot;, &quot;bl&quot;: &quot;└&quot;, &quot;br&quot;: &quot;┘&quot;, &quot;h&quot;: &quot;─&quot;, &quot;v&quot;: &quot;│&quot;,
+               &quot;lt&quot;: &quot;├&quot;, &quot;rt&quot;: &quot;┤&quot;, &quot;tt&quot;: &quot;┬&quot;, &quot;bt&quot;: &quot;┴&quot;}
+BOX_ASCII = {&quot;tl&quot;: &quot;+&quot;, &quot;tr&quot;: &quot;+&quot;, &quot;bl&quot;: &quot;+&quot;, &quot;br&quot;: &quot;+&quot;, &quot;h&quot;: &quot;-&quot;, &quot;v&quot;: &quot;|&quot;,
+             &quot;lt&quot;: &quot;+&quot;, &quot;rt&quot;: &quot;+&quot;, &quot;tt&quot;: &quot;+&quot;, &quot;bt&quot;: &quot;+&quot;}</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Frame</span><span class="desc"> – height x width grid of (char, style)</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – blank cells</span>
+<span class="loc">cli_client/render.py:88–91</span>
+</summary>
+<pre><code>def __init__(self, width: int, height: int, style: str = &quot;default&quot;) -&gt; None:
+    self.width = width
+    self.height = height
+    self.cells = [[(&quot; &quot;, style) for _ in range(width)] for _ in range(height)]</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def put</span><span class="desc"> – writes clipped text</span>
+<span class="loc">cli_client/render.py:93–102</span>
+</summary>
+<pre><code>def put(self, x: int, y: int, text: str, style: Optional[str] = None) -&gt; int:
+    &quot;&quot;&quot;Write `text` at (x, y), clipped to the frame. Style None keeps each
+    cell&#x27;s style (e.g. text on the felt). Returns the x after the text.&quot;&quot;&quot;
+    if 0 &lt;= y &lt; self.height:
+        row = self.cells[y]
+        for i, ch in enumerate(text):
+            cx = x + i
+            if 0 &lt;= cx &lt; self.width:
+                row[cx] = (ch, row[cx][1] if style is None else style)
+    return x + len(text)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def put_segments</span><span class="desc"> – writes styled segments up to max_x</span>
+<span class="loc">cli_client/render.py:104–121</span>
+</summary>
+<pre><code>def put_segments(
+    self,
+    x: int,
+    y: int,
+    segments: Iterable[Segment],
+    default: Optional[str] = None,
+    max_x: Optional[int] = None,
+) -&gt; int:
+    &quot;&quot;&quot;Write (text, style) segments; style None uses `default`. Stops at
+    `max_x` (exclusive).&quot;&quot;&quot;
+    for text, style in segments:
+        if max_x is not None:
+            room = max_x - x
+            if room &lt;= 0:
+                break
+            text = text[:room]
+        x = self.put(x, y, text, style if style is not None else default)
+    return x</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def fill</span><span class="desc"> – fills a rectangle</span>
+<span class="loc">cli_client/render.py:123–125</span>
+</summary>
+<pre><code>def fill(self, x: int, y: int, w: int, h: int, style: str, ch: str = &quot; &quot;) -&gt; None:
+    for yy in range(y, y + h):
+        self.put(x, yy, ch * max(0, w), style)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def box</span><span class="desc"> – draws a box with optional title and fill</span>
+<span class="loc">cli_client/render.py:127–149</span>
+</summary>
+<pre><code>def box(
+    self,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    style: Optional[str] = None,
+    title: Optional[str] = None,
+    chars: dict = BOX_UNICODE,
+    fill: Optional[str] = None,
+    title_style: Optional[str] = None,
+) -&gt; None:
+    if w &lt; 2 or h &lt; 2:
+        return
+    if fill is not None:
+        self.fill(x + 1, y + 1, w - 2, h - 2, fill)
+    self.put(x, y, chars[&quot;tl&quot;] + chars[&quot;h&quot;] * (w - 2) + chars[&quot;tr&quot;], style)
+    self.put(x, y + h - 1, chars[&quot;bl&quot;] + chars[&quot;h&quot;] * (w - 2) + chars[&quot;br&quot;], style)
+    for yy in range(y + 1, y + h - 1):
+        self.put(x, yy, chars[&quot;v&quot;], style)
+        self.put(x + w - 1, yy, chars[&quot;v&quot;], style)
+    if title:
+        self.put(x + 1, y, title[: max(0, w - 2)], title_style or style)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def row_text / def text</span><span class="desc"> – plain text of a row / the frame</span>
+<span class="loc">cli_client/render.py:153–157</span>
+</summary>
+<pre><code>def row_text(self, y: int) -&gt; str:
+    return &quot;&quot;.join(ch for ch, _ in self.cells[y])
+
+def text(self) -&gt; str:
+    return &quot;\n&quot;.join(self.row_text(y) for y in range(self.height))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def find / def find_all</span><span class="desc"> – positions of a substring</span>
+<span class="loc">cli_client/render.py:159–177</span>
+</summary>
+<pre><code>def find(self, needle: str) -&gt; Optional[tuple[int, int]]:
+    for y in range(self.height):
+        x = self.row_text(y).find(needle)
+        if x &gt;= 0:
+            return x, y
+    return None
+
+def find_all(self, needle: str) -&gt; list[tuple[int, int]]:
+    out = []
+    for y in range(self.height):
+        row = self.row_text(y)
+        start = 0
+        while True:
+            x = row.find(needle, start)
+            if x &lt; 0:
+                break
+            out.append((x, y))
+            start = x + 1
+    return out</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def style_at / def styles_of</span><span class="desc"> – styles at a cell / of a substring</span>
+<span class="loc">cli_client/render.py:179–188</span>
+</summary>
+<pre><code>def style_at(self, x: int, y: int) -&gt; str:
+    return self.cells[y][x][1]
+
+def styles_of(self, needle: str) -&gt; set[str]:
+    &quot;&quot;&quot;Styles used by the first occurrence of `needle`.&quot;&quot;&quot;
+    pos = self.find(needle)
+    if pos is None:
+        return set()
+    x, y = pos
+    return {self.cells[y][x + i][1] for i in range(len(needle))}</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def style_runs</span><span class="desc"> – runs of equal style in a row (used by ui.draw)</span>
+<span class="loc">cli_client/render.py:190–202</span>
+</summary>
+<pre><code>def style_runs(self, y: int) -&gt; list[tuple[int, str, str]]:
+    &quot;&quot;&quot;(x, text, style) runs of equal style in row `y`.&quot;&quot;&quot;
+    runs: list[tuple[int, str, str]] = []
+    row = self.cells[y]
+    start = 0
+    while start &lt; self.width:
+        style = row[start][1]
+        end = start
+        while end &lt; self.width and row[end][1] == style:
+            end += 1
+        runs.append((start, &quot;&quot;.join(ch for ch, _ in row[start:end]), style))
+        start = end
+    return runs</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def seat_positions</span><span class="desc"> – seat centres on an ellipse, my seat at the bottom</span>
+<span class="loc">cli_client/render.py:208–223</span>
+</summary>
+<pre><code>def seat_positions(
+    n: int, my_seat: Optional[int], x0: int, y0: int, x1: int, y1: int
+) -&gt; dict[int, tuple[float, float]]:
+    &quot;&quot;&quot;Centre of each seat box on an ellipse inside (x0, y0)-(x1, y1). Seats are
+    rotated so my seat is at the bottom centre and go round clockwise.&quot;&quot;&quot;
+    w, h = x1 - x0 + 1, y1 - y0 + 1
+    cx, cy = x0 + w / 2.0, y0 + h / 2.0
+    rx = max(0.0, (w - SEAT_W) / 2.0)
+    ry = max(0.0, (h - SEAT_H) / 2.0)
+    base = my_seat if my_seat is not None else 0
+    out = {}
+    for i in range(n):
+        p = (i - base) % n
+        angle = math.pi / 2 + 2 * math.pi * p / n  # screen y grows downwards
+        out[i] = (cx + rx * math.cos(angle), cy + ry * math.sin(angle))
+    return out</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def render</span><span class="desc"> – lays out the whole screen</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">frame; too-small terminal message; column / panel geometry</span>
+<span class="loc">cli_client/render.py:227–236</span>
+</summary>
+<pre><code>frame = Frame(width, height)
+if width &lt; MIN_WIDTH or height &lt; MIN_HEIGHT:
+    times = &quot;x&quot; if ui.ascii else &quot;×&quot;
+    msg = f&quot;Please enlarge the terminal to at least {MIN_WIDTH}{times}{MIN_HEIGHT}&quot;
+    frame.put(max(0, (width - len(msg)) // 2), height // 2, msg[:width], &quot;error&quot;)
+    return frame
+chars = BOX_ASCII if ui.ascii else BOX_UNICODE
+log_w = max(26, min(40, width // 4))
+div = width - log_w - 1  # x of the column divider
+sep = height - PANEL_H - 2  # y of the separator above my panel</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">outer border, divider and separator</span>
+<span class="loc">cli_client/render.py:238–245</span>
+</summary>
+<pre><code>frame.box(0, 0, width, height, &quot;border&quot;, chars=chars)
+for y in range(1, height - 1):
+    frame.put(div, y, chars[&quot;v&quot;], &quot;border&quot;)
+frame.put(div, 0, chars[&quot;tt&quot;], &quot;border&quot;)
+frame.put(div, height - 1, chars[&quot;bt&quot;], &quot;border&quot;)
+frame.put(1, sep, chars[&quot;h&quot;] * (div - 1), &quot;border&quot;)
+frame.put(0, sep, chars[&quot;lt&quot;], &quot;border&quot;)
+frame.put(div, sep, chars[&quot;rt&quot;], &quot;border&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">header and log titles</span>
+<span class="loc">cli_client/render.py:247–248</span>
+</summary>
+<pre><code>frame.put(2, 0, f&quot; {header_text(state, ui.ascii)} &quot;[: div - 3], &quot;header&quot;)
+frame.put(div + 2, 0, &quot; Table log &quot;[: log_w - 2], &quot;header&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">table, my panel, log and help overlay</span>
+<span class="loc">cli_client/render.py:250–255</span>
+</summary>
+<pre><code>_draw_table(frame, state, ui, 1, 1, div - 1, sep - 1)
+_draw_panel(frame, state, ui, 2, sep + 1, div - 2, height - 2)
+_draw_log(frame, state, ui, div + 2, 1, width - 2, height - 2)
+if ui.show_help:
+    _draw_help(frame, ui, 1, 1, div - 1, sep - 1, chars)
+return frame</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def header_text</span><span class="desc"> – game, limits, hand number, street, seats</span>
+<span class="loc">cli_client/render.py:258–271</span>
+</summary>
+<pre><code>def header_text(state: TableState, ascii: bool = False) -&gt; str:
+    s = state.settings
+    dot = &quot; - &quot; if ascii else &quot; · &quot;
+    parts = [
+        &quot;Omaha Hi-Lo 8/b&quot;,
+        f&quot;Limit {fmt_amount(s.small_bet_bb)}/{fmt_amount(s.big_bet_bb)} &quot;
+        f&quot;(blinds {fmt_amount(s.small_blind_bb)}/{fmt_amount(s.big_blind_bb)})&quot;,
+    ]
+    if state.hand_number:
+        parts.append(f&quot;Hand #{state.hand_number}&quot;)
+    if state.hand_running:
+        parts.append(STREET_NAMES.get(state.street, &quot;&quot;))
+    parts.append(f&quot;{len(state.seats)}/{s.max_seats} seats&quot;)
+    return dot.join(p for p in parts if p)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _draw_table</span><span class="desc"> – felt, board, pot and seats</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">draw the felt ellipse</span>
+<span class="loc">cli_client/render.py:275–281</span>
+</summary>
+<pre><code>w, h = x1 - x0 + 1, y1 - y0 + 1
+cx, cy = x0 + w // 2, y0 + h // 2
+rx, ry = w * 0.31, h * 0.29
+for y in range(y0, y1 + 1):
+    for x in range(x0, x1 + 1):
+        if ((x + 0.5 - cx) / rx) ** 2 + ((y + 0.5 - cy) / ry) ** 2 &lt;= 1.0:
+            frame.put(x, y, &quot; &quot;, &quot;felt&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">centre: board, pot, side pots or lobby text</span>
+<span class="loc">cli_client/render.py:283–294</span>
+</summary>
+<pre><code># Centre: board, pot, side pots or the lobby status.
+board = card_segments(state.board.cards, ui.ascii) + empty_slot_segments(5 - len(state.board.cards))
+_put_centered(frame, cx, cy - 1, board)
+if state.hand_running or state.pot &gt; 0:
+    _put_centered(frame, cx, cy + 1, [(f&quot;Pot: {fmt_amount(state.pot)} BB&quot;, &quot;pot&quot;)])
+    if len(state.side_pots) &gt; 1:
+        parts = [f&quot;Main {fmt_amount(state.side_pots[0].amount)}&quot;] + [
+            f&quot;Side {i} {fmt_amount(p.amount)}&quot; for i, p in enumerate(state.side_pots[1:], 1)
+        ]
+        _put_centered(frame, cx, cy + 2, [(&quot; · &quot;.join(parts) if not ui.ascii else &quot; - &quot;.join(parts), &quot;pot&quot;)])
+if ui.lobby_text:
+    _put_centered(frame, cx, cy + 1, [(ui.lobby_text, &quot;lobby&quot;)])</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">seat draw order, street-bet chips, seat boxes</span>
+<span class="loc">cli_client/render.py:296–323</span>
+</summary>
+<pre><code>n = len(state.seats)
+if n == 0:
+    return
+my_seat = state.my_seat
+positions = seat_positions(n, my_seat, x0, y0, x1, y1)
+acting = state.acting[0] if state.acting is not None else None
+order = [i for i in range(n) if i != my_seat and i != acting]
+order += [i for i in (acting, my_seat) if i is not None and i &lt; n and i not in order]
+seen = set()
+for i in order:
+    if i in seen:
+        continue
+    seen.add(i)
+    sx, sy = positions[i]
+    # The street bet as a chip between the seat and the centre.
+    seat = state.seats[i]
+    if seat.street_bet &gt; 0:
+        chip = (&quot;o&quot; if ui.ascii else &quot;●&quot;) + fmt_amount(seat.street_bet)
+        px = round(cx + (sx - cx) * 0.55 - len(chip) / 2)
+        py = round(cy + (sy - cy) * 0.55)
+        frame.put(px, py, chip, &quot;chip&quot;)
+for i in order:
+    sx, sy = positions[i]
+    bx = int(round(sx - SEAT_W / 2.0))
+    by = int(round(sy - SEAT_H / 2.0))
+    bx = max(x0, min(bx, x1 - SEAT_W + 1))
+    by = max(y0, min(by, y1 - SEAT_H + 1))
+    _draw_seat(frame, state, ui, i, bx, by)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def _put_centered</span><span class="desc"> – centred segments</span>
+<span class="loc">cli_client/render.py:326–328</span>
+</summary>
+<pre><code>def _put_centered(frame: Frame, cx: int, y: int, segments: list[Segment]) -&gt; None:
+    width = len(segments_text(segments))
+    frame.put_segments(cx - width // 2, y, segments)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def seat_style</span><span class="desc"> – acting / winner / folded / me / plain</span>
+<span class="loc">cli_client/render.py:331–342</span>
+</summary>
+<pre><code>def seat_style(state: TableState, index: int) -&gt; str:
+    seat = state.seats[index]
+    acting = state.acting[0] if state.acting is not None else None
+    if acting == index and state.hand_running:
+        return &quot;seat_acting&quot;
+    if seat.won &gt; 0:
+        return &quot;winner&quot;
+    if seat.folded or seat.sitting_out:
+        return &quot;folded&quot;
+    if seat.name == state.my_name:
+        return &quot;seat_me&quot;
+    return &quot;seat&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def seat_badges</span><span class="desc"> – D / SB / BB</span>
+<span class="loc">cli_client/render.py:345–354</span>
+</summary>
+<pre><code>def seat_badges(state: TableState, index: int) -&gt; list[str]:
+    badges = []
+    if state.button == index:
+        badges.append(&quot;D&quot;)
+    if state.hand_running or state.hand_number:
+        if state.sb_seat == index:
+            badges.append(&quot;SB&quot;)
+        if state.bb_seat == index:
+            badges.append(&quot;BB&quot;)
+    return badges</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def seat_status</span><span class="desc"> – won, leaving, sitting out, all-in or last action</span>
+<span class="loc">cli_client/render.py:357–366</span>
+</summary>
+<pre><code>def seat_status(state: TableState, seat: SeatState) -&gt; str:
+    if seat.won &gt; 0:
+        return f&quot;+{fmt_amount(seat.won)}&quot;
+    if seat.leaving:
+        return &quot;LEAVING&quot;
+    if seat.sitting_out:
+        return &quot;SITTING OUT&quot;
+    if seat.all_in and state.hand_running:
+        return &quot;ALL-IN&quot;
+    return seat.last_action</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _draw_seat</span><span class="desc"> – one seat box</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">box with title</span>
+<span class="loc">cli_client/render.py:370–378</span>
+</summary>
+<pre><code>seat = state.seats[index]
+style = seat_style(state, index)
+chars = BOX_ASCII if ui.ascii else BOX_UNICODE
+mine = seat.name == state.my_name
+title = &quot;You&quot; if mine else seat.name
+if mine and len(seat.name) &lt;= SEAT_W - 8:
+    title = f&quot;You ({seat.name})&quot;
+frame.box(x, y, SEAT_W, SEAT_H, style, title=title[: SEAT_W - 2], chars=chars, fill=style)
+inner = SEAT_W - 2</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">row 1: stack and badges</span>
+<span class="loc">cli_client/render.py:379–387</span>
+</summary>
+<pre><code># Row 1: stack and badges.
+frame.put(x + 1, y + 1, f&quot;{fmt_amount(seat.stack)} BB&quot;[:inner], style)
+badges = seat_badges(state, index)
+if badges:
+    text = &quot; &quot;.join(badges)
+    bx = x + SEAT_W - 1 - len(text)
+    for b in badges:
+        frame.put(bx, y + 1, b, &quot;button&quot; if b == &quot;D&quot; else &quot;blind&quot;)
+        bx += len(b) + 1</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">row 2: status with acting countdown</span>
+<span class="loc">cli_client/render.py:388–393</span>
+</summary>
+<pre><code># Row 2: status / last action, with the acting countdown.
+status = seat_status(state, seat)
+if state.acting is not None and state.acting[0] == index and state.acting[1] is not None:
+    left = max(0, math.ceil(state.acting[1] - ui.now))
+    status = f&quot;{status} {left}s&quot;.strip()
+frame.put(x + 1, y + 2, status[:inner], style)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">row 3: own, shown or face-down cards</span>
+<span class="loc">cli_client/render.py:394–403</span>
+</summary>
+<pre><code># Row 3: cards.
+cards: list[Segment] = []
+if mine and state.my_cards is not None:
+    cards = card_segments(state.my_cards, ui.ascii, brackets=False, sep=&quot; &quot;)
+elif seat.shown is not None:
+    cards = card_segments(seat.shown, ui.ascii, brackets=False, sep=&quot; &quot;)
+elif state.hand_running and seat.in_hand and not seat.folded:
+    cards = back_segments(4, ui.ascii, brackets=False, sep=&quot; &quot;)
+if cards:
+    frame.put_segments(x + 2, y + 3, cards, default=style, max_x=x + SEAT_W - 1)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def _draw_panel</span><span class="desc"> – my panel</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">setup</span>
+<span class="loc">cli_client/render.py:407–408</span>
+</summary>
+<pre><code>max_x = x1 + 1
+me = state.me</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">row 0: my hand, stack and countdown</span>
+<span class="loc">cli_client/render.py:409–422</span>
+</summary>
+<pre><code># Row 0: my hand, stack and countdown.
+if me is None:
+    line: list[Segment] = [(&quot;Waiting for a seat…&quot; if state.queued else &quot;Not seated&quot;, &quot;dim&quot;)]
+else:
+    line = [(&quot;Your hand: &quot;, &quot;menu_title&quot;)]
+    if state.my_cards is not None:
+        line += card_segments(state.my_cards, ui.ascii)
+    else:
+        line.append((&quot;—&quot; if not ui.ascii else &quot;-&quot;, &quot;dim&quot;))
+    line.append((f&quot;   Stack: {fmt_amount(me.stack)} BB&quot;, &quot;menu_title&quot;))
+if ui.countdown is not None:
+    secs = int(math.ceil(ui.countdown))
+    line.append((f&quot;   Time: {secs // 60}:{secs % 60:02d}&quot;, &quot;timer_low&quot; if secs &lt;= 10 else &quot;timer&quot;))
+frame.put_segments(x0, y0, line, max_x=max_x)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">rows 1-2: the menu or a key hint</span>
+<span class="loc">cli_client/render.py:424–437</span>
+</summary>
+<pre><code># Rows 1-2: the menu (or a key hint).
+if ui.menu:
+    x, y = x0, y0 + 1
+    if ui.menu_title:
+        x = frame.put(x, y, f&quot;{ui.menu_title}: &quot;, &quot;menu_title&quot;)
+    for i, item in enumerate(ui.menu):
+        text = f&quot;[{i + 1}] {item.label}&quot;
+        if x + len(text) &gt; max_x and y &lt; y0 + 2:
+            x, y = x0, y + 1
+        x = frame.put(x, y, text[: max(0, max_x - x)], &quot;menu_selected&quot; if i == ui.selected else &quot;menu&quot;)
+        x += 3
+else:
+    hint = &quot;[x] Check/Fold  [a] Call any  [t] Top up  [l] Leave  [?] Help&quot;
+    frame.put(x0, y0 + 1, hint[: max_x - x0], &quot;dim&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">row 3: prompt, or preset and status</span>
+<span class="loc">cli_client/render.py:439–447</span>
+</summary>
+<pre><code># Row 3: prompt, or the preset and the status.
+if ui.prompt:
+    frame.put(x0, y0 + 3, ui.prompt[: max_x - x0], &quot;prompt&quot;)
+else:
+    x = x0
+    if ui.preset:
+        x = frame.put(x, y0 + 3, f&quot;Preset: {ui.preset}&quot;[: max_x - x0], &quot;preset&quot;) + 3
+    if ui.status and x &lt; max_x:
+        frame.put(x, y0 + 3, ui.status[: max_x - x], &quot;status&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">row 4: error</span>
+<span class="loc">cli_client/render.py:448–450</span>
+</summary>
+<pre><code># Row 4: errors.
+if ui.error:
+    frame.put(x0, y0 + 4, ui.error[: max_x - x0], &quot;error&quot;)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def _draw_log</span><span class="desc"> – visible slice of the table log with scrolling</span>
+<span class="loc">cli_client/render.py:453–462</span>
+</summary>
+<pre><code>def _draw_log(frame: Frame, state: TableState, ui: UIView, x0: int, y0: int, x1: int, y1: int) -&gt; None:
+    rows = y1 - y0 + 1
+    lines = state.log
+    end = max(0, len(lines) - max(0, ui.log_scroll))
+    start = max(0, end - rows)
+    for k, line in enumerate(lines[start:end]):
+        default = &quot;log_me&quot; if line.mine else &quot;log&quot;
+        frame.put_segments(x0, y0 + k, line.segments, default=default, max_x=x1 + 1)
+    if ui.log_scroll &gt; 0:
+        frame.put(x1 - 7, y1, &quot;[more]&quot;, &quot;dim&quot;)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _draw_help</span><span class="desc"> – centred help box</span>
+<span class="loc">cli_client/render.py:465–473</span>
+</summary>
+<pre><code>def _draw_help(frame: Frame, ui: UIView, x0: int, y0: int, x1: int, y1: int, chars: dict) -&gt; None:
+    lines = list(ui.help_lines)
+    w = min(x1 - x0 + 1, max(len(s) for s in lines) + 4)
+    h = min(y1 - y0 + 1, len(lines) + 2)
+    x = x0 + (x1 - x0 + 1 - w) // 2
+    y = y0 + (y1 - y0 + 1 - h) // 2
+    frame.box(x, y, w, h, &quot;help&quot;, title=&quot; Keys &quot;, chars=chars, fill=&quot;help&quot;)
+    for i, text in enumerate(lines[: h - 2]):
+        frame.put(x + 2, y + 1 + i, text[: w - 4], &quot;help&quot;)</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">state.py</span><span class="desc"> – TableState: the client&#x27;s local picture of the table, built from server messages</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – players identified by name, seats renumbered</span>
+<span class="loc">cli_client/state.py:1–6</span>
+</summary>
+<pre><code>&quot;&quot;&quot;TableState: the client&#x27;s local picture of the table, built from server messages.
+
+Seat numbers change between hands (the engine renumbers seats on joins and
+leaves), so players are identified by name, which is unique at the table, and
+seat indices are positions in the current `seats` list.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – entities, engine events / views, TableSettings, cards</span>
+<span class="loc">cli_client/state.py:8–39</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Callable, Optional, Union
+
+from entities import Board, Hand, Street
+from engine import (
+    FOLD_LEAVE,
+    FOLD_TIMEOUT,
+    ActionType,
+    BetReturned,
+    BlindPosted,
+    BoardDealt,
+    HandResult,
+    HandShown,
+    HandStarted,
+    PlayerActed,
+    PlayerJoined,
+    PlayerLeft,
+    PlayerRebought,
+    PlayerReturned,
+    PlayerSatOut,
+    PlayerStatus,
+    PotAwarded,
+    PotView,
+    TableEvent,
+    TableView,
+)
+
+from cli_server.protocol import TableSettings
+
+from .cards import Segment, card_segments, describe_hand, fmt_amount</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, MAX_LOG_LINES, DEFAULT_SETTINGS, street names, EPS</span>
+<span class="loc">cli_client/state.py:41–72</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;DEFAULT_SETTINGS&quot;,
+    &quot;MAX_LOG_LINES&quot;,
+    &quot;STREET_NAMES&quot;,
+    &quot;SeatState&quot;,
+    &quot;LogLine&quot;,
+    &quot;TableState&quot;,
+]
+
+MAX_LOG_LINES = 500
+
+# The engine&#x27;s fixed structure, used when the server sends no table settings.
+DEFAULT_SETTINGS = TableSettings(
+    small_blind_bb=0.5,
+    big_blind_bb=1.0,
+    small_bet_bb=1.0,
+    big_bet_bb=2.0,
+    max_seats=10,
+    max_buy_in_bb=None,
+    action_timeout=None,
+    grace_period=0.0,
+    hand_pause=0.0,
+)
+
+STREET_NAMES = {
+    Street.PREFLOP: &quot;Preflop&quot;,
+    Street.FLOP: &quot;Flop&quot;,
+    Street.TURN: &quot;Turn&quot;,
+    Street.RIVER: &quot;River&quot;,
+}
+
+_EPS = 1e-9</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _add / def _sub</span><span class="desc"> – rounded amount arithmetic</span>
+<span class="loc">cli_client/state.py:75–80</span>
+</summary>
+<pre><code>def _add(a: float, b: float) -&gt; float:
+    return round(a + b, 2)
+
+
+def _sub(a: float, b: float) -&gt; float:
+    return max(0.0, round(a - b, 2))</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">SeatState</span><span class="desc"> – one seat: name, stack, status, bets, flags, last action, shown hand, winnings</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">fields</span>
+<span class="loc">cli_client/state.py:83–97</span>
+</summary>
+<pre><code>@dataclass
+class SeatState:
+    name: str
+    stack: float
+    status: PlayerStatus = PlayerStatus.ACTIVE
+    street_bet: float = 0.0
+    total_bet: float = 0.0
+    folded: bool = False
+    all_in: bool = False
+    leaving: bool = False
+    in_hand: bool = False
+    last_action: str = &quot;&quot;
+    shown: Optional[Hand] = None
+    won: float = 0.0</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def sitting_out</span><span class="desc"> – status is SITTING_OUT</span>
+<span class="loc">cli_client/state.py:98–100</span>
+</summary>
+<pre><code>@property
+def sitting_out(self) -&gt; bool:
+    return self.status is PlayerStatus.SITTING_OUT</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def reset_for_hand</span><span class="desc"> – clears per-hand fields</span>
+<span class="loc">cli_client/state.py:102–110</span>
+</summary>
+<pre><code>def reset_for_hand(self) -&gt; None:
+    self.street_bet = 0.0
+    self.total_bet = 0.0
+    self.folded = False
+    self.all_in = False
+    self.in_hand = False
+    self.last_action = &quot;&quot;
+    self.shown = None
+    self.won = 0.0</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">LogLine</span><span class="desc"> – one line of the action log</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">fields</span>
+<span class="loc">cli_client/state.py:113–120</span>
+</summary>
+<pre><code>@dataclass
+class LogLine:
+    &quot;&quot;&quot;One line of the action log. Segments with style None take the line&#x27;s
+    style (`log_me` for my own lines, else `log`).&quot;&quot;&quot;
+
+    segments: list[Segment] = field(default_factory=list)
+    mine: bool = False</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def text</span><span class="desc"> – plain text</span>
+<span class="loc">cli_client/state.py:121–123</span>
+</summary>
+<pre><code>@property
+def text(self) -&gt; str:
+    return &quot;&quot;.join(text for text, _ in self.segments)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">TableState</span><span class="desc"> – the table model, updated from server messages only</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – initial table and my state, event handler table</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">name, ASCII, settings</span>
+<span class="loc">cli_client/state.py:132–135</span>
+</summary>
+<pre><code>self.my_name = my_name
+self.ascii = ascii
+self.settings: TableSettings = settings or DEFAULT_SETTINGS
+self.has_settings = settings is not None</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">table fields</span>
+<span class="loc">cli_client/state.py:136–149</span>
+</summary>
+<pre><code># table
+self.hand_number = 0
+self.street = Street.PREFLOP
+self.board = Board()
+self.button: Optional[int] = None
+self.sb_seat: Optional[int] = None
+self.bb_seat: Optional[int] = None
+self.pot = 0.0
+self.side_pots: tuple[PotView, ...] = ()
+self.current_bet = 0.0
+self.bet_unit = self.settings.small_bet_bb
+self.waiting: tuple[str, ...] = ()
+self.seats: list[SeatState] = []
+self.hand_running = False  # from hand_started to the hand_end message</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">my fields</span>
+<span class="loc">cli_client/state.py:150–154</span>
+</summary>
+<pre><code># me
+self.my_cards: Optional[Hand] = None
+self.queued = False
+self.sitting_out = False
+self.left = False</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">acting seat, log and event handlers</span>
+<span class="loc">cli_client/state.py:155–171</span>
+</summary>
+<pre><code># whose turn it is: (seat, monotonic deadline or None)
+self.acting: Optional[tuple[int, Optional[float]]] = None
+self.log: list[LogLine] = []
+self._handlers: dict[type, Callable[[TableEvent], None]] = {
+    HandStarted: self._on_hand_started,
+    BlindPosted: self._on_blind,
+    PlayerActed: self._on_acted,
+    BoardDealt: self._on_board,
+    HandShown: self._on_shown,
+    BetReturned: self._on_bet_returned,
+    PotAwarded: self._on_awarded,
+    PlayerJoined: self._on_joined,
+    PlayerLeft: self._on_left,
+    PlayerSatOut: self._on_sat_out,
+    PlayerReturned: self._on_returned,
+    PlayerRebought: self._on_rebought,
+}</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def set_settings</span><span class="desc"> – stores table settings</span>
+<span class="loc">cli_client/state.py:175–178</span>
+</summary>
+<pre><code>def set_settings(self, settings: Optional[TableSettings]) -&gt; None:
+    if settings is not None:
+        self.settings = settings
+        self.has_settings = True</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def seat_of / def find</span><span class="desc"> – seat index / SeatState by name</span>
+<span class="loc">cli_client/state.py:180–188</span>
+</summary>
+<pre><code>def seat_of(self, name: Optional[str]) -&gt; Optional[int]:
+    for i, s in enumerate(self.seats):
+        if s.name == name:
+            return i
+    return None
+
+def find(self, name: Optional[str]) -&gt; Optional[SeatState]:
+    i = self.seat_of(name)
+    return None if i is None else self.seats[i]</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def my_seat / def me</span><span class="desc"> – my index / SeatState</span>
+<span class="loc">cli_client/state.py:190–196</span>
+</summary>
+<pre><code>@property
+def my_seat(self) -&gt; Optional[int]:
+    return self.seat_of(self.my_name)
+
+@property
+def me(self) -&gt; Optional[SeatState]:
+    return self.find(self.my_name)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def seat_name</span><span class="desc"> – name at an index</span>
+<span class="loc">cli_client/state.py:198–201</span>
+</summary>
+<pre><code>def seat_name(self, seat: Optional[int]) -&gt; Optional[str]:
+    if seat is None or not 0 &lt;= seat &lt; len(self.seats):
+        return None
+    return self.seats[seat].name</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def in_hand</span><span class="desc"> – I am dealt in and have not folded</span>
+<span class="loc">cli_client/state.py:203–207</span>
+</summary>
+<pre><code>@property
+def in_hand(self) -&gt; bool:
+    &quot;&quot;&quot;I am dealt into the running hand and have not folded.&quot;&quot;&quot;
+    me = self.me
+    return self.hand_running and me is not None and me.in_hand and not me.folded</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def add_log</span><span class="desc"> – appends a line from strings / segments (bounded)</span>
+<span class="loc">cli_client/state.py:211–226</span>
+</summary>
+<pre><code>def add_log(self, *parts: Union[str, Segment, list], mine: bool = False) -&gt; LogLine:
+    &quot;&quot;&quot;Append a log line. Parts are plain strings (line style), (text, style)
+    segments, or lists of segments.&quot;&quot;&quot;
+    segments: list[Segment] = []
+    for part in parts:
+        if isinstance(part, str):
+            segments.append((part, None))
+        elif isinstance(part, tuple):
+            segments.append(part)
+        else:
+            segments.extend(part)
+    line = LogLine(segments, mine)
+    self.log.append(line)
+    if len(self.log) &gt; MAX_LOG_LINES:
+        del self.log[: len(self.log) - MAX_LOG_LINES]
+    return line</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _mine</span><span class="desc"> – name is mine</span>
+<span class="loc">cli_client/state.py:228–229</span>
+</summary>
+<pre><code>def _mine(self, name: Optional[str]) -&gt; bool:
+    return name == self.my_name</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def apply_view</span><span class="desc"> – replaces the table model from a server snapshot, keeping per-hand display data</span>
+<span class="loc">cli_client/state.py:233–278</span>
+</summary>
+<pre><code>def apply_view(self, view: TableView, hand_running: Optional[bool] = None) -&gt; None:
+    &quot;&quot;&quot;Replace the table part of the model with a server snapshot. With
+    `hand_running` False (a `seated` view between hands) the per-hand bets
+    are not taken from the view.&quot;&quot;&quot;
+    if hand_running is not None:
+        self.hand_running = hand_running
+    running = self.hand_running
+    same_hand = view.hand_number == self.hand_number
+    old = {s.name: s for s in self.seats}
+    seats: list[SeatState] = []
+    for sv in view.seats:
+        prev = old.get(sv.name)
+        s = SeatState(name=sv.name, stack=sv.stack, status=sv.status, leaving=sv.leaving)
+        if running:
+            s.street_bet = sv.street_bet
+            s.total_bet = sv.total_bet
+            s.folded = sv.folded
+            s.all_in = sv.all_in
+            s.in_hand = sv.in_hand
+            if prev is not None and same_hand:
+                s.last_action, s.shown, s.won = prev.last_action, prev.shown, prev.won
+            elif sv.folded:
+                s.last_action = &quot;Fold&quot;
+        elif prev is not None:
+            s.last_action, s.shown, s.won = prev.last_action, prev.shown, prev.won
+        seats.append(s)
+    self.seats = seats
+    self.hand_number = view.hand_number
+    self.button, self.sb_seat, self.bb_seat = view.button, view.sb_seat, view.bb_seat
+    self.waiting = tuple(view.waiting)
+    if running:
+        self.street = view.street
+        self.board = view.board
+        self.pot = view.pot
+        self.side_pots = tuple(view.side_pots)
+        self.current_bet = view.current_bet
+        self.bet_unit = view.bet_unit
+    else:
+        self.pot = 0.0
+        self.side_pots = ()
+        self.current_bet = 0.0
+    if view.hole_cards is not None:
+        self.my_cards = view.hole_cards
+    if 0 &lt;= view.seat &lt; len(seats) and seats[view.seat].name == self.my_name:
+        self.sitting_out = seats[view.seat].sitting_out
+        self.queued = False</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def apply_result</span><span class="desc"> – reconciles seats, stacks, shown hands and winnings with a HandResult; ends the hand</span>
+<span class="loc">cli_client/state.py:280–310</span>
+</summary>
+<pre><code>def apply_result(self, result: HandResult) -&gt; None:
+    &quot;&quot;&quot;Reconcile names, stacks, shown hands and winnings with a hand result
+    (the `hand_end` message). The hand is over afterwards.&quot;&quot;&quot;
+    old = {s.name: s for s in self.seats}
+    winnings = result.winnings
+    if result.names:
+        seats: list[SeatState] = []
+        for idx in sorted(result.names):
+            name = result.names[idx]
+            s = old.get(name) or SeatState(name, 0.0)
+            seats.append(s)
+        self.seats = seats
+    for idx, s in enumerate(self.seats):
+        if idx in result.stacks:
+            s.stack = result.stacks[idx]
+        if idx in result.shown:
+            s.shown = result.shown[idx]
+        s.won = round(winnings.get(idx, 0.0), 2)
+        s.street_bet = 0.0
+        s.total_bet = 0.0
+        if result.dealt_in.get(idx) is not None:
+            s.in_hand = bool(result.dealt_in[idx])
+    self.hand_number = result.hand_number
+    self.button, self.sb_seat, self.bb_seat = result.button, result.sb_seat, result.bb_seat
+    self.board = result.board
+    self.street = result.board.street
+    self.pot = 0.0
+    self.side_pots = ()
+    self.current_bet = 0.0
+    self.hand_running = False
+    self.acting = None</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def apply_event</span><span class="desc"> – dispatches one table event</span>
+<span class="loc">cli_client/state.py:314–321</span>
+</summary>
+<pre><code>def apply_event(self, event: TableEvent) -&gt; bool:
+    &quot;&quot;&quot;Update the model (and the log) from one table event. Returns False for
+    an unknown event type, which is ignored.&quot;&quot;&quot;
+    handler = self._handlers.get(type(event))
+    if handler is None:
+        return False
+    handler(event)
+    return True</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_hand_started</span><span class="desc"> – resets for the hand, adds participants, logs the hand header</span>
+<span class="loc">cli_client/state.py:323–347</span>
+</summary>
+<pre><code>def _on_hand_started(self, e: HandStarted) -&gt; None:  # type: ignore[override]
+    self.hand_number = e.hand_no if e.hand_no is not None else self.hand_number + 1
+    self.hand_running = True
+    self.board = Board()
+    self.street = Street.PREFLOP
+    self.pot = 0.0
+    self.side_pots = ()
+    self.current_bet = 0.0
+    self.bet_unit = self.settings.small_bet_bb
+    self.my_cards = None
+    self.acting = None
+    for s in self.seats:
+        s.reset_for_hand()
+    for seat, name, stack in e.participants:
+        s = self.find(name)
+        if s is None:
+            s = SeatState(name, stack)
+            self.seats.insert(max(0, min(seat, len(self.seats))), s)
+        s.stack = stack
+        s.in_hand = True
+    self.button, self.sb_seat, self.bb_seat = e.button, e.sb_seat, e.bb_seat
+    self.add_log((f&quot;── Hand #{self.hand_number} ──&quot;, &quot;log_hand&quot;))
+    button = self.seat_name(self.button)
+    if button is not None:
+        self.add_log((f&quot;Button: {button}&quot;, &quot;dim&quot;))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_blind</span><span class="desc"> – posts a blind</span>
+<span class="loc">cli_client/state.py:349–364</span>
+</summary>
+<pre><code>def _on_blind(self, e: BlindPosted) -&gt; None:  # type: ignore[override]
+    s = self.find(e.name)
+    if s is not None:
+        s.stack = e.stack_bb
+        s.total_bet = _add(s.total_bet, e.amount_bb)
+        s.street_bet = e.amount_bb
+        s.all_in = e.all_in
+        s.in_hand = True
+        s.last_action = f&quot;{e.blind} {fmt_amount(e.amount_bb)}&quot;
+    self.pot = _add(self.pot, e.amount_bb)
+    floor = self.settings.big_blind_bb if e.blind == &quot;BB&quot; else 0.0
+    self.current_bet = max(self.current_bet, e.amount_bb, floor)
+    text = f&quot;{e.name} posts {e.blind} {fmt_amount(e.amount_bb)}&quot;
+    if e.all_in:
+        text += &quot; (all-in)&quot;
+    self.add_log(text, mine=self._mine(e.name))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_acted</span><span class="desc"> – applies an action and logs it</span>
+<span class="loc">cli_client/state.py:366–384</span>
+</summary>
+<pre><code>def _on_acted(self, e: PlayerActed) -&gt; None:  # type: ignore[override]
+    before = self.current_bet
+    s = self.find(e.name)
+    label, verb = _action_text(e, before)
+    if s is not None:
+        s.stack = e.stack_bb
+        s.total_bet = _add(s.total_bet, e.amount_bb)
+        s.street_bet = e.to_bb
+        s.all_in = e.all_in
+        if e.action is ActionType.FOLD:
+            s.folded = True
+        s.last_action = label
+    self.pot = _add(self.pot, e.amount_bb)
+    self.current_bet = max(self.current_bet, e.to_bb)
+    self.acting = None
+    text = f&quot;{e.name} {verb}&quot;
+    if e.all_in and e.action is not ActionType.FOLD:
+        text += &quot; (all-in)&quot;
+    self.add_log(text, mine=self._mine(e.name))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_board</span><span class="desc"> – new board cards, street, bet unit</span>
+<span class="loc">cli_client/state.py:386–401</span>
+</summary>
+<pre><code>def _on_board(self, e: BoardDealt) -&gt; None:  # type: ignore[override]
+    self.board = e.board
+    self.street = e.street
+    for s in self.seats:
+        s.street_bet = 0.0
+        if not s.folded:
+            s.last_action = &quot;&quot;
+    self.current_bet = 0.0
+    self.bet_unit = (
+        self.settings.small_bet_bb if e.street is Street.FLOP else self.settings.big_bet_bb
+    )
+    self.acting = None
+    self.add_log(
+        (f&quot;{STREET_NAMES.get(e.street, e.street.name.title())}: &quot;, &quot;log_board&quot;),
+        card_segments(e.cards, self.ascii),
+    )</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_shown</span><span class="desc"> – shown hand with its description</span>
+<span class="loc">cli_client/state.py:403–414</span>
+</summary>
+<pre><code>def _on_shown(self, e: HandShown) -&gt; None:  # type: ignore[override]
+    s = self.find(e.name)
+    if s is not None:
+        s.shown = e.hand
+        s.stack = e.stack_bb
+    if e.name == self.my_name and self.my_cards is None:
+        self.my_cards = e.hand
+    parts: list = [f&quot;{e.name} shows &quot;, card_segments(e.hand, self.ascii)]
+    description = describe_hand(e.hand, self.board)
+    if description:
+        parts.append(f&quot; – {description}&quot;)
+    self.add_log(*parts, mine=self._mine(e.name))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_bet_returned</span><span class="desc"> – uncalled bet returned</span>
+<span class="loc">cli_client/state.py:416–423</span>
+</summary>
+<pre><code>def _on_bet_returned(self, e: BetReturned) -&gt; None:  # type: ignore[override]
+    s = self.find(e.name)
+    if s is not None:
+        s.stack = e.stack_bb
+        s.total_bet = _sub(s.total_bet, e.amount_bb)
+        s.street_bet = _sub(s.street_bet, e.amount_bb)
+    self.pot = _sub(self.pot, e.amount_bb)
+    self.add_log(f&quot;{fmt_amount(e.amount_bb)} returned to {e.name}&quot;, mine=self._mine(e.name))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_awarded</span><span class="desc"> – pot share awarded</span>
+<span class="loc">cli_client/state.py:425–437</span>
+</summary>
+<pre><code>def _on_awarded(self, e: PotAwarded) -&gt; None:  # type: ignore[override]
+    s = self.find(e.name)
+    if s is not None:
+        s.stack = e.stack_bb
+        s.won = _add(s.won, e.amount_bb)
+    self.pot = _sub(self.pot, e.amount_bb)
+    share = &quot;uncontested&quot; if e.share == &quot;whole&quot; else e.share
+    if e.pot_index &gt; 0:
+        share = f&quot;side pot {e.pot_index}, {share}&quot;
+    self.add_log(
+        (f&quot;{e.name} wins {fmt_amount(e.amount_bb)} ({share})&quot;, &quot;log_me&quot; if self._mine(e.name) else &quot;log_win&quot;),
+        mine=self._mine(e.name),
+    )</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_joined</span><span class="desc"> – inserts a new seat (adjusting the button)</span>
+<span class="loc">cli_client/state.py:439–452</span>
+</summary>
+<pre><code>def _on_joined(self, e: PlayerJoined) -&gt; None:  # type: ignore[override]
+    s = self.find(e.name)
+    if s is None:
+        idx = max(0, min(e.seat, len(self.seats)))
+        self.seats.insert(idx, SeatState(e.name, e.stack_bb))
+        if self.button is not None and len(self.seats) &gt; 1 and self.button &gt;= idx:
+            self.button += 1
+        self.sb_seat = self.bb_seat = None  # they refer to the old numbering
+    else:
+        s.stack = e.stack_bb
+    self.waiting = tuple(n for n in self.waiting if n != e.name)
+    self.add_log(
+        f&quot;{e.name} joins the table ({fmt_amount(e.stack_bb)} BB)&quot;, mine=self._mine(e.name)
+    )</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_left</span><span class="desc"> – removes a seat (adjusting the button)</span>
+<span class="loc">cli_client/state.py:454–466</span>
+</summary>
+<pre><code>def _on_left(self, e: PlayerLeft) -&gt; None:  # type: ignore[override]
+    idx = self.seat_of(e.name)
+    if idx is not None:
+        self.seats.pop(idx)
+        if not self.seats:
+            self.button = None
+        elif self.button is not None:
+            if self.button &gt; idx:
+                self.button -= 1
+            elif self.button == idx:
+                self.button = idx % len(self.seats)  # passes clockwise
+        self.sb_seat = self.bb_seat = None
+    self.add_log(f&quot;{e.name} leaves the table&quot;, mine=self._mine(e.name))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_sat_out / def _on_returned</span><span class="desc"> – sitting-out status changes</span>
+<span class="loc">cli_client/state.py:468–484</span>
+</summary>
+<pre><code>def _on_sat_out(self, e: PlayerSatOut) -&gt; None:  # type: ignore[override]
+    s = self.find(e.name)
+    if s is not None:
+        s.status = PlayerStatus.SITTING_OUT
+        s.stack = e.stack_bb
+    if e.name == self.my_name:
+        self.sitting_out = True
+    self.add_log(f&quot;{e.name} sits out&quot;, mine=self._mine(e.name))
+
+def _on_returned(self, e: PlayerReturned) -&gt; None:  # type: ignore[override]
+    s = self.find(e.name)
+    if s is not None:
+        s.status = PlayerStatus.ACTIVE
+        s.stack = e.stack_bb
+    if e.name == self.my_name:
+        self.sitting_out = False
+    self.add_log(f&quot;{e.name} is back&quot;, mine=self._mine(e.name))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_rebought</span><span class="desc"> – rebuy</span>
+<span class="loc">cli_client/state.py:486–490</span>
+</summary>
+<pre><code>def _on_rebought(self, e: PlayerRebought) -&gt; None:  # type: ignore[override]
+    s = self.find(e.name)
+    if s is not None:
+        s.stack = e.stack_bb
+    self.add_log(f&quot;{e.name} rebuys {fmt_amount(e.amount_bb)}&quot;, mine=self._mine(e.name))</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def _action_text</span><span class="desc"> – (seat label, log verb) for an action</span>
+<span class="loc">cli_client/state.py:493–510</span>
+</summary>
+<pre><code>def _action_text(e: PlayerActed, current_bet_before: float) -&gt; tuple[str, str]:
+    &quot;&quot;&quot;(seat label, log verb) for an action, e.g. (&quot;Raise to 4&quot;, &quot;raises to 4&quot;).&quot;&quot;&quot;
+    t = e.action
+    if t is ActionType.FOLD:
+        if e.reason == FOLD_TIMEOUT:
+            return &quot;Fold (timeout)&quot;, &quot;folds (timeout)&quot;
+        if e.reason == FOLD_LEAVE:
+            return &quot;Fold (left)&quot;, &quot;folds (leaving)&quot;
+        return &quot;Fold&quot;, &quot;folds&quot;
+    if t is ActionType.CHECK:
+        return &quot;Check&quot;, &quot;checks&quot;
+    if t is ActionType.CALL:
+        amount = fmt_amount(e.amount_bb)
+        return f&quot;Call {amount}&quot;, f&quot;calls {amount}&quot;
+    to = fmt_amount(e.to_bb)
+    if current_bet_before &lt;= _EPS:
+        return f&quot;Bet {to}&quot;, f&quot;bets {to}&quot;
+    return f&quot;Raise to {to}&quot;, f&quot;raises to {to}&quot;</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">ui.py</span><span class="desc"> – curses backend: colour pairs, drawing a Frame, the key input loop</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – mapping only; layout is in render.py</span>
+<span class="loc">cli_client/ui.py:1–5</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Curses backend: colour pairs, drawing a Frame, the key input loop.
+
+All the layout is in `render.py`; this module only maps style names to curses
+attributes and curses key codes to the controller&#x27;s key names.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – curses, controller, render</span>
+<span class="loc">cli_client/ui.py:7–15</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import curses
+import os
+import time
+from typing import Optional
+
+from .controller import Client
+from .render import STYLES, Frame, render</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, poll interval, style -&gt; colours table, monochrome attributes</span>
+<span class="loc">cli_client/ui.py:17–85</span>
+</summary>
+<pre><code>__all__ = [&quot;run&quot;, &quot;translate_key&quot;, &quot;STYLE_COLORS&quot;]
+
+POLL_SECONDS = 0.1
+
+# style -&gt; (foreground, background, attributes); -1 = terminal default.
+# Cards are bold on a black face so the four suit colours stand out from the felt.
+_B, _D, _R = &quot;bold&quot;, &quot;dim&quot;, &quot;reverse&quot;
+STYLE_COLORS: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    &quot;default&quot;: (&quot;default&quot;, &quot;default&quot;, ()),
+    &quot;border&quot;: (&quot;default&quot;, &quot;default&quot;, ()),
+    &quot;header&quot;: (&quot;default&quot;, &quot;default&quot;, (_B,)),
+    &quot;felt&quot;: (&quot;white&quot;, &quot;green&quot;, ()),
+    &quot;pot&quot;: (&quot;yellow&quot;, &quot;green&quot;, (_B,)),
+    &quot;lobby&quot;: (&quot;white&quot;, &quot;green&quot;, (_B,)),
+    &quot;seat&quot;: (&quot;default&quot;, &quot;default&quot;, ()),
+    &quot;seat_me&quot;: (&quot;default&quot;, &quot;default&quot;, (_B,)),
+    &quot;seat_acting&quot;: (&quot;black&quot;, &quot;white&quot;, (_B,)),
+    &quot;folded&quot;: (&quot;default&quot;, &quot;default&quot;, (_D,)),
+    &quot;winner&quot;: (&quot;black&quot;, &quot;yellow&quot;, (_B,)),
+    &quot;hearts&quot;: (&quot;red&quot;, &quot;black&quot;, (_B,)),
+    &quot;diamonds&quot;: (&quot;blue&quot;, &quot;black&quot;, (_B,)),
+    &quot;spades&quot;: (&quot;yellow&quot;, &quot;black&quot;, (_B,)),
+    &quot;clubs&quot;: (&quot;green&quot;, &quot;black&quot;, (_B,)),
+    &quot;card_back&quot;: (&quot;white&quot;, &quot;blue&quot;, ()),
+    &quot;empty_slot&quot;: (&quot;white&quot;, &quot;green&quot;, (_D,)),
+    &quot;chip&quot;: (&quot;black&quot;, &quot;yellow&quot;, (_B,)),
+    &quot;button&quot;: (&quot;black&quot;, &quot;white&quot;, (_B,)),
+    &quot;blind&quot;: (&quot;cyan&quot;, &quot;default&quot;, (_B,)),
+    &quot;log&quot;: (&quot;default&quot;, &quot;default&quot;, ()),
+    &quot;log_me&quot;: (&quot;default&quot;, &quot;default&quot;, (_B,)),
+    &quot;log_board&quot;: (&quot;cyan&quot;, &quot;default&quot;, ()),
+    &quot;log_hand&quot;: (&quot;magenta&quot;, &quot;default&quot;, (_B,)),
+    &quot;log_win&quot;: (&quot;yellow&quot;, &quot;default&quot;, (_B,)),
+    &quot;menu&quot;: (&quot;default&quot;, &quot;default&quot;, ()),
+    &quot;menu_title&quot;: (&quot;default&quot;, &quot;default&quot;, (_B,)),
+    &quot;menu_selected&quot;: (&quot;black&quot;, &quot;cyan&quot;, (_B,)),
+    &quot;prompt&quot;: (&quot;yellow&quot;, &quot;default&quot;, (_B,)),
+    &quot;preset&quot;: (&quot;cyan&quot;, &quot;default&quot;, (_B,)),
+    &quot;timer&quot;: (&quot;yellow&quot;, &quot;default&quot;, (_B,)),
+    &quot;timer_low&quot;: (&quot;red&quot;, &quot;default&quot;, (_B,)),
+    &quot;status&quot;: (&quot;default&quot;, &quot;default&quot;, ()),
+    &quot;error&quot;: (&quot;red&quot;, &quot;default&quot;, (_B,)),
+    &quot;dim&quot;: (&quot;default&quot;, &quot;default&quot;, (_D,)),
+    &quot;help&quot;: (&quot;white&quot;, &quot;blue&quot;, ()),
+}
+
+# Without colours: attributes only.
+_MONO: dict[str, tuple[str, ...]] = {
+    &quot;header&quot;: (_B,),
+    &quot;seat_me&quot;: (_B,),
+    &quot;seat_acting&quot;: (_R,),
+    &quot;folded&quot;: (_D,),
+    &quot;winner&quot;: (_R, _B),
+    &quot;hearts&quot;: (_B,),
+    &quot;diamonds&quot;: (_B,),
+    &quot;spades&quot;: (_B,),
+    &quot;clubs&quot;: (_B,),
+    &quot;card_back&quot;: (_D,),
+    &quot;chip&quot;: (_B,),
+    &quot;button&quot;: (_R,),
+    &quot;log_me&quot;: (_B,),
+    &quot;log_hand&quot;: (_B,),
+    &quot;menu_title&quot;: (_B,),
+    &quot;menu_selected&quot;: (_R,),
+    &quot;prompt&quot;: (_B,),
+    &quot;error&quot;: (_B,),
+    &quot;dim&quot;: (_D,),
+    &quot;help&quot;: (_R,),
+}</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _attr</span><span class="desc"> – attribute names -&gt; curses attributes</span>
+<span class="loc">cli_client/ui.py:88–92</span>
+</summary>
+<pre><code>def _attr(names: tuple[str, ...]) -&gt; int:
+    value = 0
+    for name in names:
+        value |= {&quot;bold&quot;: curses.A_BOLD, &quot;dim&quot;: curses.A_DIM, &quot;reverse&quot;: curses.A_REVERSE}[name]
+    return value</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Palette</span><span class="desc"> – curses attribute per style (colour pairs or monochrome fallback)</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – initialises colours and pairs for every style</span>
+<span class="loc">cli_client/ui.py:96–133</span>
+</summary>
+<pre><code>def __init__(self) -&gt; None:
+    self._attrs: dict[str, int] = {}
+    colors = {
+        &quot;default&quot;: -1,
+        &quot;black&quot;: curses.COLOR_BLACK,
+        &quot;red&quot;: curses.COLOR_RED,
+        &quot;green&quot;: curses.COLOR_GREEN,
+        &quot;yellow&quot;: curses.COLOR_YELLOW,
+        &quot;blue&quot;: curses.COLOR_BLUE,
+        &quot;magenta&quot;: curses.COLOR_MAGENTA,
+        &quot;cyan&quot;: curses.COLOR_CYAN,
+        &quot;white&quot;: curses.COLOR_WHITE,
+    }
+    use_color = False
+    if curses.has_colors():
+        try:
+            curses.start_color()
+            try:
+                curses.use_default_colors()
+            except curses.error:
+                colors[&quot;default&quot;] = curses.COLOR_BLACK
+            use_color = curses.COLORS &gt;= 8 and curses.COLOR_PAIRS &gt; len(STYLES)
+        except curses.error:
+            use_color = False
+    for i, style in enumerate(STYLES, start=1):
+        if use_color:
+            fg, bg, attrs = STYLE_COLORS.get(style, (&quot;default&quot;, &quot;default&quot;, ()))
+            fg_c = colors[fg]
+            bg_c = colors[bg]
+            if colors[&quot;default&quot;] != -1:  # no default colours: white on black
+                fg_c = curses.COLOR_WHITE if fg == &quot;default&quot; else fg_c
+            try:
+                curses.init_pair(i, fg_c, bg_c)
+                self._attrs[style] = curses.color_pair(i) | _attr(attrs)
+                continue
+            except curses.error:
+                pass
+        self._attrs[style] = _attr(_MONO.get(style, ()))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def attr</span><span class="desc"> – attribute of a style</span>
+<span class="loc">cli_client/ui.py:135–136</span>
+</summary>
+<pre><code>def attr(self, style: str) -&gt; int:
+    return self._attrs.get(style, 0)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def _keymap</span><span class="desc"> – curses key codes -&gt; key names</span>
+<span class="loc">cli_client/ui.py:139–155</span>
+</summary>
+<pre><code>def _keymap() -&gt; dict[int, str]:
+    return {
+        curses.KEY_UP: &quot;up&quot;,
+        curses.KEY_DOWN: &quot;down&quot;,
+        curses.KEY_ENTER: &quot;enter&quot;,
+        10: &quot;enter&quot;,
+        13: &quot;enter&quot;,
+        curses.KEY_PPAGE: &quot;pgup&quot;,
+        curses.KEY_NPAGE: &quot;pgdn&quot;,
+        curses.KEY_F2: &quot;F2&quot;,
+        curses.KEY_F3: &quot;F3&quot;,
+        27: &quot;esc&quot;,
+        curses.KEY_BACKSPACE: &quot;backspace&quot;,
+        127: &quot;backspace&quot;,
+        8: &quot;backspace&quot;,
+        3: &quot;ctrl-c&quot;,
+    }</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def translate_key</span><span class="desc"> – key code -&gt; controller key name</span>
+<span class="loc">cli_client/ui.py:158–165</span>
+</summary>
+<pre><code>def translate_key(code: int) -&gt; Optional[str]:
+    &quot;&quot;&quot;curses key code -&gt; controller key name (None for keys we ignore).&quot;&quot;&quot;
+    name = _keymap().get(code)
+    if name is not None:
+        return name
+    if 32 &lt;= code &lt; 127:
+        return chr(code)
+    return None</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def draw</span><span class="desc"> – paints a Frame by style runs</span>
+<span class="loc">cli_client/ui.py:168–177</span>
+</summary>
+<pre><code>def draw(stdscr: &quot;curses.window&quot;, frame: Frame, palette: Palette) -&gt; None:
+    stdscr.erase()
+    for y in range(frame.height):
+        for x, text, style in frame.style_runs(y):
+            try:
+                stdscr.addstr(y, x, text, palette.attr(style))
+            except curses.error:
+                pass  # the bottom-right cell
+    stdscr.noutrefresh()
+    curses.doupdate()</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _main</span><span class="desc"> – curses loop: read key, drain inbox, handle key, tick, beep, redraw</span>
+<span class="loc">cli_client/ui.py:180–213</span>
+</summary>
+<pre><code>def _main(stdscr: &quot;curses.window&quot;, client: Client, poll: float) -&gt; int:
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+    curses.raw()  # Ctrl-C arrives as a key (3), not as SIGINT mid-update
+    stdscr.keypad(True)
+    stdscr.timeout(int(poll * 1000))
+    palette = Palette()
+    keymap = _keymap()
+    while not client.done:
+        try:
+            code = stdscr.getch()
+        except KeyboardInterrupt:
+            code = 3
+        if code == curses.KEY_RESIZE:
+            client.dirty = True
+        client.drain()
+        if code not in (-1, curses.KEY_RESIZE):
+            key = keymap.get(code) or (chr(code) if 32 &lt;= code &lt; 127 else None)
+            if key is not None:
+                client.handle_key(key)
+        client.tick(time.monotonic())
+        if client.bell:
+            client.bell = False
+            try:
+                curses.beep()
+            except curses.error:
+                pass
+        if client.dirty:
+            client.dirty = False
+            height, width = stdscr.getmaxyx()
+            draw(stdscr, render(client.state, client.ui_view(), width, height), palette)
+    return client.exit_code</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def run</span><span class="desc"> – runs the UI in curses.wrapper and returns the exit code</span>
+<span class="loc">cli_client/ui.py:216–223</span>
+</summary>
+<pre><code>def run(client: Client, poll: float = POLL_SECONDS) -&gt; int:
+    &quot;&quot;&quot;Run the full-screen UI until the client is done; returns its exit code.
+    The terminal is restored on the way out (also on errors).&quot;&quot;&quot;
+    os.environ.setdefault(&quot;ESCDELAY&quot;, &quot;25&quot;)
+    try:
+        return curses.wrapper(_main, client, poll)
+    except KeyboardInterrupt:
+        return client.exit_code</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+</main>
+<script>
+function setAll(open) { document.querySelectorAll('details').forEach(d => d.open = open); }
+function expandTo(depth) {
+  document.querySelectorAll('details').forEach(d => {
+    const m = d.className.match(/d(\d+)/); d.open = m && +m[1] < depth;
+  });
+}
+function filter(q) {
+  q = q.trim().toLowerCase();
+  const all = document.querySelectorAll('details');
+  if (!q) { all.forEach(d => d.style.display = ''); expandTo(1); return; }
+  all.forEach(d => { d.style.display = 'none'; d.open = false; });
+  all.forEach(d => {
+    const s = d.querySelector(':scope > summary').textContent.toLowerCase();
+    if (s.includes(q)) {
+      d.style.display = '';
+      let p = d.parentElement;
+      while (p) { if (p.tagName === 'DETAILS') { p.style.display = ''; p.open = true; } p = p.parentElement; }
+    }
+  });
+}
+expandTo(1);
+</script>
+</body>
+</html>

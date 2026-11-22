@@ -1,0 +1,2711 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rl_env documentation</title>
+<style>
+:root {
+  --bg: #fbfaf7; --fg: #1f2328; --muted: #6a6f76; --line: #e3e0d8;
+  --name: #0b5cad; --def: #7a3e9d; --code-bg: #f2efe8; --loc: #8a8f96;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a8; --line: #2c3036;
+    --name: #6cb6ff; --def: #d2a8ff; --code-bg: #1e2228; --loc: #7d838c;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a8; --line: #2c3036;
+  --name: #6cb6ff; --def: #d2a8ff; --code-bg: #1e2228; --loc: #7d838c;
+}
+body { background: var(--bg); color: var(--fg); margin: 0;
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+p.lead { color: var(--muted); margin: 0 0 16px; }
+.toolbar button { font: inherit; font-size: 13px; padding: 4px 10px; margin-right: 6px;
+  border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 6px; cursor: pointer; }
+.toolbar { margin-bottom: 16px; }
+details { margin: 2px 0; }
+.kids { margin-left: 18px; padding-left: 10px; border-left: 1px solid var(--line); }
+summary { cursor: pointer; padding: 2px 0; list-style-position: outside; }
+summary:hover { background: color-mix(in srgb, var(--line) 40%, transparent); }
+.name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; color: var(--name); font-weight: 600; }
+.name.def { color: var(--def); }
+.desc { color: var(--fg); }
+.d0 > summary .desc, .kids .desc { }
+.loc { float: right; font: 12px ui-monospace, Menlo, monospace; color: var(--loc); margin-left: 12px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;
+  margin: 6px 0 8px 18px; overflow-x: auto; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+input#q { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: transparent; color: var(--fg); width: 220px; max-width: 100%; }
+mark { background: #ffe48a; color: #000; }
+</style>
+</head>
+<body>
+<main>
+<h1>rl_env</h1>
+<p class="lead">Reinforcement-learning environment for fixed-limit Omaha Hi-Lo 8-or-better: drives the engine in step mode and provides tables, batched decisions, observations, masks, results and training records.
+Tree: folders → files → classes / functions → logical blocks → code. Only <code>.py</code> sources are covered (BUCK, JSON test sets, markdown and unit tests are omitted).</p>
+<div class="toolbar">
+<button onclick="setAll(true)">Expand all</button>
+<button onclick="setAll(false)">Collapse all</button>
+<button onclick="expandTo(1)">Files</button>
+<button onclick="expandTo(2)">Classes &amp; functions</button>
+<input id="q" placeholder="Filter by name / description" oninput="filter(this.value)">
+</div>
+<details class="d0"><summary><span class="name ">./bench</span><span class="desc"> – rollout benchmark of rl_env next to the engine-only number (buck2 run //rl_env:bench)</span>
+</summary>
+<div class="kids">
+<details class="d1"><summary><span class="name ">bench.py</span><span class="desc"> – runs a TableBatch of random controllers per table size and reports decisions/s, hands/s and rl_env&#x27;s share of the time</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – usage and what is measured</span>
+<span class="loc">bench/bench.py:1–19</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Rollout benchmark for rl_env.
+
+    buck2 run //rl_env:bench -- [--tables 512] [--players 2,6,9] [--hands 20000]
+                                [--seed 0] [--stacks deep|mixed] [--no-obs]
+                                [--record] [--profile]
+
+The workload of the spec&#x27;s speed target: `--tables` tables in one `TableBatch`,
+a `RandomController` at every seat, the observation and the mask built at every
+decision. `--no-obs` uses `TableBatch(observations=False)`: mask only, no
+observation built and no tracker fed - to isolate the observation cost and to
+show what an arena match pays. `--record` adds a `Recorder` (incompatible with
+`--no-obs`: a recorder needs observations). For each table size it reports
+hands, decisions, wall time, decisions/s and hands/s, next to the engine-only
+number for the same size from the engine&#x27;s own workload
+(`engine.benchmark.run_benchmark`), and the share of time spent in rl_env,
+`1 - engine_time / total_time` with the engine time taken per decision
+(`= 1 - rl_env decisions/s / engine decisions/s`). Timing with
+`time.perf_counter()`; the first 1,000 hands are not timed.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – argparse, cProfile, time, engine.benchmark and rl_env</span>
+<span class="loc">bench/bench.py:21–33</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import argparse
+import cProfile
+import io
+import pstats
+import sys
+import time
+from typing import Callable, Optional, TypeVar
+
+from engine.benchmark import WARMUP_HANDS, format_line, run_benchmark
+
+from rl_env import HandSampler, RandomController, Recorder, StackConfig, TableBatch</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – type variable T and DRAIN_EVERY (records drained to bound memory)</span>
+<span class="loc">bench/bench.py:35–37</span>
+</summary>
+<pre><code>T = TypeVar(&quot;T&quot;)
+
+DRAIN_EVERY = 100_000  # drained records, so --record does not grow without bound</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _profiled</span><span class="desc"> – runs a function, optionally under cProfile, printing the top 30 by cumulative and total time</span>
+<span class="loc">bench/bench.py:40–53</span>
+</summary>
+<pre><code>def _profiled(fn: Callable[[], T], profile: bool) -&gt; T:
+    if not profile:
+        return fn()
+    profiler = cProfile.Profile()
+    profiler.enable()
+    try:
+        return fn()
+    finally:
+        profiler.disable()
+        for key in (&quot;cumulative&quot;, &quot;tottime&quot;):
+            out = io.StringIO()
+            pstats.Stats(profiler, stream=out).sort_stats(key).print_stats(30)
+            print(f&quot;--- profile, sorted by {key} ---&quot;)
+            print(out.getvalue())</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def run_rl_env</span><span class="desc"> – one timed run at one table size</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">refuse --record without observations; build recorder, batch, sampler and a random controller at every seat</span>
+<span class="loc">bench/bench.py:69–75</span>
+</summary>
+<pre><code>if record and not observations:
+    raise ValueError(&quot;--record needs observations (incompatible with --no-obs)&quot;)
+recorder = Recorder() if record else None
+batch = TableBatch(tables, recorder=recorder, observations=observations)
+sampler = HandSampler(seed, sizes=(players,), cfg=cfg)
+controllers = {&quot;random&quot;: RandomController(seed)}
+keys = (&quot;random&quot;,) * players</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">every seat uses the &quot;random&quot; controller</span>
+<span class="loc">bench/bench.py:77–78</span>
+</summary>
+<pre><code>def seat_controllers(spec):
+    return keys</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">drain the recorder whenever it holds DRAIN_EVERY ready rows</span>
+<span class="loc">bench/bench.py:80–82</span>
+</summary>
+<pre><code>def drain(_fh) -&gt; None:
+    if recorder is not None and recorder.n_ready &gt;= DRAIN_EVERY:
+        recorder.drain()</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">untimed warm-up, then the timed batch.run; return hands, decisions, seconds</span>
+<span class="loc">bench/bench.py:84–90</span>
+</summary>
+<pre><code>if warmup:
+    batch.run(controllers, sampler, warmup, seat_controllers, drain)
+decisions0 = batch.n_decisions
+t0 = time.perf_counter()
+done = batch.run(controllers, sampler, hands, seat_controllers, drain)
+seconds = time.perf_counter() - t0
+return {&quot;hands&quot;: done, &quot;decisions&quot;: batch.n_decisions - decisions0, &quot;seconds&quot;: seconds}</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def main</span><span class="desc"> – benchmark command line</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">define the options: tables, players, hands, seed, stacks, no-obs, record, profile</span>
+<span class="loc">bench/bench.py:94–111</span>
+</summary>
+<pre><code>parser = argparse.ArgumentParser(description=&quot;rl_env rollout benchmark.&quot;)
+parser.add_argument(&quot;--tables&quot;, type=int, default=512, help=&quot;tables in one batch&quot;)
+parser.add_argument(&quot;--players&quot;, default=&quot;2,6,9&quot;, help=&quot;comma-separated table sizes&quot;)
+parser.add_argument(&quot;--hands&quot;, type=int, default=20_000, help=&quot;timed hands per size&quot;)
+parser.add_argument(&quot;--seed&quot;, type=int, default=0)
+parser.add_argument(
+    &quot;--stacks&quot;, choices=(&quot;deep&quot;, &quot;mixed&quot;), default=&quot;mixed&quot;, help=&quot;deep: 100 BB everywhere&quot;
+)
+parser.add_argument(
+    &quot;--no-obs&quot;,
+    action=&quot;store_true&quot;,
+    help=&quot;TableBatch(observations=False): mask only, no observation&quot;,
+)
+parser.add_argument(
+    &quot;--record&quot;, action=&quot;store_true&quot;, help=&quot;record with a Recorder (not with --no-obs)&quot;
+)
+parser.add_argument(&quot;--profile&quot;, action=&quot;store_true&quot;, help=&quot;profile the rl_env runs&quot;)
+args = parser.parse_args(argv)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">parse and validate sizes and option combinations; pick the stack config; print settings</span>
+<span class="loc">bench/bench.py:113–126</span>
+</summary>
+<pre><code>try:
+    sizes = [int(s) for s in args.players.split(&quot;,&quot;) if s.strip()]
+except ValueError:
+    parser.error(&quot;--players must be comma-separated integers&quot;)
+if args.tables &lt; 1 or args.hands &lt; 1 or not sizes or any(not 2 &lt;= n &lt;= 10 for n in sizes):
+    parser.error(&quot;need --tables &gt;= 1, --hands &gt;= 1 and table sizes in 2..10&quot;)
+if args.record and args.no_obs:
+    parser.error(&quot;--record needs observations: it cannot be combined with --no-obs&quot;)
+cfg = StackConfig(deep_share=1.0) if args.stacks == &quot;deep&quot; else StackConfig()
+print(
+    f&quot;tables={args.tables} hands={args.hands} seed={args.seed} stacks={args.stacks} &quot;
+    f&quot;obs={not args.no_obs} record={args.record} (warm-up {WARMUP_HANDS} hands not timed)&quot;
+)
+sys.stdout.flush()</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">per size: run rl_env (profiled if asked), run the engine benchmark, print both and the rl_env share</span>
+<span class="loc">bench/bench.py:128–153</span>
+</summary>
+<pre><code>for n in sizes:
+    r = _profiled(
+        lambda: run_rl_env(
+            n,
+            tables=args.tables,
+            hands=args.hands,
+            seed=args.seed,
+            cfg=cfg,
+            observations=not args.no_obs,
+            record=args.record,
+        ),
+        args.profile,
+    )
+    secs = r[&quot;seconds&quot;] if r[&quot;seconds&quot;] &gt; 0 else 1e-9
+    dps = r[&quot;decisions&quot;] / secs
+    hps = r[&quot;hands&quot;] / secs
+    engine = run_benchmark(n, tables=args.tables, hands=args.hands, seed=args.seed)
+    share = 1.0 - dps / engine.decisions_per_s if engine.decisions_per_s &gt; 0 else float(&quot;nan&quot;)
+    print(
+        f&quot;rl_env     {n:2d} players: {r[&#x27;hands&#x27;]:7d} hands, {r[&#x27;decisions&#x27;]:8d} decisions, &quot;
+        f&quot;{r[&#x27;seconds&#x27;]:7.2f} s, {hps:9.0f} hands/s, {dps:9.0f} decisions/s | &quot;
+        f&quot;engine-only {engine.decisions_per_s:9.0f} decisions/s | rl_env share {share:.1%}&quot;
+    )
+    print(format_line(engine))
+    sys.stdout.flush()
+return 0</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">run as script</span><span class="desc"> – exits with main()&#x27;s status</span>
+<span class="loc">bench/bench.py:156–157</span>
+</summary>
+<pre><code>if __name__ == &quot;__main__&quot;:
+    sys.exit(main())</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d0"><summary><span class="name ">./rl_env</span><span class="desc"> – reinforcement-learning environment: drives the engine in step mode and gives tables, decisions, observations, masks, results and training records</span>
+</summary>
+<div class="kids">
+<details class="d1"><summary><span class="name ">__init__.py</span><span class="desc"> – package entry: purpose, the two hidden-information doors, and the public re-exports</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – what rl_env does and where hidden information may leave</span>
+<span class="loc">rl_env/__init__.py:1–12</span>
+</summary>
+<pre><code>&quot;&quot;&quot;rl_env: the reinforcement-learning environment for fixed-limit Omaha Hi-Lo 8-or-better.
+
+It drives `//engine` in step mode and gives the learning side tables, decisions,
+observation vectors, action masks, results and training records. No poker rule
+lives here: betting, pots, showdown and hand evaluation stay in the engine.
+
+Hidden information leaves through two separate doors, never through a
+controller: during a hand only the critic input (`critic.py`, a separate
+function and array that the observation code never imports); after a hand only
+`finished_hole_cards` (for evaluation tools), readable until the table&#x27;s next
+hand starts. Both go through `Table.privileged_hole_cards`.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – public classes and functions of every submodule</span>
+<span class="loc">rl_env/__init__.py:14–33</span>
+</summary>
+<pre><code>from .actions import (
+    ACTION_NAMES,
+    BET_RAISE,
+    CHECK_CALL,
+    FOLD,
+    N_ACTIONS,
+    IllegalMaskedActionError,
+    action_kind,
+    action_mask,
+    mask_array,
+    to_engine,
+)
+from .batch import Controller, DecisionBatch, FinishedHand, TableBatch
+from .controllers import RandomController
+from .critic import NO_CARD, PRIV_DIM, critic_cards, expand_critic
+from .encoder import ENCODER_VERSION, OBS_DIM, OBS_LAYOUT, encode, encode_view
+from .recorder import Recorder, TrainingRecords
+from .stacks import HandSampler, HandSpec, StackConfig, draw_stacks
+from .table import NoHandError, Table
+from .tracker import HandTracker</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__</span>
+<span class="loc">rl_env/__init__.py:35–75</span>
+</summary>
+<pre><code>__all__ = [
+    # actions
+    &quot;FOLD&quot;,
+    &quot;CHECK_CALL&quot;,
+    &quot;BET_RAISE&quot;,
+    &quot;N_ACTIONS&quot;,
+    &quot;ACTION_NAMES&quot;,
+    &quot;IllegalMaskedActionError&quot;,
+    &quot;action_mask&quot;,
+    &quot;mask_array&quot;,
+    &quot;to_engine&quot;,
+    &quot;action_kind&quot;,
+    # table
+    &quot;Table&quot;,
+    &quot;NoHandError&quot;,
+    # stacks
+    &quot;StackConfig&quot;,
+    &quot;draw_stacks&quot;,
+    &quot;HandSpec&quot;,
+    &quot;HandSampler&quot;,
+    # observation
+    &quot;HandTracker&quot;,
+    &quot;ENCODER_VERSION&quot;,
+    &quot;OBS_DIM&quot;,
+    &quot;OBS_LAYOUT&quot;,
+    &quot;encode&quot;,
+    &quot;encode_view&quot;,
+    # critic (privileged)
+    &quot;NO_CARD&quot;,
+    &quot;PRIV_DIM&quot;,
+    &quot;critic_cards&quot;,
+    &quot;expand_critic&quot;,
+    # batch
+    &quot;Controller&quot;,
+    &quot;DecisionBatch&quot;,
+    &quot;FinishedHand&quot;,
+    &quot;TableBatch&quot;,
+    &quot;RandomController&quot;,
+    &quot;Recorder&quot;,
+    &quot;TrainingRecords&quot;,
+]</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">actions.py</span><span class="desc"> – the three actions of a learning player (fold, check-or-call, bet-or-raise) and their mapping to the engine</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – the three-action model</span>
+<span class="loc">rl_env/actions.py:1–6</span>
+</summary>
+<pre><code>&quot;&quot;&quot;The three actions of a learning player and their link to the engine.
+
+A learning player has exactly three actions: fold, check-or-call, bet-or-raise
+(fixed limit: no bet size to choose). The mask is derived from the engine&#x27;s
+`LegalActions`; no betting rule is re-implemented here.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – operator, numpy, engine ActionType / LegalActions</span>
+<span class="loc">rl_env/actions.py:8–15</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import operator
+from typing import Any
+
+import numpy as np
+
+from engine import ActionType, LegalActions</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, FOLD / CHECK_CALL / BET_RAISE = 0 / 1 / 2, action names, engine action -&gt; kind table</span>
+<span class="loc">rl_env/actions.py:17–41</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;FOLD&quot;,
+    &quot;CHECK_CALL&quot;,
+    &quot;BET_RAISE&quot;,
+    &quot;N_ACTIONS&quot;,
+    &quot;ACTION_NAMES&quot;,
+    &quot;IllegalMaskedActionError&quot;,
+    &quot;action_mask&quot;,
+    &quot;mask_array&quot;,
+    &quot;to_engine&quot;,
+    &quot;action_kind&quot;,
+    &quot;check_action&quot;,
+]
+
+FOLD, CHECK_CALL, BET_RAISE = 0, 1, 2
+N_ACTIONS = 3
+ACTION_NAMES = (&quot;fold&quot;, &quot;check_call&quot;, &quot;bet_raise&quot;)
+
+# Engine action -&gt; action kind (for the observation&#x27;s action history).
+_KIND = {
+    ActionType.FOLD: FOLD,
+    ActionType.CHECK: CHECK_CALL,
+    ActionType.CALL: CHECK_CALL,
+    ActionType.RAISE: BET_RAISE,
+}</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">IllegalMaskedActionError</span><span class="desc"> – an action outside the mask or not 0..2; raised before the engine is touched</span>
+<span class="loc">rl_env/actions.py:44–46</span>
+</summary>
+<pre><code>class IllegalMaskedActionError(ValueError):
+    &quot;&quot;&quot;An action outside the mask (or not one of 0, 1, 2) was submitted.
+    Raised before anything is sent to the engine, so nothing changes.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def action_mask</span><span class="desc"> – (fold only when facing a bet, check-or-call always, bet-or-raise when the engine allows)</span>
+<span class="loc">rl_env/actions.py:49–61</span>
+</summary>
+<pre><code>def action_mask(legal: LegalActions) -&gt; tuple[bool, bool, bool]:
+    &quot;&quot;&quot;(fold, check-or-call, bet-or-raise) allowed for this decision.
+
+    - fold: only when facing a bet (`not legal.can_check`); folding when checking
+      is free is masked although the engine accepts it;
+    - check-or-call: always (the engine always offers check or call to a player
+      who has a decision; a violation is an engine bug and raises);
+    - bet-or-raise: exactly when the engine allows a raise.
+    &quot;&quot;&quot;
+    can_check = legal.can_check
+    if not (can_check or legal.call_amount &gt; 0):
+        raise AssertionError(f&quot;engine offered neither check nor call: {legal!r}&quot;)
+    return (not can_check, True, bool(legal.can_raise))</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def mask_array</span><span class="desc"> – the mask as a numpy bool row</span>
+<span class="loc">rl_env/actions.py:64–66</span>
+</summary>
+<pre><code>def mask_array(legal: LegalActions) -&gt; np.ndarray:
+    &quot;&quot;&quot;The mask of one decision as a numpy bool row of shape (3,).&quot;&quot;&quot;
+    return np.array(action_mask(legal), dtype=bool)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def check_action</span><span class="desc"> – validates an action as an int 0..2 allowed by the mask</span>
+<span class="loc">rl_env/actions.py:69–82</span>
+</summary>
+<pre><code>def check_action(action: Any, mask: Any) -&gt; int:
+    &quot;&quot;&quot;`action` as an int in 0..2 allowed by `mask`; IllegalMaskedActionError
+    otherwise (bools, non-integers, out of range, masked out).&quot;&quot;&quot;
+    if isinstance(action, (bool, np.bool_)):
+        raise IllegalMaskedActionError(f&quot;not an action: {action!r}&quot;)
+    try:
+        a = operator.index(action)
+    except TypeError:
+        raise IllegalMaskedActionError(f&quot;not an action: {action!r}&quot;) from None
+    if not 0 &lt;= a &lt; N_ACTIONS:
+        raise IllegalMaskedActionError(f&quot;action must be 0, 1 or 2, got {a}&quot;)
+    if not mask[a]:
+        raise IllegalMaskedActionError(f&quot;{ACTION_NAMES[a]} is masked out for this decision&quot;)
+    return a</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def to_engine</span><span class="desc"> – masked action -&gt; engine ActionType (check-or-call is CHECK when free, else CALL)</span>
+<span class="loc">rl_env/actions.py:85–94</span>
+</summary>
+<pre><code>def to_engine(action: Any, legal: LegalActions) -&gt; ActionType:
+    &quot;&quot;&quot;Masked action -&gt; engine `ActionType` (check-or-call becomes CHECK when
+    checking is free, CALL otherwise). Raises IllegalMaskedActionError for an
+    action outside the mask.&quot;&quot;&quot;
+    a = check_action(action, action_mask(legal))
+    if a == FOLD:
+        return ActionType.FOLD
+    if a == CHECK_CALL:
+        return ActionType.CHECK if legal.can_check else ActionType.CALL
+    return ActionType.RAISE</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def action_kind</span><span class="desc"> – engine action -&gt; action kind</span>
+<span class="loc">rl_env/actions.py:97–100</span>
+</summary>
+<pre><code>def action_kind(action_type: ActionType) -&gt; int:
+    &quot;&quot;&quot;Engine action -&gt; action kind: FOLD -&gt; FOLD, CHECK / CALL -&gt; CHECK_CALL,
+    RAISE -&gt; BET_RAISE.&quot;&quot;&quot;
+    return _KIND[action_type]</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">batch.py</span><span class="desc"> – TableBatch: many tables at once, decisions grouped by controller, actions submitted in batches, finished hands with each seat&#x27;s result</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – grouping, determinism, observation-free batches and the hidden-information rule</span>
+<span class="loc">rl_env/batch.py:1–20</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Many tables at once: decisions grouped by controller, actions submitted in
+batches, finished hands reported with each seat&#x27;s result.
+
+Each seat of a hand is assigned a controller key by the caller when the hand
+starts. `pending()` groups the decisions of all tables (at most one per table)
+by the acting seat&#x27;s controller key; a `Controller` answers a whole
+`DecisionBatch` at once. Grouping and iteration orders are by table index
+(never over sets or `id()`), so a run is deterministic.
+
+`TableBatch(observations=False)` builds no observation vectors (and feeds no
+tracker): for batches whose controllers all declare `wants_obs = False`
+(evaluation matches with rule-based bots, the bench&#x27;s `--no-obs`). Everything
+else - masks, legal actions, grouping, order, views, actions and results - is
+the same as with observations.
+
+Nothing a controller receives (`DecisionBatch`) or `FinishedHand` carries any
+hidden information, nor any reference to an engine object that could reach it.
+The full deal of a finished hand is read separately with
+`finished_hole_cards(table)`, for evaluation tools only.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – dataclasses, typing, numpy, engine and rl_env modules</span>
+<span class="loc">rl_env/batch.py:22–46</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import (
+    Any,
+    Callable,
+    Hashable,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    Union,
+    runtime_checkable,
+)
+
+import numpy as np
+
+from engine import HandResult, LegalActions, TableView
+from entities import Hand
+
+from .actions import IllegalMaskedActionError, action_mask, check_action, mask_array
+from .encoder import OBS_DIM, encode_view
+from .recorder import Recorder
+from .stacks import HandSampler, HandSpec
+from .table import NoHandError, Table</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__</span>
+<span class="loc">rl_env/batch.py:48–48</span>
+</summary>
+<pre><code>__all__ = [&quot;Controller&quot;, &quot;DecisionBatch&quot;, &quot;FinishedHand&quot;, &quot;TableBatch&quot;]</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">_BatchToken</span><span class="desc"> – opaque identity of a TableBatch inside decision tokens</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – empty slots</span>
+<span class="loc">rl_env/batch.py:51–55</span>
+</summary>
+<pre><code>class _BatchToken:
+    &quot;&quot;&quot;Opaque identity of a TableBatch inside its decision tokens.&quot;&quot;&quot;
+
+    __slots__ = ()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __repr__</span><span class="desc"> – fixed text</span>
+<span class="loc">rl_env/batch.py:56–57</span>
+</summary>
+<pre><code>def __repr__(self) -&gt; str:
+    return &quot;&lt;TableBatch token&gt;&quot;</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">DecisionBatch</span><span class="desc"> – pending decisions of one controller, one row per table, with only what the acting seats may see</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – key, tables, seats, obs, mask, legal, views, tokens</span>
+<span class="loc">rl_env/batch.py:60–76</span>
+</summary>
+<pre><code>@dataclass(eq=False)
+class DecisionBatch:
+    &quot;&quot;&quot;The pending decisions of one controller: one row per table. Holds only
+    what the acting seats may see (no critic input, no other seat&#x27;s cards, no
+    engine object).&quot;&quot;&quot;
+
+    key: Hashable
+    tables: np.ndarray  # int32 (B,)
+    seats: np.ndarray  # int32 (B,)
+    obs: Optional[np.ndarray]  # float32 (B, OBS_DIM); None in a batch without observations
+    mask: np.ndarray  # bool (B, 3)
+    legal: list  # list[LegalActions]
+    views: Optional[list] = None  # list[TableView], only for controllers that want them
+    # Opaque per-row tokens of the decisions the rows answer (to reject a stale
+    # batch); None for `single()` batches, which belong to no TableBatch.
+    tokens: Optional[list] = field(default=None, repr=False)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __len__</span><span class="desc"> – number of rows</span>
+<span class="loc">rl_env/batch.py:77–78</span>
+</summary>
+<pre><code>def __len__(self) -&gt; int:
+    return int(self.tables.shape[0])</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def single</span><span class="desc"> – one-row batch from an engine view and legal actions (a bot at a real table)</span>
+<span class="loc">rl_env/batch.py:80–95</span>
+</summary>
+<pre><code>@classmethod
+def single(
+    cls, view: TableView, legal: LegalActions, key: Hashable = None
+) -&gt; &quot;DecisionBatch&quot;:
+    &quot;&quot;&quot;A one-row batch from one engine view and its legal actions (an engine
+    `on_turn`, or a decoded server `turn` message). Table -1, seat `view.seat`.
+    Always builds `obs`.&quot;&quot;&quot;
+    return cls(
+        key=key,
+        tables=np.array([-1], dtype=np.int32),
+        seats=np.array([view.seat], dtype=np.int32),
+        obs=encode_view(view, legal)[None, :],
+        mask=mask_array(legal)[None, :],
+        legal=[legal],
+        views=[view],
+    )</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">Controller</span><span class="desc"> – protocol of a decision maker: wants_views / wants_obs flags and act(batch) -&gt; actions [, logp]</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring and wants_views</span>
+<span class="loc">rl_env/batch.py:98–111</span>
+</summary>
+<pre><code>@runtime_checkable
+class Controller(Protocol):
+    &quot;&quot;&quot;Decides for the seats assigned to it.
+
+    `wants_views` (class or instance attribute): build `DecisionBatch.views`.
+    `wants_obs` (optional; True when absent): reads `DecisionBatch.obs`. Only a
+    controller declaring `wants_obs = False` may sit in a batch without
+    observations.
+    `act` returns one action per row (int array), or `(actions, logp)` with the
+    log-probability of each chosen action (float32), which the Recorder keeps.
+    &quot;&quot;&quot;
+
+    wants_views: bool</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def act</span><span class="desc"> – returns one action per row (optionally with log-probabilities)</span>
+<span class="loc">rl_env/batch.py:112–112</span>
+</summary>
+<pre><code>def act(self, batch: DecisionBatch) -&gt; Union[np.ndarray, tuple[np.ndarray, np.ndarray]]: ...</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">FinishedHand</span><span class="desc"> – public result of a finished hand: table, hand id, spec, controllers, net BB, rewards, HandResult</span>
+<span class="loc">rl_env/batch.py:115–126</span>
+</summary>
+<pre><code>@dataclass(frozen=True, eq=False)
+class FinishedHand:
+    &quot;&quot;&quot;Public results of a finished hand (`result` shows hole cards only for the
+    hands shown at showdown).&quot;&quot;&quot;
+
+    table: int
+    hand_id: int
+    spec: HandSpec
+    controllers: tuple  # controller key per seat
+    net_bb: np.ndarray  # float64 (n_seats,)
+    rewards: np.ndarray  # float32 (n_seats,), big bets
+    result: HandResult</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _wants_views / def _wants_obs</span><span class="desc"> – read a controller&#x27;s optional flags</span>
+<span class="loc">rl_env/batch.py:129–134</span>
+</summary>
+<pre><code>def _wants_views(controller: Any) -&gt; bool:
+    return bool(getattr(controller, &quot;wants_views&quot;, False))
+
+
+def _wants_obs(controller: Any) -&gt; bool:
+    return bool(getattr(controller, &quot;wants_obs&quot;, True))</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _scalar</span><span class="desc"> – numpy scalar -&gt; Python value</span>
+<span class="loc">rl_env/batch.py:137–139</span>
+</summary>
+<pre><code>def _scalar(x: Any) -&gt; Any:
+    item = getattr(x, &quot;item&quot;, None)
+    return item() if callable(item) else x</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">TableBatch</span><span class="desc"> – n tables played side by side</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – validates arguments and creates the tables and per-table state</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">validate n_tables, refuse a recorder without observations, create the tables</span>
+<span class="loc">rl_env/batch.py:153–159</span>
+</summary>
+<pre><code>if isinstance(n_tables, bool) or not isinstance(n_tables, int) or n_tables &lt; 1:
+    raise ValueError(f&quot;n_tables must be a positive int, got {n_tables!r}&quot;)
+observations = bool(observations)
+if recorder is not None and not observations:
+    raise ValueError(&quot;a Recorder needs observations: TableBatch(observations=True)&quot;)
+self.tables = [Table(chips_per_bb) for _ in range(n_tables)]
+self.recorder = recorder</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">observation flag and per-table hand id, spec, controllers, running flag</span>
+<span class="loc">rl_env/batch.py:160–166</span>
+</summary>
+<pre><code># False: no observation is built (DecisionBatch.obs is None); only
+# controllers with `wants_obs = False` may act in such a batch.
+self.observations = observations
+self._hand_id: list[int] = [-1] * n_tables
+self._spec: list[Optional[HandSpec]] = [None] * n_tables
+self._controllers: list[tuple] = [()] * n_tables
+self._running: list[bool] = [False] * n_tables</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">decision counters, token, finished list, hand id counter, totals</span>
+<span class="loc">rl_env/batch.py:167–173</span>
+</summary>
+<pre><code># Actions applied in the table&#x27;s current hand (part of the decision token).
+self._acted: list[int] = [0] * n_tables
+self._token = _BatchToken()
+self._finished: list[FinishedHand] = []
+self._next_hand_id = 0
+self.n_decisions = 0  # decisions submitted so far
+self.n_hands = 0  # hands finished so far</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def __len__</span><span class="desc"> – number of tables</span>
+<span class="loc">rl_env/batch.py:175–176</span>
+</summary>
+<pre><code>def __len__(self) -&gt; int:
+    return len(self.tables)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def start_hand</span><span class="desc"> – starts a hand on an idle table with one controller key per seat; returns its batch-unique id</span>
+<span class="loc">rl_env/batch.py:180–201</span>
+</summary>
+<pre><code>def start_hand(self, table: int, spec: HandSpec, controllers: Sequence[Hashable]) -&gt; int:
+    &quot;&quot;&quot;Start a hand on an idle table with one controller key per seat. Returns
+    the hand&#x27;s batch-unique, increasing id. A hand that needs no decision is
+    finished at once (reported by the next `collect_finished()`). Ends the
+    readability of the table&#x27;s previous `finished_hole_cards`.&quot;&quot;&quot;
+    if self._running[table]:
+        raise RuntimeError(f&quot;table {table} still has a hand running&quot;)
+    keys = tuple(controllers)
+    if len(keys) != spec.n_seats:
+        raise ValueError(f&quot;need {spec.n_seats} controller keys, got {len(keys)}&quot;)
+    tbl = self.tables[table]
+    pending = tbl.start_hand(spec.n_seats, spec.stacks_bb, spec.button, spec.deck_seed)
+    hand_id = self._next_hand_id
+    self._next_hand_id += 1
+    self._hand_id[table] = hand_id
+    self._spec[table] = spec
+    self._controllers[table] = keys
+    self._running[table] = True
+    self._acted[table] = 0
+    if not pending:
+        self._finish(table)
+    return hand_id</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def hand_id / def controllers_of</span><span class="desc"> – id and controller keys of a table&#x27;s current or last hand</span>
+<span class="loc">rl_env/batch.py:203–209</span>
+</summary>
+<pre><code>def hand_id(self, table: int) -&gt; int:
+    &quot;&quot;&quot;Id of the table&#x27;s current (or last) hand, -1 before the first.&quot;&quot;&quot;
+    return self._hand_id[table]
+
+def controllers_of(self, table: int) -&gt; tuple:
+    &quot;&quot;&quot;Controller key per seat of the table&#x27;s current (or last) hand.&quot;&quot;&quot;
+    return self._controllers[table]</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def idle_tables / def any_in_hand</span><span class="desc"> – tables without a running hand / whether any hand runs</span>
+<span class="loc">rl_env/batch.py:211–216</span>
+</summary>
+<pre><code>def idle_tables(self) -&gt; list[int]:
+    &quot;&quot;&quot;Tables without a running hand (waiting for the caller&#x27;s next hand).&quot;&quot;&quot;
+    return [t for t, running in enumerate(self._running) if not running]
+
+def any_in_hand(self) -&gt; bool:
+    return any(self._running)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _finish</span><span class="desc"> – records a FinishedHand and gives the rewards to the recorder</span>
+<span class="loc">rl_env/batch.py:218–234</span>
+</summary>
+<pre><code>def _finish(self, table: int) -&gt; None:
+    tbl = self.tables[table]
+    self._running[table] = False
+    hand_id = self._hand_id[table]
+    fh = FinishedHand(
+        table=table,
+        hand_id=hand_id,
+        spec=self._spec[table],  # type: ignore[arg-type]
+        controllers=self._controllers[table],
+        net_bb=tbl.net_bb,  # type: ignore[arg-type]
+        rewards=tbl.rewards,  # type: ignore[arg-type]
+        result=tbl.result,  # type: ignore[arg-type]
+    )
+    self._finished.append(fh)
+    self.n_hands += 1
+    if self.recorder is not None:
+        self.recorder.finish(hand_id, tbl.rewards)  # type: ignore[arg-type]</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def collect_finished</span><span class="desc"> – hands finished since the last call</span>
+<span class="loc">rl_env/batch.py:236–240</span>
+</summary>
+<pre><code>def collect_finished(self) -&gt; list[FinishedHand]:
+    &quot;&quot;&quot;Hands finished since the last call, in finishing order.&quot;&quot;&quot;
+    out = self._finished
+    self._finished = []
+    return out</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def finished_hole_cards</span><span class="desc"> – HIDDEN INFORMATION: every seat&#x27;s cards of a table&#x27;s finished hand, for evaluation tools only</span>
+<span class="loc">rl_env/batch.py:242–255</span>
+</summary>
+<pre><code>def finished_hole_cards(self, table: int) -&gt; Mapping[int, Hand]:
+    &quot;&quot;&quot;HIDDEN INFORMATION - evaluation tools only (arena&#x27;s hand histories,
+    deal-order checks); must never reach a controller.
+
+    seat -&gt; `Hand` of every seat of the table&#x27;s last hand once it is over
+    (whether or not `collect_finished()` has returned it yet), until the
+    caller starts that table&#x27;s next hand: read it for a `FinishedHand` before
+    restarting `fh.table`. Raises RuntimeError while the table has a hand
+    running and NoHandError if it never had one.&quot;&quot;&quot;
+    if self._running[table]:
+        raise RuntimeError(f&quot;table {table} still has a hand running&quot;)
+    if self._hand_id[table] &lt; 0:
+        raise NoHandError(f&quot;table {table} has not had a hand yet&quot;)
+    return self.tables[table].finished_hole_cards()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _decision_token</span><span class="desc"> – (batch token, hand id, actions applied) identifying a pending decision</span>
+<span class="loc">rl_env/batch.py:259–260</span>
+</summary>
+<pre><code>def _decision_token(self, table: int) -&gt; tuple:
+    return (self._token, self._hand_id[table], self._acted[table])</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def pending</span><span class="desc"> – every pending decision grouped by controller key</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">group tables with a decision by the acting seat&#x27;s controller key, in table order</span>
+<span class="loc">rl_env/batch.py:273–285</span>
+</summary>
+<pre><code>groups: dict[Hashable, list[int]] = {}
+tables = self.tables
+running = self._running
+for t, tbl in enumerate(tables):
+    if running[t]:
+        decision = tbl.decision
+        if decision is not None:
+            key = self._controllers[t][decision.seat]
+            group = groups.get(key)
+            if group is None:
+                groups[key] = [t]
+            else:
+                group.append(t)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">without observations, refuse controllers that want them</span>
+<span class="loc">rl_env/batch.py:286–294</span>
+</summary>
+<pre><code>build_obs = self.observations
+if not build_obs and controllers is not None:
+    for key in groups:
+        controller = controllers.get(key)
+        if controller is not None and _wants_obs(controller):
+            raise ValueError(
+                f&quot;controller {key!r} wants observations (wants_obs is true or &quot;
+                f&quot;absent) but this TableBatch builds none (observations=False)&quot;
+            )</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">per group: tokens, seats, legal, masks and the sparse observation rows; views if wanted; build the DecisionBatch</span>
+<span class="loc">rl_env/batch.py:295–337</span>
+</summary>
+<pre><code>out = []
+for key, ts in groups.items():
+    b = len(ts)
+    seats = []
+    legal = []
+    masks = []
+    tokens = []
+    obs = None
+    if build_obs:
+        obs = np.zeros((b, OBS_DIM), dtype=np.float32)
+        rows: list[int] = []
+        cols: list[int] = []
+        vals: list[float] = []
+    for r, t in enumerate(ts):
+        tbl = tables[t]
+        decision = tbl.decision
+        tokens.append(self._decision_token(t))
+        seats.append(decision.seat)  # type: ignore[union-attr]
+        lg = decision.legal  # type: ignore[union-attr]
+        legal.append(lg)
+        masks.append(action_mask(lg))
+        if build_obs:
+            before = len(cols)
+            tbl.collect_observation(cols, vals)
+            rows.extend([r] * (len(cols) - before))
+    if build_obs and cols:
+        obs[rows, cols] = vals  # type: ignore[index]
+    views = None
+    if controllers is not None and _wants_views(controllers.get(key)):
+        views = [tables[t].view() for t in ts]
+    out.append(
+        DecisionBatch(
+            key=key,
+            tables=np.array(ts, dtype=np.int32),
+            seats=np.array(seats, dtype=np.int32),
+            obs=obs,
+            mask=np.array(masks, dtype=bool).reshape(b, 3),
+            legal=legal,
+            views=views,
+            tokens=tokens,
+        )
+    )
+return out</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def submit</span><span class="desc"> – applies one action per row</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">validate shapes and every action against its mask</span>
+<span class="loc">rl_env/batch.py:344–353</span>
+</summary>
+<pre><code>b = len(batch)
+acts = np.asarray(actions)
+if acts.shape != (b,):
+    raise IllegalMaskedActionError(f&quot;need {b} actions, got shape {acts.shape}&quot;)
+lp = None
+if logp is not None:
+    lp = np.asarray(logp, dtype=np.float32)
+    if lp.shape != (b,):
+        raise ValueError(f&quot;need {b} log-probabilities, got shape {lp.shape}&quot;)
+checked = [check_action(_scalar(acts[r]), batch.mask[r]) for r in range(b)]</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">validate each row still matches its table&#x27;s pending decision (stale batch)</span>
+<span class="loc">rl_env/batch.py:354–367</span>
+</summary>
+<pre><code>tokens = batch.tokens
+for r in range(b):
+    t = int(batch.tables[r])
+    if not 0 &lt;= t &lt; len(self.tables):
+        raise ValueError(f&quot;row {r}: no table {t} in this batch&quot;)
+    tbl = self.tables[t]
+    decision = tbl.decision
+    if (
+        not self._running[t]
+        or decision is None
+        or decision.seat != int(batch.seats[r])
+        or (tokens is not None and tokens[r] != self._decision_token(t))
+    ):
+        raise ValueError(f&quot;row {r}: table {t} has no such pending decision (stale batch)&quot;)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">record if wanted, act on each table, count, finish hands that ended</span>
+<span class="loc">rl_env/batch.py:368–392</span>
+</summary>
+<pre><code>recorder = self.recorder
+record = recorder is not None and recorder.wants(batch.key)
+if record and batch.obs is None:
+    raise ValueError(&quot;cannot record a batch without observations&quot;)
+for r in range(b):
+    t = int(batch.tables[r])
+    tbl = self.tables[t]
+    a = checked[r]
+    if record:
+        recorder.record(  # type: ignore[union-attr]
+            tbl,
+            t,
+            self._hand_id[t],
+            int(batch.seats[r]),
+            batch.key,
+            batch.obs[r],  # type: ignore[index]
+            batch.mask[r],
+            a,
+            None if lp is None else float(lp[r]),
+        )
+    tbl.act(a)
+    self._acted[t] += 1
+    self.n_decisions += 1
+    if tbl.hand_over:
+        self._finish(t)</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def step</span><span class="desc"> – pending, each controller&#x27;s act, submit, collect_finished</span>
+<span class="loc">rl_env/batch.py:394–405</span>
+</summary>
+<pre><code>def step(self, controllers: Mapping[Hashable, Any]) -&gt; list[FinishedHand]:
+    &quot;&quot;&quot;`pending`, each controller&#x27;s `act` in group order, `submit`, then
+    `collect_finished()`. In a batch without observations a controller that
+    wants them makes it raise ValueError before any table changes.&quot;&quot;&quot;
+    for batch in self.pending(controllers):
+        out = controllers[batch.key].act(batch)
+        if isinstance(out, tuple):
+            actions, logp = out
+        else:
+            actions, logp = out, None
+        self.submit(batch, actions, logp)
+    return self.collect_finished()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def run</span><span class="desc"> – keeps every table busy with sampled hands until n hands finished</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">start a hand on every idle table</span>
+<span class="loc">rl_env/batch.py:419–426</span>
+</summary>
+<pre><code>started = 0
+done = 0
+for t in self.idle_tables():
+    if started &gt;= n_hands:
+        break
+    spec = sampler.sample()
+    self.start_hand(t, spec, seat_controllers(spec))
+    started += 1</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">step until done, reporting finished hands and restarting their tables</span>
+<span class="loc">rl_env/batch.py:427–439</span>
+</summary>
+<pre><code>while done &lt; n_hands:
+    finished = self.step(controllers)
+    if not finished and not self.any_in_hand():
+        break
+    for fh in finished:
+        done += 1
+        if on_finished is not None:
+            on_finished(fh)
+        if started &lt; n_hands and not self._running[fh.table]:
+            spec = sampler.sample()
+            self.start_hand(fh.table, spec, seat_controllers(spec))
+            started += 1
+return done</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">controllers.py</span><span class="desc"> – controllers shipped with rl_env (only RandomController)</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – why only RandomController lives here</span>
+<span class="loc">rl_env/controllers.py:1–5</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Controllers shipped with rl_env.
+
+Only `RandomController` (needed by rl_env&#x27;s own bench, fuzz test and tests).
+The baseline bots (RandomBot, CallingStation, Maniac, RuleBot) belong to arena.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – numpy, typing</span>
+<span class="loc">rl_env/controllers.py:7–11</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from typing import Any, Union
+
+import numpy as np</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__</span>
+<span class="loc">rl_env/controllers.py:13–13</span>
+</summary>
+<pre><code>__all__ = [&quot;RandomController&quot;]</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">RandomController</span><span class="desc"> – uniform over the masked actions from its own seeded generator; needs no views or observations</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring and wants_views / wants_obs = False</span>
+<span class="loc">rl_env/controllers.py:16–27</span>
+</summary>
+<pre><code>class RandomController:
+    &quot;&quot;&quot;Uniform over the masked actions, from its own seeded `np.random.Generator`.
+
+    Reads only `mask` (no views, no observation vectors), so it may act in a
+    batch without observations.
+
+    With `with_logp=True` `act` also returns the log-probability of each chosen
+    action (`-log(number of allowed actions)`, float32).&quot;&quot;&quot;
+
+    wants_views = False
+    wants_obs = False</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – seeded PCG64 generator and with_logp flag</span>
+<span class="loc">rl_env/controllers.py:28–30</span>
+</summary>
+<pre><code>def __init__(self, seed: int = 0, *, with_logp: bool = False) -&gt; None:
+    self.rng = np.random.Generator(np.random.PCG64(seed))
+    self.with_logp = with_logp</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def act</span><span class="desc"> – picks a uniform allowed action per row (vectorised); optional log-probabilities</span>
+<span class="loc">rl_env/controllers.py:32–43</span>
+</summary>
+<pre><code>def act(self, batch: Any) -&gt; Union[np.ndarray, tuple[np.ndarray, np.ndarray]]:
+    mask = np.asarray(batch.mask, dtype=bool)
+    counts = mask.sum(axis=1)
+    if mask.shape[0] and counts.min() == 0:
+        raise ValueError(&quot;a row has no allowed action&quot;)
+    u = self.rng.random(mask.shape[0])
+    k = np.minimum((u * counts).astype(np.int64), counts - 1)
+    cums = np.cumsum(mask, axis=1)
+    actions = np.argmax(cums &gt; k[:, None], axis=1).astype(np.int64)
+    if self.with_logp:
+        return actions, (-np.log(counts)).astype(np.float32)
+    return actions</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">critic.py</span><span class="desc"> – PRIVILEGED critic input: the other seats&#x27; hole cards relative to a seat</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – layout and the privilege rule</span>
+<span class="loc">rl_env/critic.py:1–19</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Critic input: the other seats&#x27; hole cards, relative to a seat.
+
+PRIVILEGED. This is the only way hidden information leaves rl_env during a
+hand (after a hand, evaluation tools read `finished_hole_cards`; both go
+through `Table.privileged_hole_cards`). It is a separate function and a
+separate array; `encoder.py` and `tracker.py` never import this module
+(checked by a test), and nothing a playing policy receives may be derived from
+it.
+
+`critic_cards(table, seat)` -&gt; int8 (9, 4): row `k-1` holds the hole cards of
+relative slot `k = 1..9` (the same slot order as the observation: the k-th
+participant clockwise after `seat`), as `Card.index`, sorted ascending;
+`NO_CARD = 52` marks a slot beyond the table size (a valid row of a 53-row
+card embedding).
+
+`expand_critic(cards)` -&gt; float32 (B, PRIV_DIM): per slot a 52-wide multi-hot
+of its hole cards (`NO_CARD` contributes nothing) - the reference for the
+learner&#x27;s expansion.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – numpy</span>
+<span class="loc">rl_env/critic.py:21–25</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from typing import Any
+
+import numpy as np</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, NO_CARD = 52, N_SLOTS = 9, PRIV_DIM = 468</span>
+<span class="loc">rl_env/critic.py:27–31</span>
+</summary>
+<pre><code>__all__ = [&quot;NO_CARD&quot;, &quot;N_SLOTS&quot;, &quot;PRIV_DIM&quot;, &quot;critic_cards&quot;, &quot;expand_critic&quot;]
+
+NO_CARD = 52
+N_SLOTS = 9
+PRIV_DIM = N_SLOTS * 52  # 468</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def critic_cards</span><span class="desc"> – (9, 4) int8 card indices of the k-th participant clockwise after the seat, NO_CARD beyond the table</span>
+<span class="loc">rl_env/critic.py:34–52</span>
+</summary>
+<pre><code>def critic_cards(table: Any, seat: int, out: Any = None) -&gt; np.ndarray:
+    &quot;&quot;&quot;The other participants&#x27; hole cards relative to `seat` (see the module
+    docstring). Read through `Table.privileged_hole_cards()` (the engine&#x27;s
+    privileged step-mode accessor).&quot;&quot;&quot;
+    cards = table.privileged_hole_cards()
+    seats = sorted(cards)
+    if out is None:
+        out = np.full((N_SLOTS, 4), NO_CARD, dtype=np.int8)
+    else:
+        out[:] = NO_CARD
+    try:
+        me = seats.index(seat)
+    except ValueError:
+        raise ValueError(f&quot;seat {seat} is not dealt into the hand&quot;) from None
+    n = len(seats)
+    for k in range(1, n):
+        hand = cards[seats[(me + k) % n]]
+        out[k - 1] = sorted(c.index for c in hand)
+    return out</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def expand_critic</span><span class="desc"> – (B, 9, 4) card indices -&gt; (B, 468) float32 multi-hot</span>
+<span class="loc">rl_env/critic.py:55–71</span>
+</summary>
+<pre><code>def expand_critic(cards: Any) -&gt; np.ndarray:
+    &quot;&quot;&quot;(B, 9, 4) card indices -&gt; (B, PRIV_DIM) float32 multi-hot (a single
+    (9, 4) array is treated as B = 1).&quot;&quot;&quot;
+    arr = np.asarray(cards)
+    if arr.ndim == 2:
+        arr = arr[None]
+    if arr.ndim != 3 or arr.shape[1:] != (N_SLOTS, 4):
+        raise ValueError(f&quot;expected (B, {N_SLOTS}, 4) card indices, got shape {arr.shape}&quot;)
+    idx = arr.astype(np.int64)
+    if idx.size and (idx.min() &lt; 0 or idx.max() &gt; NO_CARD):
+        raise ValueError(&quot;card indices must be in 0..52&quot;)
+    b = arr.shape[0]
+    wide = np.zeros((b, N_SLOTS, NO_CARD + 1), dtype=np.float32)
+    rows = np.arange(b)[:, None, None]
+    slots = np.arange(N_SLOTS)[None, :, None]
+    wide[rows, slots, idx] = 1.0
+    return np.ascontiguousarray(wide[:, :, :NO_CARD]).reshape(b, PRIV_DIM)</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">encoder.py</span><span class="desc"> – the 554-wide observation vector, built only from public information and the player&#x27;s own cards</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – the two entry points, scaling and layout</span>
+<span class="loc">rl_env/encoder.py:1–20</span>
+</summary>
+<pre><code>&quot;&quot;&quot;The observation vector (`ENCODER_VERSION = 1`, `OBS_DIM = 554`).
+
+The observation is a function of the acting player&#x27;s public information only:
+the public events of the hand so far (folded into a `HandTracker`), the
+player&#x27;s own hole cards and its `LegalActions`. Two entry points give the same
+bytes:
+
+- `encode_view(view, legal)` - from an engine `TableView` (a bot at a real
+  table, e.g. a view decoded from the cli_server protocol): a fresh tracker over
+  `view.history`, `view.seat` and `view.hole_cards`; nothing else of the view;
+- `Table.observation()` - training: the table&#x27;s incremental tracker, the acting
+  seat&#x27;s own cards from the engine and `legal` from the decision.
+
+Both call `collect` / `encode` below. This module never imports the critic
+input (`critic.py`), and nothing here can see other players&#x27; hole cards.
+
+Every amount is in big bets (1 big bet = 2 BB) and written as `min(x / S, 2)`;
+counts are `min(c, cap) / cap`; one-hots are 0/1. The exact layout is in
+plan.md (Observation -&gt; Layout) and in `OBS_LAYOUT`.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – numpy, engine types, hints, HandTracker</span>
+<span class="loc">rl_env/encoder.py:22–31</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from typing import Optional
+
+import numpy as np
+
+from engine import LegalActions, TableView
+
+from .hints import hole_hints, street_hints
+from .tracker import HandTracker</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – version, OBS_LAYOUT blocks, OBS_DIM = 554, slot sizes, column offsets and scales</span>
+<span class="loc">rl_env/encoder.py:33–104</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;ENCODER_VERSION&quot;,
+    &quot;OBS_DIM&quot;,
+    &quot;OBS_LAYOUT&quot;,
+    &quot;OBS_BLOCKS&quot;,
+    &quot;MAX_SLOTS&quot;,
+    &quot;SLOT_SIZE&quot;,
+    &quot;RECENT_SIZE&quot;,
+    &quot;collect&quot;,
+    &quot;encode&quot;,
+    &quot;encode_view&quot;,
+]
+
+ENCODER_VERSION = 1
+
+# (block, offset, size), contiguous, in vector order.
+OBS_LAYOUT: tuple[tuple[str, int, int], ...] = (
+    (&quot;hole_cards&quot;, 0, 52),
+    (&quot;flop&quot;, 52, 52),
+    (&quot;turn&quot;, 104, 52),
+    (&quot;river&quot;, 156, 52),
+    (&quot;street&quot;, 208, 4),
+    (&quot;players_dealt_in&quot;, 212, 9),
+    (&quot;position&quot;, 221, 10),
+    (&quot;betting_state&quot;, 231, 17),
+    (&quot;own_action_history&quot;, 248, 6),
+    (&quot;other_seats&quot;, 254, 135),
+    (&quot;recent_actions&quot;, 389, 144),
+    (&quot;hints&quot;, 533, 21),
+)
+OBS_BLOCKS: dict[str, tuple[int, int]] = {name: (off, size) for name, off, size in OBS_LAYOUT}
+OBS_DIM = 554
+
+MAX_SLOTS = 9  # other seats (slots 1..9)
+SLOT_SIZE = 15
+RECENT_SIZE = 18
+
+_HOLE = 0
+_FLOP = 52
+_TURN = 104
+_RIVER = 156
+_STREET = 208
+_DEALT = 212
+_POSITION = 221
+# Betting state.
+_POT = 231
+_TO_CALL = 232
+_POT_ODDS = 233
+_STREET_BETS = 234
+_OWN_TOTAL = 239
+_OWN_STREET = 240
+_LIVE = 241
+_CAN_ACT = 242
+_OWN_STACK = 243
+_CAN_RAISE = 244
+_CAN_CHECK = 245
+_CAP_LIFTED = 246
+_RAISES_LEFT = 247
+# Own action history.
+_OWN_BETS = 248
+_OWN_AGGRESSOR = 252
+_OWN_PREV_AGGRESSOR = 253
+_OTHERS = 254
+_RECENT = 389
+_HINTS = 533
+
+# Scales, applied to amounts in big bets.
+_BB = 0.5  # big blinds -&gt; big bets
+_POT_SCALE = _BB / 25.0  # pot, chips in the pot (total): 2.0 = 50 big bets
+_STACK_SCALE = _BB / 50.0  # stacks: 150 BB = 1.5
+_STREET_SCALE = _BB / 2.0  # street bets, amount to call
+_CLIP = 2.0</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def collect</span><span class="desc"> – appends the non-zero (column, value) pairs of the acting player&#x27;s observation</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">local shortcuts</span>
+<span class="loc">rl_env/encoder.py:117–122</span>
+</summary>
+<pre><code>me = tr.index[me_seat]
+n = tr.n
+street = tr.street
+cache = tr.cache
+col = cols.append
+val = vals.append</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">static per hand and seat (cached): hole cards, players dealt in, position, hole hints</span>
+<span class="loc">rl_env/encoder.py:124–134</span>
+</summary>
+<pre><code># Static per hand and seat: hole cards, players dealt in, position, hole hints.
+static = cache.get((me, -1))
+if static is None:
+    static = [(_HOLE + c.index, 1.0) for c in hole_cards]
+    static.append((_DEALT + n - 2, 1.0))
+    static.append((_POSITION + (me - tr.button) % n, 1.0))
+    static.extend((_HINTS + off, v) for off, v in hole_hints(hole_cards))
+    cache[(me, -1)] = static
+for c, v in static:
+    col(c)
+    val(v)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">board cards per street and the street one-hot</span>
+<span class="loc">rl_env/encoder.py:136–143</span>
+</summary>
+<pre><code># Board, street.
+board_cards = tr.board_cards
+for base, s in ((_FLOP, 1), (_TURN, 2), (_RIVER, 3)):
+    for ci in board_cards[s]:
+        col(base + ci)
+        val(1.0)
+col(_STREET + street)
+val(1.0)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">betting state: pot, to call, pot odds, street bets, own bets, live / can-act counts, own stack, can raise / check, raises left</span>
+<span class="loc">rl_env/encoder.py:145–200</span>
+</summary>
+<pre><code># Betting state.
+pot = tr.pot
+x = pot * _POT_SCALE
+if x &gt; 0.0:
+    col(_POT)
+    val(x if x &lt; _CLIP else _CLIP)
+to_call = legal.call_amount
+if to_call &gt; 0:
+    x = to_call * _STREET_SCALE
+    col(_TO_CALL)
+    val(x if x &lt; _CLIP else _CLIP)
+    col(_POT_ODDS)
+    val(to_call / (pot + to_call))
+nb = tr.street_bets
+col(_STREET_BETS + (nb if nb &lt; 4 else 4))
+val(1.0)
+x = tr.total[me] * _POT_SCALE
+if x &gt; 0.0:
+    col(_OWN_TOTAL)
+    val(x if x &lt; _CLIP else _CLIP)
+x = tr.street_bet[me] * _STREET_SCALE
+if x &gt; 0.0:
+    col(_OWN_STREET)
+    val(x if x &lt; _CLIP else _CLIP)
+folded = tr.folded
+all_in = tr.all_in
+live = 0
+can_act = 0
+for i in range(n):
+    if not folded[i]:
+        live += 1
+        if not all_in[i]:
+            can_act += 1
+if live:
+    col(_LIVE)
+    val(live / 10)
+if can_act:
+    col(_CAN_ACT)
+    val(can_act / 10)
+x = tr.stack[me] * _STACK_SCALE
+if x &gt; 0.0:
+    col(_OWN_STACK)
+    val(x if x &lt; _CLIP else _CLIP)
+if legal.can_raise:
+    col(_CAN_RAISE)
+    val(1.0)
+if legal.can_check:
+    col(_CAN_CHECK)
+    val(1.0)
+raises_left = legal.raises_left
+if raises_left is None:
+    col(_CAP_LIFTED)
+    val(1.0)
+elif raises_left &gt; 0:
+    col(_RAISES_LEFT)
+    val((raises_left if raises_left &lt; 4 else 4) / 4)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">own action history: bets per street, aggressor flags</span>
+<span class="loc">rl_env/encoder.py:202–217</span>
+</summary>
+<pre><code># Own action history.
+bets = tr.bets
+own = bets[me]
+for s in range(4):
+    b = own[s]
+    if b:
+        col(_OWN_BETS + s)
+        val((b if b &lt; 4 else 4) / 4)
+aggressor = tr.aggressor
+prev_aggressor = tr.prev_aggressor
+if aggressor == me:
+    col(_OWN_AGGRESSOR)
+    val(1.0)
+if prev_aggressor == me:
+    col(_OWN_PREV_AGGRESSOR)
+    val(1.0)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">other seats, slot k = k-th participant clockwise: present, live, all-in, bets, aggression, still to act, acted, stack, button</span>
+<span class="loc">rl_env/encoder.py:219–270</span>
+</summary>
+<pre><code># Other seats, slot k = the k-th participant clockwise after the acting one.
+anchor = tr.bb if street == 0 else tr.button
+my_pos = (me - anchor - 1) % n
+total = tr.total
+street_bet = tr.street_bet
+stack = tr.stack
+acted = tr.acted
+button = tr.button
+for k in range(1, n):
+    j = (me + k) % n
+    base = _OTHERS + SLOT_SIZE * (k - 1)
+    col(base)
+    val(1.0)
+    if not folded[j]:
+        col(base + 1)
+        val(1.0)
+    if all_in[j]:
+        col(base + 2)
+        val(1.0)
+    x = total[j] * _POT_SCALE
+    if x &gt; 0.0:
+        col(base + 3)
+        val(x if x &lt; _CLIP else _CLIP)
+    x = street_bet[j] * _STREET_SCALE
+    if x &gt; 0.0:
+        col(base + 4)
+        val(x if x &lt; _CLIP else _CLIP)
+    other = bets[j]
+    for s in range(4):
+        b = other[s]
+        if b:
+            col(base + 5 + s)
+            val((b if b &lt; 4 else 4) / 4)
+    if aggressor == j:
+        col(base + 9)
+        val(1.0)
+    if prev_aggressor == j:
+        col(base + 10)
+        val(1.0)
+    if not folded[j] and not all_in[j] and (j - anchor - 1) % n &gt; my_pos:
+        col(base + 11)
+        val(1.0)
+    if acted[j]:
+        col(base + 12)
+        val(1.0)
+    x = stack[j] * _STACK_SCALE
+    if x &gt; 0.0:
+        col(base + 13)
+        val(x if x &lt; _CLIP else _CLIP)
+    if j == button:
+        col(base + 14)
+        val(1.0)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">recent actions, most recent first: who (relative), kind, street</span>
+<span class="loc">rl_env/encoder.py:272–283</span>
+</summary>
+<pre><code># Recent actions, most recent first.
+base = _RECENT
+for i, kind, s in reversed(tr.recent):
+    col(base)
+    val(1.0)
+    col(base + 1 + (i - me) % n)
+    val(1.0)
+    col(base + 11 + kind)
+    val(1.0)
+    col(base + 14 + s)
+    val(1.0)
+    base += RECENT_SIZE</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">street hand-strength hints (cached per participant and street)</span>
+<span class="loc">rl_env/encoder.py:285–293</span>
+</summary>
+<pre><code># Hand-strength hints of the street (cached per participant and street).
+if street &gt; 0:
+    key = (me, street)
+    hints = cache.get(key)
+    if hints is None:
+        hints = cache[key] = [(_HINTS + off, v) for off, v in street_hints(hole_cards, tr.board)]
+    for c, v in hints:
+        col(c)
+        val(v)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def encode</span><span class="desc"> – writes the observation into a (zeroed) float32 row</span>
+<span class="loc">rl_env/encoder.py:296–313</span>
+</summary>
+<pre><code>def encode(
+    tr: HandTracker,
+    me_seat: int,
+    hole_cards,
+    legal: LegalActions,
+    out_row: Optional[np.ndarray] = None,
+) -&gt; np.ndarray:
+    &quot;&quot;&quot;Write the observation into `out_row` (zeroed first; a new float32 row of
+    `OBS_DIM` when None) and return it.&quot;&quot;&quot;
+    if out_row is None:
+        out_row = np.zeros(OBS_DIM, dtype=np.float32)
+    else:
+        out_row[:] = 0.0
+    cols: list[int] = []
+    vals: list[float] = []
+    collect(tr, me_seat, hole_cards, legal, cols, vals)
+    out_row[cols] = vals
+    return out_row</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def encode_view</span><span class="desc"> – the observation from an engine TableView (fresh tracker over view.history)</span>
+<span class="loc">rl_env/encoder.py:316–323</span>
+</summary>
+<pre><code>def encode_view(view: TableView, legal: LegalActions, out: Optional[np.ndarray] = None) -&gt; np.ndarray:
+    &quot;&quot;&quot;The observation from an engine `TableView` and `LegalActions`: uses only
+    `view.history`, `view.seat` and `view.hole_cards`.&quot;&quot;&quot;
+    if view.hole_cards is None:
+        raise ValueError(&quot;the view has no hole cards: the player is not dealt in&quot;)
+    tr = HandTracker()
+    tr.feed_all(view.history)
+    return encode(tr, view.seat, view.hole_cards, legal, out)</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">hints.py</span><span class="desc"> – hand-strength hints from the engine&#x27;s evaluator (21 values of the observation)</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – the hint layout</span>
+<span class="loc">rl_env/hints.py:1–18</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Hand-strength hints from the engine&#x27;s evaluator.
+
+High and low come from `engine.evaluator.best_omaha(hand, board)` (exactly two
+hole cards and three board cards - the engine&#x27;s rule); the category is the
+first element of the high rank. The low index is the position of the best low
+among the 56 possible 8-or-better lows, sorted the way the evaluator compares
+them (a lower descending tuple is a better low; the wheel is first).
+
+Offsets returned here are relative to the hints block of the observation
+(21 values, see plan.md):
+
+| +0..+8   | high-hand category one-hot (flop on)             |
+| +9       | has a qualifying low (flop on)                   |
+| +10..+13 | highest card of the best low, 5 / 6 / 7 / 8      |
+| +14      | low strength 1 - i / 55 (wheel = 1.0)            |
+| +15..+19 | distinct low ranks in the hole cards, 0..4       |
+| +20      | hole cards contain an ace and a deuce            |
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – combinations, entities, best_omaha</span>
+<span class="loc">rl_env/hints.py:20–26</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from itertools import combinations
+from typing import Optional
+
+from entities import Board, Hand, Rank
+from engine.evaluator import best_omaha</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, hint offsets, the 56 lows best first and their index</span>
+<span class="loc">rl_env/hints.py:28–56</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;N_HINTS&quot;,
+    &quot;N_CATEGORIES&quot;,
+    &quot;HAS_LOW&quot;,
+    &quot;LOW_TOP&quot;,
+    &quot;LOW_STRENGTH&quot;,
+    &quot;HOLE_LOW_RANKS&quot;,
+    &quot;ACE_DEUCE&quot;,
+    &quot;LOWS&quot;,
+    &quot;LOW_INDEX&quot;,
+    &quot;low_index&quot;,
+    &quot;evaluate&quot;,
+    &quot;street_hints&quot;,
+    &quot;hole_hints&quot;,
+]
+
+N_HINTS = 21
+N_CATEGORIES = 9  # high card ... straight flush (engine.evaluator categories 0..8)
+HAS_LOW = 9
+LOW_TOP = 10
+LOW_STRENGTH = 14
+HOLE_LOW_RANKS = 15
+ACE_DEUCE = 20
+
+# All 56 five-card 8-or-better lows as descending tuples (ace = 1), best first.
+LOWS: tuple[tuple[int, ...], ...] = tuple(
+    sorted(tuple(sorted(c, reverse=True)) for c in combinations(range(1, 9), 5))
+)
+LOW_INDEX: dict[tuple[int, ...], int] = {low: i for i, low in enumerate(LOWS)}</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – assert there are 56 lows with the wheel first</span>
+<span class="loc">rl_env/hints.py:57–57</span>
+</summary>
+<pre><code>assert len(LOWS) == 56 and LOWS[0] == (5, 4, 3, 2, 1)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – index of the worst low</span>
+<span class="loc">rl_env/hints.py:59–59</span>
+</summary>
+<pre><code>_LAST_LOW = len(LOWS) - 1  # 55</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def low_index</span><span class="desc"> – rank of a qualifying low (0 = the wheel)</span>
+<span class="loc">rl_env/hints.py:62–64</span>
+</summary>
+<pre><code>def low_index(low: tuple[int, ...]) -&gt; int:
+    &quot;&quot;&quot;Rank of a qualifying low among the 56 possible lows (0 = the wheel).&quot;&quot;&quot;
+    return LOW_INDEX[tuple(low)]</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def evaluate</span><span class="desc"> – (high category, best low or None)</span>
+<span class="loc">rl_env/hints.py:67–70</span>
+</summary>
+<pre><code>def evaluate(hand: Hand, board: Board) -&gt; tuple[int, Optional[tuple[int, ...]]]:
+    &quot;&quot;&quot;(high category 0..8, best low tuple or None) from the engine&#x27;s evaluator.&quot;&quot;&quot;
+    high, low = best_omaha(hand, board)
+    return high[0], low</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def street_hints</span><span class="desc"> – flop-on hints: category one-hot, has low, low top card, low strength</span>
+<span class="loc">rl_env/hints.py:73–86</span>
+</summary>
+<pre><code>def street_hints(hand: Hand, board: Board) -&gt; tuple[tuple[int, float], ...]:
+    &quot;&quot;&quot;The flop-on hints as (offset, value) pairs (non-zero values only).
+    Preflop (no flop on the board) the evaluator is not called: ().&quot;&quot;&quot;
+    if board.flop is None:
+        return ()
+    high, low = best_omaha(hand, board)
+    out: list[tuple[int, float]] = [(high[0], 1.0)]
+    if low is not None:
+        out.append((HAS_LOW, 1.0))
+        out.append((LOW_TOP + low[0] - 5, 1.0))
+        strength = 1.0 - LOW_INDEX[tuple(low)] / _LAST_LOW
+        if strength &gt; 0.0:
+            out.append((LOW_STRENGTH, strength))
+    return tuple(out)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def hole_hints</span><span class="desc"> – every-street hints: distinct low ranks in the hole, ace + deuce</span>
+<span class="loc">rl_env/hints.py:89–105</span>
+</summary>
+<pre><code>def hole_hints(hand: Hand) -&gt; tuple[tuple[int, float], ...]:
+    &quot;&quot;&quot;The every-street hints of the hole cards as (offset, value) pairs.&quot;&quot;&quot;
+    lows = set()
+    ace = deuce = False
+    for c in hand:
+        rank = c.rank
+        v = rank.low_value
+        if v &lt;= 8:
+            lows.add(v)
+        if rank is Rank.ACE:
+            ace = True
+        elif rank is Rank.TWO:
+            deuce = True
+    out: list[tuple[int, float]] = [(HOLE_LOW_RANKS + len(lows), 1.0)]
+    if ace and deuce:
+        out.append((ACE_DEUCE, 1.0))
+    return tuple(out)</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">recorder.py</span><span class="desc"> – training records: every decision with observation, mask, action, logp and critic input, matched to its hand&#x27;s reward</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – what is recorded and how rows become ready</span>
+<span class="loc">rl_env/recorder.py:1–14</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Training records: every decision with what training needs, matched to the
+result of its own hand.
+
+`Recorder(keys=None)` records the decisions of the given controller keys (all
+when None). Per submitted decision it keeps: table, hand id, seat, controller
+(a small int code, `Recorder.codes` maps keys to codes), observation, mask,
+action, log-probability (NaN when the controller returned actions only) and
+the critic input (taken before the action is applied). Rows of a running hand
+stay pending; when the hand finishes, each of its rows gets
+`reward = rewards[seat]` of that hand&#x27;s `FinishedHand` and becomes ready.
+`drain()` returns the ready rows (finished hands only) in decision order. The
+hand id is unique within the batch, so a record is never matched to the wrong
+or an unfinished hand.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – math, dataclass, numpy, critic and encoder</span>
+<span class="loc">rl_env/recorder.py:16–25</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import Any, Hashable, Iterable, Optional
+
+import numpy as np
+
+from .critic import N_SLOTS, critic_cards
+from .encoder import OBS_DIM</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__</span>
+<span class="loc">rl_env/recorder.py:27–27</span>
+</summary>
+<pre><code>__all__ = [&quot;Recorder&quot;, &quot;TrainingRecords&quot;]</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">TrainingRecords</span><span class="desc"> – one row per decision as numpy arrays</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – table, hand_id, seat, controller, obs, mask, action, logp, critic, reward</span>
+<span class="loc">rl_env/recorder.py:30–44</span>
+</summary>
+<pre><code>@dataclass(frozen=True, eq=False)
+class TrainingRecords:
+    &quot;&quot;&quot;One row per decision (decision order), numpy arrays.&quot;&quot;&quot;
+
+    table: np.ndarray  # int32 (N,)
+    hand_id: np.ndarray  # int64 (N,)
+    seat: np.ndarray  # int32 (N,)
+    controller: np.ndarray  # int32 (N,), codes of Recorder.codes
+    obs: np.ndarray  # float32 (N, OBS_DIM)
+    mask: np.ndarray  # bool (N, 3)
+    action: np.ndarray  # int64 (N,)
+    logp: np.ndarray  # float32 (N,), NaN when not given
+    critic: np.ndarray  # int8 (N, 9, 4)
+    reward: np.ndarray  # float32 (N,), the seat&#x27;s net result in big bets</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __len__</span><span class="desc"> – number of rows</span>
+<span class="loc">rl_env/recorder.py:45–46</span>
+</summary>
+<pre><code>def __len__(self) -&gt; int:
+    return int(self.table.shape[0])</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – _Row tuple type</span>
+<span class="loc">rl_env/recorder.py:50–50</span>
+</summary>
+<pre><code>_Row = tuple  # (seq, table, hand_id, seat, code, obs, mask, action, logp, critic)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Recorder</span><span class="desc"> – collects decisions per hand and releases them once the hand&#x27;s rewards are known</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – recorded keys, key -&gt; code map, pending / ready rows</span>
+<span class="loc">rl_env/recorder.py:54–63</span>
+</summary>
+<pre><code>def __init__(self, keys: Optional[Iterable[Hashable]] = None) -&gt; None:
+    self.keys: Optional[frozenset] = None if keys is None else frozenset(keys)
+    self.codes: dict[Hashable, int] = {}
+    if keys is not None:
+        for k in keys:
+            self.codes.setdefault(k, len(self.codes))
+    self._pending: dict[int, list[_Row]] = {}
+    self._ready: list[tuple[_Row, float]] = []
+    self._seq = 0
+    self._n_pending = 0</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def wants</span><span class="desc"> – whether a controller key is recorded</span>
+<span class="loc">rl_env/recorder.py:67–68</span>
+</summary>
+<pre><code>def wants(self, key: Hashable) -&gt; bool:
+    return self.keys is None or key in self.keys</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def code</span><span class="desc"> – small int code of a controller key</span>
+<span class="loc">rl_env/recorder.py:70–74</span>
+</summary>
+<pre><code>def code(self, key: Hashable) -&gt; int:
+    code = self.codes.get(key)
+    if code is None:
+        code = self.codes[key] = len(self.codes)
+    return code</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def record</span><span class="desc"> – stores one decision with the critic input read before the action</span>
+<span class="loc">rl_env/recorder.py:76–105</span>
+</summary>
+<pre><code>def record(
+    self,
+    table: Any,
+    table_index: int,
+    hand_id: int,
+    seat: int,
+    key: Hashable,
+    obs_row: np.ndarray,
+    mask_row: np.ndarray,
+    action: int,
+    logp: Optional[float] = None,
+) -&gt; None:
+    &quot;&quot;&quot;Record one decision before its action is applied (the critic input is
+    read from `table` now).&quot;&quot;&quot;
+    critic = critic_cards(table, seat)
+    row = (
+        self._seq,
+        int(table_index),
+        int(hand_id),
+        int(seat),
+        self.code(key),
+        np.array(obs_row, dtype=np.float32, copy=True),
+        np.array(mask_row, dtype=bool, copy=True),
+        int(action),
+        math.nan if logp is None else float(logp),
+        critic,
+    )
+    self._seq += 1
+    self._pending.setdefault(int(hand_id), []).append(row)
+    self._n_pending += 1</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def finish</span><span class="desc"> – a hand is over: its rows get their seat&#x27;s reward and become ready</span>
+<span class="loc">rl_env/recorder.py:107–114</span>
+</summary>
+<pre><code>def finish(self, hand_id: int, rewards: np.ndarray) -&gt; None:
+    &quot;&quot;&quot;The hand `hand_id` is over: its pending rows get their seat&#x27;s reward.&quot;&quot;&quot;
+    rows = self._pending.pop(int(hand_id), None)
+    if not rows:
+        return
+    self._n_pending -= len(rows)
+    for row in rows:
+        self._ready.append((row, float(rewards[row[3]])))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def n_ready / def n_pending</span><span class="desc"> – row counts</span>
+<span class="loc">rl_env/recorder.py:118–124</span>
+</summary>
+<pre><code>@property
+def n_ready(self) -&gt; int:
+    return len(self._ready)
+
+@property
+def n_pending(self) -&gt; int:
+    return self._n_pending</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def drain</span><span class="desc"> – ready rows in decision order as TrainingRecords (removed from the recorder)</span>
+<span class="loc">rl_env/recorder.py:126–151</span>
+</summary>
+<pre><code>def drain(self) -&gt; TrainingRecords:
+    &quot;&quot;&quot;The ready rows (finished hands only), in decision order; they are
+    removed from the recorder.&quot;&quot;&quot;
+    ready = sorted(self._ready, key=lambda item: item[0][0])
+    self._ready = []
+    n = len(ready)
+    if n:
+        obs = np.stack([r[5] for r, _ in ready])
+        mask = np.stack([r[6] for r, _ in ready])
+        critic = np.stack([r[9] for r, _ in ready])
+    else:
+        obs = np.zeros((0, OBS_DIM), dtype=np.float32)
+        mask = np.zeros((0, 3), dtype=bool)
+        critic = np.zeros((0, N_SLOTS, 4), dtype=np.int8)
+    return TrainingRecords(
+        table=np.array([r[1] for r, _ in ready], dtype=np.int32),
+        hand_id=np.array([r[2] for r, _ in ready], dtype=np.int64),
+        seat=np.array([r[3] for r, _ in ready], dtype=np.int32),
+        controller=np.array([r[4] for r, _ in ready], dtype=np.int32),
+        obs=obs.astype(np.float32, copy=False),
+        mask=mask.astype(bool, copy=False),
+        action=np.array([r[7] for r, _ in ready], dtype=np.int64),
+        logp=np.array([r[8] for r, _ in ready], dtype=np.float32),
+        critic=critic.astype(np.int8, copy=False),
+        reward=np.array([w for _, w in ready], dtype=np.float32),
+    )</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">stacks.py</span><span class="desc"> – starting stacks for training and the reproducible HandSampler</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – deep vs short stack mix</span>
+<span class="loc">rl_env/stacks.py:1–8</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Starting stacks used for training, and the inputs of a hand.
+
+With probability `deep_share` all seats start at `deep_bb` (100 BB = 50 big
+bets, effectively deep in limit poker); otherwise each seat gets an
+independent uniform stack in `[short_min_bb, short_max_bb]`, rounded to
+0.01 BB (whole chips at 100 chips/BB), so all-ins and side pots appear in
+training.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – dataclass, numpy</span>
+<span class="loc">rl_env/stacks.py:10–15</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Iterable, Optional
+
+import numpy as np</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__ and the deck seed bound</span>
+<span class="loc">rl_env/stacks.py:17–19</span>
+</summary>
+<pre><code>__all__ = [&quot;StackConfig&quot;, &quot;draw_stacks&quot;, &quot;HandSpec&quot;, &quot;HandSampler&quot;]
+
+_SEED_HIGH = 2**63 - 1  # deck seeds are drawn in [0, 2**63 - 1)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">StackConfig</span><span class="desc"> – deep share, deep stack and the short-stack range</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">fields</span>
+<span class="loc">rl_env/stacks.py:22–28</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class StackConfig:
+    deep_share: float = 0.8
+    deep_bb: float = 100.0
+    short_min_bb: float = 5.0
+    short_max_bb: float = 150.0</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __post_init__</span><span class="desc"> – validates the ranges</span>
+<span class="loc">rl_env/stacks.py:29–38</span>
+</summary>
+<pre><code>def __post_init__(self) -&gt; None:
+    if not 0.0 &lt;= self.deep_share &lt;= 1.0:
+        raise ValueError(f&quot;deep_share must be in [0, 1], got {self.deep_share!r}&quot;)
+    if not self.deep_bb &gt; 0:
+        raise ValueError(f&quot;deep_bb must be positive, got {self.deep_bb!r}&quot;)
+    if not 0 &lt; self.short_min_bb &lt;= self.short_max_bb:
+        raise ValueError(
+            f&quot;need 0 &lt; short_min_bb &lt;= short_max_bb, got &quot;
+            f&quot;{self.short_min_bb!r}, {self.short_max_bb!r}&quot;
+        )</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def draw_stacks</span><span class="desc"> – all seats deep with probability deep_share, else independent uniform short stacks rounded to 0.01 BB</span>
+<span class="loc">rl_env/stacks.py:41–48</span>
+</summary>
+<pre><code>def draw_stacks(
+    rng: np.random.Generator, n: int, cfg: StackConfig = StackConfig()
+) -&gt; tuple[float, ...]:
+    &quot;&quot;&quot;Starting stacks (BB) of `n` seats, drawn from `rng` (see the module docstring).&quot;&quot;&quot;
+    if rng.random() &lt; cfg.deep_share:
+        return (float(cfg.deep_bb),) * n
+    draws = rng.uniform(cfg.short_min_bb, cfg.short_max_bb, size=n)
+    return tuple(max(0.01, round(float(x), 2)) for x in draws)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">HandSpec</span><span class="desc"> – the four inputs of a hand: seats, stacks, button, deck seed</span>
+<span class="loc">rl_env/stacks.py:51–58</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class HandSpec:
+    &quot;&quot;&quot;The four inputs of a hand.&quot;&quot;&quot;
+
+    n_seats: int
+    stacks_bb: tuple[float, ...]
+    button: int
+    deck_seed: int</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">HandSampler</span><span class="desc"> – draws HandSpecs from one seeded generator in a fixed order</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring</span>
+<span class="loc">rl_env/stacks.py:61–65</span>
+</summary>
+<pre><code>class HandSampler:
+    &quot;&quot;&quot;Draws `HandSpec`s from one `np.random.Generator(np.random.PCG64(seed))`:
+    the size (if not given), the stacks, a uniform button and a 63-bit deck seed,
+    always in that order, so a run is reproducible from the sampler&#x27;s seed.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – validates table sizes, keeps the config, seeds PCG64</span>
+<span class="loc">rl_env/stacks.py:66–76</span>
+</summary>
+<pre><code>def __init__(
+    self,
+    seed: int,
+    sizes: Iterable[int] = range(2, 11),
+    cfg: StackConfig = StackConfig(),
+) -&gt; None:
+    self.sizes = tuple(int(s) for s in sizes)
+    if not self.sizes or any(not 2 &lt;= s &lt;= 10 for s in self.sizes):
+        raise ValueError(f&quot;table sizes must be in 2..10, got {self.sizes}&quot;)
+    self.cfg = cfg
+    self.rng = np.random.Generator(np.random.PCG64(seed))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def sample</span><span class="desc"> – size (if not given), stacks, button, deck seed</span>
+<span class="loc">rl_env/stacks.py:78–89</span>
+</summary>
+<pre><code>def sample(self, n_seats: Optional[int] = None) -&gt; HandSpec:
+    rng = self.rng
+    if n_seats is None:
+        n = self.sizes[int(rng.integers(len(self.sizes)))]
+    else:
+        n = int(n_seats)
+        if not 2 &lt;= n &lt;= 10:
+            raise ValueError(f&quot;n_seats must be 2-10, got {n}&quot;)
+    stacks = draw_stacks(rng, n, self.cfg)
+    button = int(rng.integers(n))
+    deck_seed = int(rng.integers(0, _SEED_HIGH, dtype=np.int64))
+    return HandSpec(n, stacks, button, deck_seed)</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">table.py</span><span class="desc"> – Table: one engine Environment in step mode, one independent hand at a time</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – independence of hands, deck seeding, units and the privileged accessor</span>
+<span class="loc">rl_env/table.py:1–22</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Table: one engine `Environment` in step mode, one independent hand at a time.
+
+Every hand is independent: stacks, table size and button are given anew and a
+fresh `Environment` is built for it, so there is no rebuy, sit-out, join, leave
+or button movement to manage. Players have no agent, so the engine builds no
+views and queues no events for them.
+
+The deck is `Deck(random.Random(deck_seed))` (the environment&#x27;s default for
+`seed=deck_seed`), shuffled once at `start_hand()`. By the engine&#x27;s deal-order
+contract (hole cards round-robin from the left of the button, then flop / turn
+/ river, no burns) the same seed deals the same cards to the same
+button-relative positions, whatever the stacks.
+
+Amounts stay in BB at the engine boundary; rewards are in big bets (1 big bet
+= 2 BB). Zero-sum is checked in chips.
+
+Hidden information: `privileged_hole_cards()` is the only place in rl_env that
+reads the engine&#x27;s `env.privileged_hole_cards()`. Its two callers are the
+critic input (`critic.critic_cards`, during a hand) and `finished_hole_cards()`
+(after a hand, for evaluation tools). Nothing a controller receives is built
+from either.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – numbers, numpy, entities, engine and rl_env modules</span>
+<span class="loc">rl_env/table.py:24–36</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import numbers
+from typing import Any, Mapping, Optional, Sequence
+
+import numpy as np
+
+from entities import Deck, Hand
+from engine import ActionType, Decision, Environment, HandResult, LegalActions, Player, TableView
+
+from .actions import action_mask, mask_array, to_engine
+from .encoder import OBS_DIM, collect, encode
+from .tracker import HandTracker</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, MIN_SEATS = 2, MAX_SEATS = 10</span>
+<span class="loc">rl_env/table.py:38–41</span>
+</summary>
+<pre><code>__all__ = [&quot;Table&quot;, &quot;NoHandError&quot;, &quot;MIN_SEATS&quot;, &quot;MAX_SEATS&quot;]
+
+MIN_SEATS = 2
+MAX_SEATS = 10</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">NoHandError</span><span class="desc"> – a decision read / action with no pending decision (or a finished-hand read with no finished hand)</span>
+<span class="loc">rl_env/table.py:44–46</span>
+</summary>
+<pre><code>class NoHandError(RuntimeError):
+    &quot;&quot;&quot;A decision read / action while no decision is pending at the table (or a
+    finished-hand read while no hand is over).&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _is_number</span><span class="desc"> – a real number that is not a bool</span>
+<span class="loc">rl_env/table.py:49–50</span>
+</summary>
+<pre><code>def _is_number(x: Any) -&gt; bool:
+    return isinstance(x, numbers.Real) and not isinstance(x, (bool, np.bool_))</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Table</span><span class="desc"> – one engine environment in step mode</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – validates chips_per_bb and clears the hand state</span>
+<span class="loc">rl_env/table.py:56–72</span>
+</summary>
+<pre><code>def __init__(self, chips_per_bb: int = 100) -&gt; None:
+    if (
+        isinstance(chips_per_bb, bool)
+        or not isinstance(chips_per_bb, int)
+        or chips_per_bb &lt; 2
+        or chips_per_bb % 2
+    ):
+        raise ValueError(f&quot;chips_per_bb must be an even int &gt;= 2, got {chips_per_bb!r}&quot;)
+    self.chips_per_bb = chips_per_bb
+    self.env: Optional[Environment] = None
+    self.n_seats = 0
+    self.button: Optional[int] = None
+    self.result: Optional[HandResult] = None
+    self.net_bb: Optional[np.ndarray] = None
+    self.rewards: Optional[np.ndarray] = None
+    self._tracker: Optional[HandTracker] = None
+    self._seen = 0</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def start_hand</span><span class="desc"> – builds a fresh Environment for a new hand</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">validate seat count, stacks (positive, whole chips), button, deck seed and deck</span>
+<span class="loc">rl_env/table.py:95–128</span>
+</summary>
+<pre><code>if isinstance(n_seats, (bool, np.bool_)) or not isinstance(n_seats, numbers.Integral):
+    raise ValueError(f&quot;n_seats must be an int, got {n_seats!r}&quot;)
+n = int(n_seats)
+if not MIN_SEATS &lt;= n &lt;= MAX_SEATS:
+    raise ValueError(f&quot;n_seats must be {MIN_SEATS}-{MAX_SEATS}, got {n}&quot;)
+stacks = list(stacks_bb)
+if len(stacks) != n:
+    raise ValueError(f&quot;need {n} stacks, got {len(stacks)}&quot;)
+cpb = self.chips_per_bb
+clean: list[float] = []
+for i, s in enumerate(stacks):
+    if not _is_number(s):
+        raise ValueError(f&quot;stack of seat {i} must be a number, got {s!r}&quot;)
+    s = float(s)
+    chips = s * cpb
+    if not np.isfinite(chips) or s &lt;= 0:
+        raise ValueError(f&quot;stack of seat {i} must be positive, got {s!r}&quot;)
+    whole = round(chips)
+    if whole &lt; 1 or abs(chips - whole) &gt; 1e-6 * max(1.0, abs(chips)):
+        raise ValueError(
+            f&quot;stack of seat {i} ({s!r} BB) is not a whole number of chips &quot;
+            f&quot;at {cpb} chips/BB&quot;
+        )
+    clean.append(s)
+if isinstance(button, (bool, np.bool_)) or not isinstance(button, numbers.Integral):
+    raise ValueError(f&quot;button must be an int, got {button!r}&quot;)
+button = int(button)
+if not 0 &lt;= button &lt; n:
+    raise ValueError(f&quot;button must be a seat 0..{n - 1}, got {button}&quot;)
+if isinstance(deck_seed, (bool, np.bool_)) or not isinstance(deck_seed, numbers.Integral):
+    raise ValueError(f&quot;deck_seed must be an int, got {deck_seed!r}&quot;)
+deck_seed = int(deck_seed)
+if deck is not None and not isinstance(deck, Deck):
+    raise ValueError(f&quot;deck must be an entities.Deck, got {type(deck).__name__}&quot;)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">create players and the Environment, reset hand state and tracker, start the step-mode hand</span>
+<span class="loc">rl_env/table.py:130–151</span>
+</summary>
+<pre><code>players = [Player(f&quot;s{i}&quot;, clean[i]) for i in range(n)]
+env = Environment(
+    players=players,
+    button=button,
+    chips_per_bb=cpb,
+    seed=deck_seed,
+    action_timeout=None,
+    deck=deck,
+)
+self.env = env
+self.n_seats = n
+self.button = button
+self.result = None
+self.net_bb = None
+self.rewards = None
+self._tracker = HandTracker()
+self._seen = 0
+decision = env.start_hand()
+if decision is None:
+    self._finish()
+    return False
+return True</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def decision / def decision_pending / def _decision</span><span class="desc"> – the pending engine decision (or NoHandError)</span>
+<span class="loc">rl_env/table.py:155–170</span>
+</summary>
+<pre><code>@property
+def decision(self) -&gt; Optional[Decision]:
+    env = self.env
+    return None if env is None else env.decision
+
+@property
+def decision_pending(self) -&gt; bool:
+    env = self.env
+    return env is not None and env.decision is not None
+
+def _decision(self) -&gt; Decision:
+    env = self.env
+    decision = None if env is None else env.decision
+    if decision is None:
+        raise NoHandError(&quot;no decision is pending at this table&quot;)
+    return decision</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def seat_to_act / def legal / def mask / def mask_array</span><span class="desc"> – facts of the pending decision</span>
+<span class="loc">rl_env/table.py:172–185</span>
+</summary>
+<pre><code>@property
+def seat_to_act(self) -&gt; int:
+    return self._decision().seat
+
+@property
+def legal(self) -&gt; LegalActions:
+    return self._decision().legal
+
+@property
+def mask(self) -&gt; tuple[bool, bool, bool]:
+    return action_mask(self._decision().legal)
+
+def mask_array(self) -&gt; np.ndarray:
+    return mask_array(self._decision().legal)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def view</span><span class="desc"> – the engine&#x27;s view for the acting seat</span>
+<span class="loc">rl_env/table.py:187–191</span>
+</summary>
+<pre><code>def view(self) -&gt; TableView:
+    &quot;&quot;&quot;The engine&#x27;s view for the acting seat (built on request, cached by the
+    engine for the decision).&quot;&quot;&quot;
+    self._decision()
+    return self.env.view()  # type: ignore[union-attr]</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def hole_cards</span><span class="desc"> – the acting seat&#x27;s own cards without a view</span>
+<span class="loc">rl_env/table.py:193–196</span>
+</summary>
+<pre><code>def hole_cards(self) -&gt; Hand:
+    &quot;&quot;&quot;The acting seat&#x27;s own hole cards (no view is built).&quot;&quot;&quot;
+    self._decision()
+    return self.env.hole_cards()  # type: ignore[union-attr]</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def history</span><span class="desc"> – the engine&#x27;s public event history of the hand</span>
+<span class="loc">rl_env/table.py:198–203</span>
+</summary>
+<pre><code>@property
+def history(self):
+    &quot;&quot;&quot;The engine&#x27;s public event history of the current hand (read-only).&quot;&quot;&quot;
+    if self.env is None:
+        return ()
+    return self.env.history</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def privileged_hole_cards</span><span class="desc"> – PRIVILEGED: every participant&#x27;s cards; the only reader of the engine&#x27;s privileged accessor</span>
+<span class="loc">rl_env/table.py:205–214</span>
+</summary>
+<pre><code>def privileged_hole_cards(self) -&gt; Mapping[int, Hand]:
+    &quot;&quot;&quot;PRIVILEGED - hidden information: seat -&gt; hole cards of every participant
+    of the current hand (or of the last one once it is over).
+
+    The only place in rl_env that reads the engine&#x27;s privileged accessor. Its
+    callers are the critic input (`critic_cards`) and `finished_hole_cards()`;
+    it must never reach a controller.&quot;&quot;&quot;
+    if self.env is None:
+        return {}
+    return self.env.privileged_hole_cards()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def tracker / def events_fed</span><span class="desc"> – the up-to-date public-state tracker and how many events it has seen</span>
+<span class="loc">rl_env/table.py:216–226</span>
+</summary>
+<pre><code>@property
+def tracker(self) -&gt; HandTracker:
+    &quot;&quot;&quot;The hand&#x27;s public-state tracker, brought up to date.&quot;&quot;&quot;
+    self._sync()
+    return self._tracker  # type: ignore[return-value]
+
+@property
+def events_fed(self) -&gt; int:
+    &quot;&quot;&quot;How many of the hand&#x27;s events the tracker has processed so far (0 while
+    no observation of the hand has been read).&quot;&quot;&quot;
+    return self._seen</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _sync</span><span class="desc"> – feeds the tracker the events added since the last read</span>
+<span class="loc">rl_env/table.py:228–242</span>
+</summary>
+<pre><code>def _sync(self) -&gt; None:
+    &quot;&quot;&quot;Feed the tracker the events added since the previous read (cursor into
+    the engine&#x27;s history; no copy of the whole history).&quot;&quot;&quot;
+    env = self.env
+    tracker = self._tracker
+    if env is None or tracker is None:
+        raise NoHandError(&quot;no hand at this table&quot;)
+    history = env.history
+    end = len(history)
+    seen = self._seen
+    if end &gt; seen:
+        feed = tracker.feed
+        for i in range(seen, end):
+            feed(history[i])
+        self._seen = end</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def observation</span><span class="desc"> – the acting seat&#x27;s observation vector</span>
+<span class="loc">rl_env/table.py:244–254</span>
+</summary>
+<pre><code>def observation(self, out: Optional[np.ndarray] = None) -&gt; np.ndarray:
+    &quot;&quot;&quot;The acting seat&#x27;s observation (float32, `OBS_DIM`), without a view.&quot;&quot;&quot;
+    decision = self._decision()
+    self._sync()
+    return encode(
+        self._tracker,  # type: ignore[arg-type]
+        decision.seat,
+        self.env.hole_cards(),  # type: ignore[union-attr]
+        decision.legal,
+        out,
+    )</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def collect_observation</span><span class="desc"> – appends the acting seat&#x27;s sparse observation (batch path)</span>
+<span class="loc">rl_env/table.py:256–267</span>
+</summary>
+<pre><code>def collect_observation(self, cols: list, vals: list) -&gt; None:
+    &quot;&quot;&quot;Append the acting seat&#x27;s non-zero (column, value) pairs (batch path).&quot;&quot;&quot;
+    decision = self._decision()
+    self._sync()
+    collect(
+        self._tracker,  # type: ignore[arg-type]
+        decision.seat,
+        self.env.hole_cards(),  # type: ignore[union-attr]
+        decision.legal,
+        cols,
+        vals,
+    )</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def act</span><span class="desc"> – submits a masked action</span>
+<span class="loc">rl_env/table.py:269–273</span>
+</summary>
+<pre><code>def act(self, action: int) -&gt; None:
+    &quot;&quot;&quot;Submit a masked action. Raises IllegalMaskedActionError for an action
+    outside the mask (nothing changes).&quot;&quot;&quot;
+    decision = self._decision()
+    self._step(to_engine(action, decision.legal))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def act_engine</span><span class="desc"> – submits a raw engine action (replays only)</span>
+<span class="loc">rl_env/table.py:275–279</span>
+</summary>
+<pre><code>def act_engine(self, action_type: ActionType) -&gt; None:
+    &quot;&quot;&quot;Submit a raw engine action (e.g. a fold when checking is free). Only for
+    replays of recorded hands; not part of the policy path.&quot;&quot;&quot;
+    self._decision()
+    self._step(action_type)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _step</span><span class="desc"> – steps the engine and finishes the hand when it ends</span>
+<span class="loc">rl_env/table.py:281–283</span>
+</summary>
+<pre><code>def _step(self, action_type: ActionType) -&gt; None:
+    if self.env.step(action_type) is None:  # type: ignore[union-attr]
+        self._finish()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def hand_over</span><span class="desc"> – true once the hand has a result</span>
+<span class="loc">rl_env/table.py:287–289</span>
+</summary>
+<pre><code>@property
+def hand_over(self) -&gt; bool:
+    return self.result is not None</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def finished_hole_cards</span><span class="desc"> – HIDDEN INFORMATION: all cards of the finished hand, for evaluation tools</span>
+<span class="loc">rl_env/table.py:291–302</span>
+</summary>
+<pre><code>def finished_hole_cards(self) -&gt; Mapping[int, Hand]:
+    &quot;&quot;&quot;HIDDEN INFORMATION - evaluation tools only (e.g. arena&#x27;s hand histories);
+    must never reach a controller.
+
+    seat -&gt; `Hand` of every seat of the finished hand (all seats of an rl_env
+    table are dealt in, folded ones included), as the engine&#x27;s read-only
+    mapping. Raises NoHandError unless the hand is over, so it reveals nothing
+    while a decision is pending. Readable until this table&#x27;s next
+    `start_hand` (which builds a new environment).&quot;&quot;&quot;
+    if not self.hand_over:
+        raise NoHandError(&quot;no finished hand at this table&quot;)
+    return self.privileged_hole_cards()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _finish</span><span class="desc"> – stores the result, net BB per seat (checked zero-sum in chips) and rewards in big bets</span>
+<span class="loc">rl_env/table.py:304–316</span>
+</summary>
+<pre><code>def _finish(self) -&gt; None:
+    env = self.env
+    assert env is not None
+    result = env.last_result
+    assert result is not None
+    net = np.array([result.net[seat] for seat in range(self.n_seats)], dtype=np.float64)
+    cpb = self.chips_per_bb
+    chips = sum(int(round(x * cpb)) for x in net.tolist())
+    if chips != 0:
+        raise AssertionError(f&quot;nets do not sum to 0 in chips: {chips} ({net.tolist()})&quot;)
+    self.result = result
+    self.net_bb = net
+    self.rewards = (net / 2.0).astype(np.float32)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – Table.OBS_DIM re-export</span>
+<span class="loc">rl_env/table.py:320–320</span>
+</summary>
+<pre><code>Table.OBS_DIM = OBS_DIM  # type: ignore[attr-defined]</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">tracker.py</span><span class="desc"> – HandTracker: the public state of one hand folded from engine events</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – which events are read and why no hidden cards are seen</span>
+<span class="loc">rl_env/tracker.py:1–16</span>
+</summary>
+<pre><code>&quot;&quot;&quot;HandTracker: the public state of one hand, folded from the engine&#x27;s events.
+
+The tracker reads only public events: `HandStarted`, `BlindPosted`,
+`PlayerActed` and `BoardDealt`. Everything after the last decision
+(`HandShown`, `BetReturned`, `PotAwarded`) and table events are ignored. All
+amounts are taken from the events (`amount_bb`, `to_bb`, `stack_bb`), never
+recomputed by betting rules.
+
+State is kept per participant index (participants in seat order, from
+`HandStarted`). Events can be fed one by one, so the tracker can be kept up to
+date incrementally (training) or built from a whole `TableView.history` (a bot
+at a real table); both give the same state.
+
+This module never sees hidden cards: it gets no hole cards at all (the acting
+player&#x27;s own cards are passed to the encoder separately).
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – deque, entities Board, engine events, action kinds</span>
+<span class="loc">rl_env/tracker.py:18–26</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from collections import deque
+from typing import Any, Iterable
+
+from entities import Board
+from engine import ActionType, BlindPosted, BoardDealt, HandStarted, PlayerActed
+
+from .actions import BET_RAISE, CHECK_CALL, FOLD</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, N_RECENT = 8, engine action -&gt; kind table</span>
+<span class="loc">rl_env/tracker.py:28–39</span>
+</summary>
+<pre><code>__all__ = [&quot;HandTracker&quot;, &quot;N_RECENT&quot;]
+
+N_RECENT = 8  # recent actions kept for the observation
+
+_FOLD = ActionType.FOLD
+_RAISE = ActionType.RAISE
+_KIND = {
+    ActionType.FOLD: FOLD,
+    ActionType.CHECK: CHECK_CALL,
+    ActionType.CALL: CHECK_CALL,
+    ActionType.RAISE: BET_RAISE,
+}</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">HandTracker</span><span class="desc"> – per-participant stacks, bets, folds, all-ins, aggression and per-hand board / pot / betting state</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring and slots</span>
+<span class="loc">rl_env/tracker.py:42–88</span>
+</summary>
+<pre><code>class HandTracker:
+    &quot;&quot;&quot;Public state of one hand. Amounts in big blinds (as in the events).
+
+    Per participant index `i` (0..n-1, seat order): `stack[i]`, `total[i]`
+    (chips in the pot this hand), `street_bet[i]`, `folded[i]`, `all_in[i]`,
+    `bets[i][street]` (bets / raises made per street), `acted[i]` (a voluntary
+    action on this street; blinds do not count).
+
+    For the hand: `street` (0..3), `board_cards[street]` (card indices dealt on
+    that street), `board` (the engine `Board`), `pot`, `current_bet`,
+    `street_bets` (bets made this street; the big blind counts preflop, every
+    RAISE event counts), `aggressor` (last aggressor on this street, -1 if none),
+    `prev_aggressor` (last aggressor before this street, -1 if none) and
+    `recent` (the last 8 actions as (participant index, action kind, street)).
+
+    `cache` is a per-hand scratch dict for the encoder (static per-seat parts and
+    hand-strength hints per (participant, street)).
+    &quot;&quot;&quot;
+
+    __slots__ = (
+        &quot;started&quot;,
+        &quot;n&quot;,
+        &quot;seats&quot;,
+        &quot;index&quot;,
+        &quot;button&quot;,
+        &quot;sb&quot;,
+        &quot;bb&quot;,
+        &quot;stack&quot;,
+        &quot;total&quot;,
+        &quot;street_bet&quot;,
+        &quot;folded&quot;,
+        &quot;all_in&quot;,
+        &quot;bets&quot;,
+        &quot;acted&quot;,
+        &quot;street&quot;,
+        &quot;board_cards&quot;,
+        &quot;board&quot;,
+        &quot;pot&quot;,
+        &quot;current_bet&quot;,
+        &quot;street_bets&quot;,
+        &quot;aggressor&quot;,
+        &quot;prev_aggressor&quot;,
+        &quot;recent&quot;,
+        &quot;n_events&quot;,
+        &quot;cache&quot;,
+    )</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – empty state</span>
+<span class="loc">rl_env/tracker.py:89–114</span>
+</summary>
+<pre><code>def __init__(self) -&gt; None:
+    self.started = False
+    self.n = 0
+    self.seats: tuple[int, ...] = ()
+    self.index: dict[int, int] = {}
+    self.button = -1
+    self.sb = -1
+    self.bb = -1
+    self.stack: list[float] = []
+    self.total: list[float] = []
+    self.street_bet: list[float] = []
+    self.folded: list[bool] = []
+    self.all_in: list[bool] = []
+    self.bets: list[list[int]] = []
+    self.acted: list[bool] = []
+    self.street = 0
+    self.board_cards: list[tuple[int, ...]] = [(), (), (), ()]
+    self.board = Board.empty()
+    self.pot = 0.0
+    self.current_bet = 0.0
+    self.street_bets = 0
+    self.aggressor = -1
+    self.prev_aggressor = -1
+    self.recent: deque[tuple[int, int, int]] = deque(maxlen=N_RECENT)
+    self.n_events = 0
+    self.cache: dict[Any, Any] = {}</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def from_events</span><span class="desc"> – tracker built from a list of events</span>
+<span class="loc">rl_env/tracker.py:116–120</span>
+</summary>
+<pre><code>@classmethod
+def from_events(cls, events: Iterable[Any]) -&gt; &quot;HandTracker&quot;:
+    tracker = cls()
+    tracker.feed_all(events)
+    return tracker</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def feed_all</span><span class="desc"> – feeds many events</span>
+<span class="loc">rl_env/tracker.py:124–127</span>
+</summary>
+<pre><code>def feed_all(self, events: Iterable[Any]) -&gt; None:
+    feed = self.feed
+    for ev in events:
+        feed(ev)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def feed</span><span class="desc"> – dispatches one event by type</span>
+<span class="loc">rl_env/tracker.py:129–140</span>
+</summary>
+<pre><code>def feed(self, ev: Any) -&gt; None:
+    &quot;&quot;&quot;Fold one public event into the state (unknown event types are ignored).&quot;&quot;&quot;
+    self.n_events += 1
+    t = type(ev)
+    if t is PlayerActed:
+        self._player_acted(ev)
+    elif t is BlindPosted:
+        self._blind_posted(ev)
+    elif t is BoardDealt:
+        self._board_dealt(ev)
+    elif t is HandStarted:
+        self._hand_started(ev)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _hand_started</span><span class="desc"> – participants in seat order, button / blinds, per-participant arrays</span>
+<span class="loc">rl_env/tracker.py:142–160</span>
+</summary>
+<pre><code>def _hand_started(self, ev: HandStarted) -&gt; None:
+    if self.started:
+        raise ValueError(&quot;a second HandStarted in one hand&#x27;s events&quot;)
+    participants = sorted(ev.participants, key=lambda p: p[0])
+    n = len(participants)
+    self.started = True
+    self.n = n
+    self.seats = tuple(p[0] for p in participants)
+    self.index = {seat: i for i, seat in enumerate(self.seats)}
+    self.button = self.index[ev.button]
+    self.sb = self.index[ev.sb_seat]
+    self.bb = self.index[ev.bb_seat]
+    self.stack = [float(p[2]) for p in participants]
+    self.total = [0.0] * n
+    self.street_bet = [0.0] * n
+    self.folded = [False] * n
+    self.all_in = [False] * n
+    self.bets = [[0, 0, 0, 0] for _ in range(n)]
+    self.acted = [False] * n</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _blind_posted</span><span class="desc"> – blind chips into the pot; the BB opens the betting at 1 BB</span>
+<span class="loc">rl_env/tracker.py:162–176</span>
+</summary>
+<pre><code>def _blind_posted(self, ev: BlindPosted) -&gt; None:
+    i = self.index[ev.seat]
+    amount = ev.amount_bb
+    self.stack[i] = ev.stack_bb
+    self.street_bet[i] += amount
+    self.total[i] += amount
+    self.pot += amount
+    if ev.all_in:
+        self.all_in[i] = True
+    if ev.blind == &quot;BB&quot;:
+        # The big blind is the opening bet preflop; callers must match a full
+        # big blind (1 BB, the unit of every amount) even if it is short.
+        self.street_bets = 1
+        if self.current_bet &lt; 1.0:
+            self.current_bet = 1.0</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _player_acted</span><span class="desc"> – stack, street bet, pot, fold / raise bookkeeping, recent actions</span>
+<span class="loc">rl_env/tracker.py:178–198</span>
+</summary>
+<pre><code>def _player_acted(self, ev: PlayerActed) -&gt; None:
+    i = self.index[ev.seat]
+    amount = ev.amount_bb
+    street = self.street
+    self.stack[i] = ev.stack_bb
+    self.street_bet[i] = ev.to_bb
+    self.total[i] += amount
+    self.pot += amount
+    if ev.all_in:
+        self.all_in[i] = True
+    action = ev.action
+    if action is _FOLD:
+        self.folded[i] = True
+    elif action is _RAISE:
+        self.bets[i][street] += 1
+        self.street_bets += 1
+        self.aggressor = i
+        if ev.to_bb &gt; self.current_bet:
+            self.current_bet = ev.to_bb
+    self.acted[i] = True
+    self.recent.append((i, _KIND[action], street))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _board_dealt</span><span class="desc"> – board cards, new street, cleared street bets, aggressor carried to prev_aggressor</span>
+<span class="loc">rl_env/tracker.py:200–212</span>
+</summary>
+<pre><code>def _board_dealt(self, ev: BoardDealt) -&gt; None:
+    street = ev.street.value
+    self.board_cards[street] = tuple(c.index for c in ev.cards)
+    self.board = ev.board
+    self.street = street
+    n = self.n
+    self.street_bet = [0.0] * n
+    self.acted = [False] * n
+    self.current_bet = 0.0
+    self.street_bets = 0
+    if self.aggressor &gt;= 0:
+        self.prev_aggressor = self.aggressor
+    self.aggressor = -1</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def live_count / def can_act_count</span><span class="desc"> – not folded / not folded and not all-in</span>
+<span class="loc">rl_env/tracker.py:216–223</span>
+</summary>
+<pre><code>def live_count(self) -&gt; int:
+    &quot;&quot;&quot;Participants still in the hand (not folded).&quot;&quot;&quot;
+    return self.folded.count(False)
+
+def can_act_count(self) -&gt; int:
+    &quot;&quot;&quot;Participants still able to act (not folded, not all-in).&quot;&quot;&quot;
+    folded, all_in = self.folded, self.all_in
+    return sum(1 for i in range(self.n) if not folded[i] and not all_in[i])</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def order_position</span><span class="desc"> – position in this street&#x27;s action order</span>
+<span class="loc">rl_env/tracker.py:225–229</span>
+</summary>
+<pre><code>def order_position(self, i: int) -&gt; int:
+    &quot;&quot;&quot;Position of participant `i` in this street&#x27;s action order: from the
+    left of the big blind preflop, from the left of the button after.&quot;&quot;&quot;
+    anchor = self.bb if self.street == 0 else self.button
+    return (i - anchor - 1) % self.n</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def snapshot</span><span class="desc"> – the whole state as a comparable tuple (tests)</span>
+<span class="loc">rl_env/tracker.py:231–256</span>
+</summary>
+<pre><code>def snapshot(self) -&gt; tuple:
+    &quot;&quot;&quot;The whole public state as a comparable tuple (tests).&quot;&quot;&quot;
+    return (
+        self.started,
+        self.n,
+        self.seats,
+        self.button,
+        self.sb,
+        self.bb,
+        tuple(self.stack),
+        tuple(self.total),
+        tuple(self.street_bet),
+        tuple(self.folded),
+        tuple(self.all_in),
+        tuple(tuple(b) for b in self.bets),
+        tuple(self.acted),
+        self.street,
+        tuple(self.board_cards),
+        self.board,
+        self.pot,
+        self.current_bet,
+        self.street_bets,
+        self.aggressor,
+        self.prev_aggressor,
+        tuple(self.recent),
+    )</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+</div>
+</details>
+</main>
+<script>
+function setAll(open) { document.querySelectorAll('details').forEach(d => d.open = open); }
+function expandTo(depth) {
+  document.querySelectorAll('details').forEach(d => {
+    const m = d.className.match(/d(\d+)/); d.open = m && +m[1] < depth;
+  });
+}
+function filter(q) {
+  q = q.trim().toLowerCase();
+  const all = document.querySelectorAll('details');
+  if (!q) { all.forEach(d => d.style.display = ''); expandTo(1); return; }
+  all.forEach(d => { d.style.display = 'none'; d.open = false; });
+  all.forEach(d => {
+    const s = d.querySelector(':scope > summary').textContent.toLowerCase();
+    if (s.includes(q)) {
+      d.style.display = '';
+      let p = d.parentElement;
+      while (p) { if (p.tagName === 'DETAILS') { p.style.display = ''; p.open = true; } p = p.parentElement; }
+    }
+  });
+}
+expandTo(1);
+</script>
+</body>
+</html>

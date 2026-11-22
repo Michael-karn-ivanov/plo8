@@ -1,0 +1,1468 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bot_client documentation</title>
+<style>
+:root {
+  --bg: #fbfaf7; --fg: #1f2328; --muted: #6a6f76; --line: #e3e0d8;
+  --name: #0b5cad; --def: #7a3e9d; --code-bg: #f2efe8; --loc: #8a8f96;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a8; --line: #2c3036;
+    --name: #6cb6ff; --def: #d2a8ff; --code-bg: #1e2228; --loc: #7d838c;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a8; --line: #2c3036;
+  --name: #6cb6ff; --def: #d2a8ff; --code-bg: #1e2228; --loc: #7d838c;
+}
+body { background: var(--bg); color: var(--fg); margin: 0;
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+p.lead { color: var(--muted); margin: 0 0 16px; }
+.toolbar button { font: inherit; font-size: 13px; padding: 4px 10px; margin-right: 6px;
+  border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 6px; cursor: pointer; }
+.toolbar { margin-bottom: 16px; }
+details { margin: 2px 0; }
+.kids { margin-left: 18px; padding-left: 10px; border-left: 1px solid var(--line); }
+summary { cursor: pointer; padding: 2px 0; list-style-position: outside; }
+summary:hover { background: color-mix(in srgb, var(--line) 40%, transparent); }
+.name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; color: var(--name); font-weight: 600; }
+.name.def { color: var(--def); }
+.desc { color: var(--fg); }
+.d0 > summary .desc, .kids .desc { }
+.loc { float: right; font: 12px ui-monospace, Menlo, monospace; color: var(--loc); margin-left: 12px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;
+  margin: 6px 0 8px 18px; overflow-x: auto; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+input#q { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: transparent; color: var(--fg); width: 220px; max-width: 100%; }
+mark { background: #ffe48a; color: #000; }
+</style>
+</head>
+<body>
+<main>
+<h1>bot_client</h1>
+<p class="lead">Seats one arena bot at a running cli_server table and plays it there: message loop, rebuy policy, stats and command line.
+Tree: folders → files → classes / functions → logical blocks → code. Only <code>.py</code> sources are covered (BUCK, JSON test sets, markdown and unit tests are omitted).</p>
+<div class="toolbar">
+<button onclick="setAll(true)">Expand all</button>
+<button onclick="setAll(false)">Collapse all</button>
+<button onclick="expandTo(1)">Files</button>
+<button onclick="expandTo(2)">Classes &amp; functions</button>
+<input id="q" placeholder="Filter by name / description" oninput="filter(this.value)">
+</div>
+<details class="d0"><summary><span class="name ">./bot_client</span><span class="desc"> – seats one arena bot at a running cli_server table and plays it there over the network protocol</span>
+</summary>
+<div class="kids">
+<details class="d1"><summary><span class="name ">__init__.py</span><span class="desc"> – package docstring: the modules and the rule that no poker or bot logic lives here</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – module overview</span>
+<span class="loc">bot_client/__init__.py:1–11</span>
+</summary>
+<pre><code>&quot;&quot;&quot;bot_client: seats one arena bot at a running cli_server table and plays it there.
+
+- `players`: the `Player` abstraction (`BotPlayer` = an arena bot behind `BotAgent`).
+- `policy`: the pure rebuy / sit-in / leave reply for a `hand_end`.
+- `client`: `BotClient`, the message loop (turns, hand ends, lifecycle).
+- `stats`: per-hand log lines and the final summary.
+- `main`: command line, startup / join, signals, exit codes.
+
+No poker rule and no bot logic lives here: legality, pots and showdown are the
+engine&#x27;s, the table is run by cli_server, decisions come from arena.
+&quot;&quot;&quot;</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">client.py</span><span class="desc"> – BotClient: the single-threaded message loop answering turns, hand ends and lifecycle messages</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – threading model and what the player may see</span>
+<span class="loc">bot_client/client.py:1–13</span>
+</summary>
+<pre><code>&quot;&quot;&quot;BotClient: the message loop of one bot at the table.
+
+One thread (the one calling `run()`) reads the inbox filled by cli_client&#x27;s
+`CallbackListener` and answers at once: every `turn` with the player&#x27;s decision,
+every `hand_end` with the rebuy / sit-in / leave reply of `policy.py`. Every
+request to the server goes out from this thread through the one
+`ServerConnection`, so requests never interleave. Signal handlers only call
+`request_stop()`.
+
+The player sees only the `turn` view (own hole cards, public state) and the
+legal actions. `stack`, `seat` and `status` are client bookkeeping that the
+player never reads.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – logging, queue, threading, cli_client net, cli_server protocol, engine, own modules</span>
+<span class="loc">bot_client/client.py:15–41</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import logging
+import queue
+import threading
+import time
+from typing import Any, Callable, Optional
+
+from cli_client.net import DISCONNECTED, ConnectionLost
+from cli_server.protocol import (
+    ProtocolError,
+    TableSettings,
+    action_request,
+    decode_event,
+    decode_lobby,
+    decode_server_message,
+    decode_table_view,
+    hand_end_request,
+    leave_request,
+    rebuy_request,
+    sit_in_request,
+)
+from engine import ActionType, HandResult, HandStarted, LegalActions, PlayerRebought, TableView
+
+from .players import Player
+from .policy import HandEndChoice, hand_end_reply, is_busted
+from .stats import Stats, format_bb, hand_line, summary</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, STOP marker, status names, LEFT_GRACE, POLL, decode error types</span>
+<span class="loc">bot_client/client.py:43–69</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;STOP&quot;,
+    &quot;WAITING&quot;,
+    &quot;SEATED&quot;,
+    &quot;SITTING_OUT&quot;,
+    &quot;LEAVING&quot;,
+    &quot;LEFT&quot;,
+    &quot;LEFT_GRACE&quot;,
+    &quot;BotClient&quot;,
+    &quot;is_stale_turn_error&quot;,
+    &quot;fallback_action&quot;,
+]
+
+STOP = (&quot;stop&quot;,)  # inbox marker: user stop (signal handler)
+
+WAITING = &quot;waiting&quot;
+SEATED = &quot;seated&quot;
+SITTING_OUT = &quot;sitting_out&quot;
+LEAVING = &quot;leaving&quot;
+LEFT = &quot;left&quot;
+
+LEFT_GRACE = 1.0  # seconds to wait for `close` / the end of the channel after `left`
+POLL = 0.2  # inbox timeout: lets the loop see deadlines
+
+# Decoding errors of a malformed message (the protocol raises ProtocolError; a
+# bad value can also surface from an engine dataclass).
+_DECODE_ERRORS = (ProtocolError, ValueError, TypeError, KeyError, IndexError)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def is_stale_turn_error</span><span class="desc"> – the server rejected an action because its turn is no longer pending</span>
+<span class="loc">bot_client/client.py:72–78</span>
+</summary>
+<pre><code>def is_stale_turn_error(text: Any) -&gt; bool:
+    &quot;&quot;&quot;The server rejected an `action` because its `seq` is not the pending turn
+    (the turn timed out or was already answered) - as opposed to an illegal
+    action for the pending turn. The one place that knows the server&#x27;s wording
+    (cli_server `ClientSession.submit_action`); pinned by test_integration.&quot;&quot;&quot;
+    text = str(text or &quot;&quot;)
+    return &quot;is not the pending turn of&quot; in text or &quot;has no pending turn&quot; in text</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def fallback_action</span><span class="desc"> – check-or-call, always legal</span>
+<span class="loc">bot_client/client.py:81–83</span>
+</summary>
+<pre><code>def fallback_action(legal: LegalActions) -&gt; ActionType:
+    &quot;&quot;&quot;Check-or-call: always legal.&quot;&quot;&quot;
+    return ActionType.CHECK if legal.can_check else ActionType.CALL</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">_Done</span><span class="desc"> – internal exception ending the loop with an exit code</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – keeps the code</span>
+<span class="loc">bot_client/client.py:89–91</span>
+</summary>
+<pre><code>def __init__(self, code: int) -&gt; None:
+    super().__init__(code)
+    self.code = code</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">BotClient</span><span class="desc"> – one bot at the table: dispatches inbox messages to handlers and talks to the server</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – keeps the collaborators and settings and initialises the state</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">collaborators and settings: name, player, connection, inbox, rebuy target / policy, hand limit, clock</span>
+<span class="loc">bot_client/client.py:115–127</span>
+</summary>
+<pre><code>self.name = name
+self.player = player
+self.conn = conn
+self.inbox = inbox
+self.listener = listener
+self.target = stack_bb
+self.rebuy_policy = rebuy
+self.max_hands = max_hands
+self.settings = settings
+self.clock = clock
+self.leave_timeout = leave_timeout
+self.poll = poll
+self.log = logger if logger is not None else logging.getLogger(&quot;bot_client&quot;)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">observable state: status, stack, seat, counters, stats, problems, exit code</span>
+<span class="loc">bot_client/client.py:129–143</span>
+</summary>
+<pre><code># State, readable by tests.
+self.status = WAITING if queued else SEATED
+self.stack: Optional[float] = stack_bb
+self.seat: Optional[int] = None
+self.hands_played = 0
+self.stats = Stats()
+self.rejected_actions = 0
+self.rejected_hand_ends = 0
+self.fallbacks = 0
+self.sat_out_count = 0
+self.turns_answered = 0
+self.hand_ends_answered = 0
+self.problems: list[str] = []
+self.final_stack: Optional[float] = None
+self.exit_code: Optional[int] = None</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">stop / leave bookkeeping, pending rebuy, last hand, lobby retry key</span>
+<span class="loc">bot_client/client.py:145–154</span>
+</summary>
+<pre><code>self.stop_requested = False
+self._stop_lock = threading.Lock()
+self._stops = 0  # STOP markers queued by request_stop()
+self._stops_handled = 0
+self._leave_sent = False  # the stop&#x27;s leave request was sent and accepted
+self._leave_deadline: Optional[float] = None
+self._left_at: Optional[float] = None
+self._pending_rebuy: Optional[float] = None  # asked at hand_end, not yet seen applied
+self._last_hand: Optional[int] = None  # number of the last hand seen
+self._retry_key: Optional[tuple] = None  # lobby status of the last between-hands retry</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def run</span><span class="desc"> – pulls inbox messages (with a poll timeout) until an exit code is set</span>
+<span class="loc">bot_client/client.py:158–166</span>
+</summary>
+<pre><code>def run(self) -&gt; int:
+    &quot;&quot;&quot;Handle messages until an end condition; returns the exit status.&quot;&quot;&quot;
+    while self.exit_code is None:
+        try:
+            msg = self.inbox.get(timeout=self.poll)
+        except queue.Empty:
+            msg = None
+        self.step(msg)
+    return self.exit_code</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def step</span><span class="desc"> – handles one message, checks deadlines, turns _Done / ConnectionLost into an exit code</span>
+<span class="loc">bot_client/client.py:168–182</span>
+</summary>
+<pre><code>def step(self, msg: Any) -&gt; Optional[int]:
+    &quot;&quot;&quot;Handle one inbox item (None: nothing arrived) and check the deadlines.
+    Returns the exit status once the loop is over, else None.&quot;&quot;&quot;
+    if self.exit_code is not None:
+        return self.exit_code
+    try:
+        if msg is not None:
+            self.handle(msg)
+        self.tick()
+    except _Done as done:
+        self.exit_code = done.code
+    except ConnectionLost as e:
+        self.log.error(&quot;connection to the server lost: %s&quot;, e)
+        self.exit_code = 1
+    return self.exit_code</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def request_stop</span><span class="desc"> – thread-safe user stop: queues a STOP marker</span>
+<span class="loc">bot_client/client.py:184–188</span>
+</summary>
+<pre><code>def request_stop(self) -&gt; None:
+    &quot;&quot;&quot;User stop (signal handlers; any thread): leave the table, then exit.&quot;&quot;&quot;
+    with self._stop_lock:
+        self._stops += 1
+    self.inbox.put(STOP)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def close</span><span class="desc"> – closes the listener and the server connection</span>
+<span class="loc">bot_client/client.py:190–194</span>
+</summary>
+<pre><code>def close(self) -&gt; None:
+    &quot;&quot;&quot;Close the callback listener and the server connection (idempotent).&quot;&quot;&quot;
+    if self.listener is not None:
+        self.listener.close()
+    self.conn.close()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def summary</span><span class="desc"> – final summary line from the stats</span>
+<span class="loc">bot_client/client.py:196–198</span>
+</summary>
+<pre><code>def summary(self) -&gt; str:
+    final = self.final_stack if self.final_stack is not None else self.stack
+    return summary(self.name, self.player.label, self.stats, final)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def handle</span><span class="desc"> – dispatches STOP, DISCONNECTED or a message by its type</span>
+<span class="loc">bot_client/client.py:202–217</span>
+</summary>
+<pre><code>def handle(self, msg: Any) -&gt; None:
+    if msg is STOP or msg == STOP:
+        self._on_stop()
+        return
+    if msg is DISCONNECTED or msg == DISCONNECTED:
+        self._on_disconnected()
+        return
+    if not isinstance(msg, dict):
+        self._problem(f&quot;unexpected inbox item {msg!r}&quot;)
+        return
+    kind = msg.get(&quot;type&quot;)
+    handler = self._HANDLERS.get(kind)
+    if handler is None:
+        self.log.debug(&quot;ignoring message type %r&quot;, kind)
+        return
+    handler(self, msg)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def tick</span><span class="desc"> – exits after the grace period following &quot;left&quot; or when the leave deadline passes</span>
+<span class="loc">bot_client/client.py:219–225</span>
+</summary>
+<pre><code>def tick(self) -&gt; None:
+    now = self.clock()
+    if self._left_at is not None and now - self._left_at &gt;= LEFT_GRACE:
+        raise _Done(0)
+    if self._leave_deadline is not None and now &gt;= self._leave_deadline:
+        self.log.warning(&quot;no confirmation of the leave after %gs: exiting&quot;, self.leave_timeout)
+        raise _Done(0)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _problem</span><span class="desc"> – records and logs a problem</span>
+<span class="loc">bot_client/client.py:227–229</span>
+</summary>
+<pre><code>def _problem(self, text: str, level: int = logging.WARNING) -&gt; None:
+    self.problems.append(text)
+    self.log.log(level, &quot;%s&quot;, text)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _request</span><span class="desc"> – one server request; non-dict responses become an error</span>
+<span class="loc">bot_client/client.py:231–236</span>
+</summary>
+<pre><code>def _request(self, msg: dict) -&gt; dict:
+    &quot;&quot;&quot;One request to the server (raises ConnectionLost).&quot;&quot;&quot;
+    response = self.conn.request(msg)
+    if not isinstance(response, dict):
+        return {&quot;ok&quot;: False, &quot;error&quot;: f&quot;bad response {response!r}&quot;}
+    return response</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_seated</span><span class="desc"> – marks seated and reads seat / stack from the view</span>
+<span class="loc">bot_client/client.py:240–249</span>
+</summary>
+<pre><code>def _on_seated(self, msg: dict) -&gt; None:
+    try:
+        view = decode_table_view(msg.get(&quot;view&quot;))
+    except _DECODE_ERRORS as e:
+        self._problem(f&quot;undecodable &#x27;seated&#x27; message: {e}&quot;)
+        self.status = SEATED
+        return
+    self.status = SEATED
+    self._update_from_view(view)
+    self.log.info(&quot;seated at seat %s&quot;, view.seat)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_hole_cards</span><span class="desc"> – updates seat / stack from the hole-cards view</span>
+<span class="loc">bot_client/client.py:251–258</span>
+</summary>
+<pre><code>def _on_hole_cards(self, msg: dict) -&gt; None:
+    try:
+        _, hand, view = decode_server_message(msg)
+    except _DECODE_ERRORS as e:
+        self._problem(f&quot;undecodable &#x27;hole_cards&#x27; message: {e}&quot;)
+        return
+    self._update_from_view(view)
+    self.log.debug(&quot;hand %d: hole cards %s&quot;, view.hand_number, hand)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _update_from_view</span><span class="desc"> – seat and own stack from a TableView</span>
+<span class="loc">bot_client/client.py:260–265</span>
+</summary>
+<pre><code>def _update_from_view(self, view: TableView) -&gt; None:
+    self.seat = view.seat
+    try:
+        self.stack = view.me.stack
+    except (IndexError, TypeError):
+        pass</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_event</span><span class="desc"> – decodes a table event; tracks hand starts, own stack / seat and rebuys</span>
+<span class="loc">bot_client/client.py:267–290</span>
+</summary>
+<pre><code>def _on_event(self, msg: dict) -&gt; None:
+    try:
+        event = decode_event(msg.get(&quot;event&quot;))
+    except _DECODE_ERRORS as e:
+        # An unknown event type (a newer server) is skipped like a bad one.
+        self.log.debug(&quot;event skipped: %s&quot;, e)
+        if not str(e).startswith(&quot;unknown event type&quot;):
+            self._problem(f&quot;undecodable event: {e}&quot;)
+        return
+    if isinstance(event, HandStarted):
+        self._on_hand_started(event)
+        return
+    if getattr(event, &quot;name&quot;, None) != self.name:
+        return
+    stack = getattr(event, &quot;stack_bb&quot;, None)
+    if isinstance(stack, (int, float)):
+        self.stack = float(stack)
+    seat = getattr(event, &quot;seat&quot;, None)
+    if isinstance(seat, int):
+        self.seat = seat
+    if isinstance(event, PlayerRebought):
+        self.stats.add_rebuy(event.amount_bb, self._last_hand)
+        self._pending_rebuy = None
+        self.log.debug(&quot;rebought %s BB&quot;, format_bb(event.amount_bb))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_hand_started</span><span class="desc"> – notes the hand number, resets the lobby retry, reads own seat / stack</span>
+<span class="loc">bot_client/client.py:292–300</span>
+</summary>
+<pre><code>def _on_hand_started(self, event: HandStarted) -&gt; None:
+    self._check_rebuy_applied()
+    if event.hand_no is not None:
+        self._last_hand = event.hand_no
+    self._retry_key = None  # the next lobby status may retry again
+    for seat, name, stack in event.participants:
+        if name == self.name:
+            self.seat = seat
+            self.stack = stack</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _check_rebuy_applied</span><span class="desc"> – warns when a requested rebuy never showed up</span>
+<span class="loc">bot_client/client.py:302–305</span>
+</summary>
+<pre><code>def _check_rebuy_applied(self) -&gt; None:
+    if self._pending_rebuy is not None:
+        self.log.warning(&quot;rebuy of %s BB was not applied&quot;, format_bb(self._pending_rebuy))
+        self._pending_rebuy = None</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_sat_out</span><span class="desc"> – status sitting out (unless leaving)</span>
+<span class="loc">bot_client/client.py:307–310</span>
+</summary>
+<pre><code>def _on_sat_out(self, msg: dict) -&gt; None:
+    self.status = SITTING_OUT if self.status not in (LEAVING, LEFT) else self.status
+    self.sat_out_count += 1
+    self.log.warning(&quot;sat out by the server&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_returned</span><span class="desc"> – back to seated (unless leaving)</span>
+<span class="loc">bot_client/client.py:312–315</span>
+</summary>
+<pre><code>def _on_returned(self, msg: dict) -&gt; None:
+    if self.status not in (LEAVING, LEFT):
+        self.status = SEATED
+    self.log.info(&quot;back in the game&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_acting</span><span class="desc"> – ignored</span>
+<span class="loc">bot_client/client.py:317–318</span>
+</summary>
+<pre><code>def _on_acting(self, msg: dict) -&gt; None:
+    pass</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_left</span><span class="desc"> – status left, final stack, starts the grace timer</span>
+<span class="loc">bot_client/client.py:320–329</span>
+</summary>
+<pre><code>def _on_left(self, msg: dict) -&gt; None:
+    self.status = LEFT
+    final = msg.get(&quot;final_stack_bb&quot;)
+    if isinstance(final, (int, float)) and not isinstance(final, bool):
+        self.final_stack = float(final)
+        self.stack = float(final)
+        self.log.info(&quot;left the table with %s BB&quot;, format_bb(final))
+    else:
+        self.log.info(&quot;left the table&quot;)
+    self._left_at = self.clock()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_close</span><span class="desc"> – the server closed the table: exit 0</span>
+<span class="loc">bot_client/client.py:331–334</span>
+</summary>
+<pre><code>def _on_close(self, msg: dict) -&gt; None:
+    if self.status != LEFT:
+        self.log.info(&quot;the server closed the table&quot;)
+    raise _Done(0)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_disconnected</span><span class="desc"> – callback channel closed: exit 0 after a leave, else 1</span>
+<span class="loc">bot_client/client.py:336–343</span>
+</summary>
+<pre><code>def _on_disconnected(self) -&gt; None:
+    if self.status == LEFT:
+        raise _Done(0)
+    if self.stop_requested and self._leave_sent:
+        self.log.info(&quot;callback channel closed after the leave&quot;)
+        raise _Done(0)
+    self.log.error(&quot;connection to the server lost (callback channel closed)&quot;)
+    raise _Done(1)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_turn</span><span class="desc"> – answers a turn with the player&#x27;s decision</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">decode the turn (an undecodable one is left to the server timeout)</span>
+<span class="loc">bot_client/client.py:348–354</span>
+</summary>
+<pre><code>seq = msg.get(&quot;seq&quot;)
+try:
+    _, seq, view, legal = decode_server_message(msg)
+except _DECODE_ERRORS as e:
+    # Cannot be decided: the server&#x27;s timeout applies.
+    self._problem(f&quot;undecodable turn {seq!r}, not answered: {e}&quot;, logging.ERROR)
+    return</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">ask the player; on an exception or illegal choice use the fallback</span>
+<span class="loc">bot_client/client.py:355–363</span>
+</summary>
+<pre><code>try:
+    t = self.player.decide(view, legal)
+    if not isinstance(t, ActionType) or not legal.allows(t):
+        raise ValueError(f&quot;the player chose {t!r}, not legal now&quot;)
+except Exception as e:  # noqa: BLE001 - a bot bug must not lose the turn
+    self.log.exception(&quot;decision failed on turn %s&quot;, seq)
+    self.problems.append(f&quot;decision failed on turn {seq}: {e!r}&quot;)
+    t = fallback_action(legal)
+    self.fallbacks += 1</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">debug log of the decision</span>
+<span class="loc">bot_client/client.py:364–376</span>
+</summary>
+<pre><code>if self.log.isEnabledFor(logging.DEBUG):
+    self.log.debug(
+        &quot;turn %s: hand %d %s board [%s] cards %s pot %g to call %g; legal %s -&gt; %s&quot;,
+        seq,
+        view.hand_number,
+        view.street.name.lower(),
+        view.board,
+        view.hole_cards,
+        view.pot,
+        legal.call_amount,
+        &quot;/&quot;.join(a.value for a in legal.actions),
+        t.value,
+    )</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">send the action; on a non-stale rejection retry once with the fallback</span>
+<span class="loc">bot_client/client.py:377–395</span>
+</summary>
+<pre><code>response = self._request(action_request(self.name, seq, t.value))
+if response.get(&quot;ok&quot;):
+    self.turns_answered += 1
+    return
+error = response.get(&quot;error&quot;)
+self.rejected_actions += 1
+self.log.warning(&quot;action %s for turn %s rejected: %s&quot;, t.value, seq, error)
+if is_stale_turn_error(error):
+    return  # the turn timed out or was answered: nothing to retry
+fallback = fallback_action(legal)
+self.fallbacks += 1
+response = self._request(action_request(self.name, seq, fallback.value))
+if response.get(&quot;ok&quot;):
+    self.turns_answered += 1
+    self.log.warning(&quot;fell back to %s for turn %s&quot;, fallback.value, seq)
+else:
+    self.log.warning(
+        &quot;fallback %s for turn %s rejected too: %s&quot;, fallback.value, seq, response.get(&quot;error&quot;)
+    )</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def _on_hand_end</span><span class="desc"> – records the hand and sends the rebuy / sit-in / leave reply</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">decode; an undecodable hand_end is still answered without a rebuy</span>
+<span class="loc">bot_client/client.py:400–408</span>
+</summary>
+<pre><code>seq = msg.get(&quot;seq&quot;)
+try:
+    _, seq, seat, result = decode_server_message(msg)
+except _DECODE_ERRORS as e:
+    # Answer anyway (no rebuy / sit-in): a missing reply only costs the window.
+    self._problem(f&quot;undecodable hand_end {seq!r}: {e}&quot;)
+    if isinstance(seq, int) and not isinstance(seq, bool):
+        self._send_hand_end(seq, HandEndChoice(None, self.status == SITTING_OUT, self.stop_requested))
+    return</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">own seat, dealt-in flag, net and stack; count the hand</span>
+<span class="loc">bot_client/client.py:409–421</span>
+</summary>
+<pre><code>self._check_rebuy_applied()
+seat = self._own_seat(seat, result)
+dealt_in = bool(result.dealt_in.get(seat, False)) if seat is not None else False
+net = result.net.get(seat, 0.0) if seat is not None else 0.0
+stack = result.stacks.get(seat) if seat is not None else None
+if stack is None:
+    stack = self.stack if self.stack is not None else 0.0
+self.seat = seat
+self.stack = stack
+self._last_hand = result.hand_number
+if dealt_in:
+    self.hands_played += 1
+    self.stats.add_hand(result.hand_number, net)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">compute and send the reply, remember a pending rebuy, log, switch to leaving</span>
+<span class="loc">bot_client/client.py:422–430</span>
+</summary>
+<pre><code>reply = self._reply_for(stack)
+self._send_hand_end(seq, reply)
+if reply.rebuy_bb:
+    self._pending_rebuy = reply.rebuy_bb
+if dealt_in:
+    self.log.info(&quot;%s&quot;, hand_line(result.hand_number, net, stack, reply.rebuy_bb))
+if reply.leave and self.status != LEAVING:
+    self.status = LEAVING
+    self.log.info(&quot;leaving: %s&quot;, reply.reason)</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def _own_seat</span><span class="desc"> – finds the bot&#x27;s seat in the result by name</span>
+<span class="loc">bot_client/client.py:432–438</span>
+</summary>
+<pre><code>def _own_seat(self, seat: Any, result: HandResult) -&gt; Optional[int]:
+    if isinstance(seat, int) and result.names.get(seat, self.name) == self.name:
+        return seat
+    for s, n in result.names.items():
+        if n == self.name:
+            return s
+    return seat if isinstance(seat, int) else None</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _reply_for</span><span class="desc"> – hand_end_reply from the current state</span>
+<span class="loc">bot_client/client.py:440–450</span>
+</summary>
+<pre><code>def _reply_for(self, stack: float) -&gt; HandEndChoice:
+    return hand_end_reply(
+        stack=stack,
+        sitting_out=self.status == SITTING_OUT,
+        target=self.target,
+        max_buy_in=self.settings.max_buy_in_bb if self.settings is not None else None,
+        policy=self.rebuy_policy,
+        hands_played=self.hands_played,
+        max_hands=self.max_hands,
+        stopping=self.stop_requested,
+    )</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _send_hand_end</span><span class="desc"> – sends the hand_end reply and counts the outcome</span>
+<span class="loc">bot_client/client.py:452–460</span>
+</summary>
+<pre><code>def _send_hand_end(self, seq: int, reply: HandEndChoice) -&gt; None:
+    response = self._request(
+        hand_end_request(self.name, seq, reply.rebuy_bb, reply.sit_in, reply.leave)
+    )
+    if response.get(&quot;ok&quot;):
+        self.hand_ends_answered += 1
+    else:
+        self.rejected_hand_ends += 1
+        self.log.warning(&quot;hand_end reply %s rejected: %s&quot;, seq, response.get(&quot;error&quot;))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _on_lobby</span><span class="desc"> – between hands, a busted or sitting-out bot asks to rebuy / sit in, once per lobby status</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">decode; act only when seated / sitting out, not stopping, and sitting out or busted</span>
+<span class="loc">bot_client/client.py:468–478</span>
+</summary>
+<pre><code>try:
+    lobby = decode_lobby(msg)
+except _DECODE_ERRORS as e:
+    self.log.debug(&quot;lobby message skipped: %s&quot;, e)
+    return
+if self.status not in (SEATED, SITTING_OUT) or self.stop_requested:
+    return
+stack = self.stack if self.stack is not None else 0.0
+busted = is_busted(stack)
+if not (self.status == SITTING_OUT or (busted and self.rebuy_policy != &quot;never&quot;)):
+    return</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">once per lobby status: compute the reply</span>
+<span class="loc">bot_client/client.py:479–485</span>
+</summary>
+<pre><code>key = (lobby.state, lobby.active, lobby.needed)
+if key == self._retry_key:
+    return
+self._retry_key = key
+reply = self._reply_for(stack)
+if reply.leave:
+    return</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">send a rebuy, or else a sit-in request</span>
+<span class="loc">bot_client/client.py:486–502</span>
+</summary>
+<pre><code>if reply.rebuy_bb:
+    response = self._request(rebuy_request(self.name, reply.rebuy_bb))
+    if response.get(&quot;ok&quot;):
+        self.log.info(&quot;rebuy of %s BB between hands&quot;, format_bb(reply.rebuy_bb))
+        return  # a rebuy also brings a sitting-out player back
+    self.log.warning(
+        &quot;rebuy of %s BB between hands rejected: %s&quot;,
+        format_bb(reply.rebuy_bb),
+        response.get(&quot;error&quot;),
+    )
+    return
+if reply.sit_in and not busted:
+    response = self._request(sit_in_request(self.name))
+    if response.get(&quot;ok&quot;):
+        self.log.info(&quot;asked to sit in between hands&quot;)
+    else:
+        self.log.warning(&quot;sit-in between hands rejected: %s&quot;, response.get(&quot;error&quot;))</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def _on_stop</span><span class="desc"> – first stop sends leave and sets a deadline; second stop exits now</span>
+<span class="loc">bot_client/client.py:506–522</span>
+</summary>
+<pre><code>def _on_stop(self) -&gt; None:
+    self._stops_handled += 1
+    if self.stop_requested:
+        self.log.warning(&quot;second stop: exiting now&quot;)
+        raise _Done(0)
+    self.stop_requested = True
+    if self.status == LEFT:
+        return  # already gone: `close` / the end of the channel follows
+    self.log.info(&quot;leaving: stopping&quot;)
+    if self.status != LEAVING:
+        self.status = LEAVING
+    response = self._request(leave_request(self.name))  # ConnectionLost -&gt; exit 1
+    if response.get(&quot;ok&quot;):
+        self._leave_sent = True
+    else:
+        self.log.warning(&quot;leave request rejected: %s&quot;, response.get(&quot;error&quot;))
+    self._leave_deadline = self.clock() + self.leave_timeout</code></pre>
+</details>
+<details class="d3"><summary><span class="name ">constants</span><span class="desc"> – _HANDLERS: message type -&gt; handler</span>
+<span class="loc">bot_client/client.py:524–536</span>
+</summary>
+<pre><code>_HANDLERS: dict[str, Callable[[&quot;BotClient&quot;, dict], None]] = {
+    &quot;seated&quot;: _on_seated,
+    &quot;hole_cards&quot;: _on_hole_cards,
+    &quot;event&quot;: _on_event,
+    &quot;turn&quot;: _on_turn,
+    &quot;hand_end&quot;: _on_hand_end,
+    &quot;sat_out&quot;: _on_sat_out,
+    &quot;returned&quot;: _on_returned,
+    &quot;acting&quot;: _on_acting,
+    &quot;lobby&quot;: _on_lobby,
+    &quot;left&quot;: _on_left,
+    &quot;close&quot;: _on_close,
+}</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">main.py</span><span class="desc"> – bot_client entry point: command line, logging, startup / join, signals and exit codes</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – usage and exit codes</span>
+<span class="loc">bot_client/main.py:1–10</span>
+</summary>
+<pre><code>&quot;&quot;&quot;bot_client entry point: command line, logging, startup / join, signals.
+
+    bot_client [--server-port PORT] [--port PORT] [--name NAME] [--stack BB]
+               [--bot NAME] [--seed N] [--rebuy topup|bust|never] [--hands N]
+               [--log-level LEVEL]
+
+Exit codes (as cli_client): 0 for a normal end (hands reached, busted under
+`--rebuy never`, left, the server closed the table, a confirmed user stop), 1
+for a lost connection, 2 for invalid arguments or a failed startup / join.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – argparse, logging, signal, arena, cli_client net, cli_server protocol, own modules</span>
+<span class="loc">bot_client/main.py:12–29</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import argparse
+import logging
+import math
+import queue
+import signal
+import sys
+import threading
+from typing import Any, Callable, Optional, Sequence
+
+from arena import BOT_NAMES
+from cli_client.net import CallbackListener, ConnectionLost, ServerConnection
+from cli_server.protocol import ProtocolError, TableSettings, decode_join_settings, join_request
+
+from .client import BotClient
+from .players import make_player
+from .policy import POLICIES</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, default server port 8008, default stack 100 BB, log levels and format</span>
+<span class="loc">bot_client/main.py:31–47</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;DEFAULT_SERVER_PORT&quot;,
+    &quot;DEFAULT_STACK&quot;,
+    &quot;LOG_LEVELS&quot;,
+    &quot;StartupError&quot;,
+    &quot;build_parser&quot;,
+    &quot;parse_args&quot;,
+    &quot;setup_logging&quot;,
+    &quot;bot_logger&quot;,
+    &quot;start_bot&quot;,
+    &quot;main&quot;,
+]
+
+DEFAULT_SERVER_PORT = 8008
+DEFAULT_STACK = 100.0
+LOG_LEVELS = {&quot;warning&quot;: logging.WARNING, &quot;info&quot;: logging.INFO, &quot;debug&quot;: logging.DEBUG}
+LOG_FORMAT = &quot;%(asctime)s %(levelname)s %(message)s&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">StartupError</span><span class="desc"> – startup failed (port, server, join): exit status 2</span>
+<span class="loc">bot_client/main.py:50–51</span>
+</summary>
+<pre><code>class StartupError(Exception):
+    &quot;&quot;&quot;Startup failed (port, server, join): exit status 2.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _int</span><span class="desc"> – integer argument type</span>
+<span class="loc">bot_client/main.py:57–61</span>
+</summary>
+<pre><code>def _int(text: str) -&gt; int:
+    try:
+        return int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f&quot;not an integer: {text!r}&quot;) from None</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _port</span><span class="desc"> – callback port 0..65535</span>
+<span class="loc">bot_client/main.py:64–68</span>
+</summary>
+<pre><code>def _port(text: str) -&gt; int:
+    value = _int(text)
+    if not 0 &lt;= value &lt;= 65535:
+        raise argparse.ArgumentTypeError(f&quot;port must be 0-65535, got {value}&quot;)
+    return value</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _server_port</span><span class="desc"> – server port 1..65535</span>
+<span class="loc">bot_client/main.py:71–75</span>
+</summary>
+<pre><code>def _server_port(text: str) -&gt; int:
+    value = _int(text)
+    if not 1 &lt;= value &lt;= 65535:
+        raise argparse.ArgumentTypeError(f&quot;server port must be 1-65535, got {value}&quot;)
+    return value</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _stack</span><span class="desc"> – finite positive stack in BB</span>
+<span class="loc">bot_client/main.py:78–85</span>
+</summary>
+<pre><code>def _stack(text: str) -&gt; float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f&quot;not a number: {text!r}&quot;) from None
+    if not math.isfinite(value) or value &lt;= 0:
+        raise argparse.ArgumentTypeError(f&quot;must be a finite number &gt; 0, got {text}&quot;)
+    return value</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _hands</span><span class="desc"> – hand count &gt;= 1</span>
+<span class="loc">bot_client/main.py:88–92</span>
+</summary>
+<pre><code>def _hands(text: str) -&gt; int:
+    value = _int(text)
+    if value &lt; 1:
+        raise argparse.ArgumentTypeError(f&quot;must be &gt;= 1, got {value}&quot;)
+    return value</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _name</span><span class="desc"> – non-empty player name</span>
+<span class="loc">bot_client/main.py:95–99</span>
+</summary>
+<pre><code>def _name(text: str) -&gt; str:
+    name = text.strip()
+    if not name:
+        raise argparse.ArgumentTypeError(&quot;the name cannot be empty&quot;)
+    return name</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def build_parser</span><span class="desc"> – the argument parser</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">server port, callback port, name, stack</span>
+<span class="loc">bot_client/main.py:103–130</span>
+</summary>
+<pre><code>p = argparse.ArgumentParser(
+    prog=&quot;bot_client&quot;,
+    description=&quot;Seat an arena bot at a running cli_server table and play it there.&quot;,
+)
+p.add_argument(
+    &quot;--server-port&quot;,
+    type=_server_port,
+    default=DEFAULT_SERVER_PORT,
+    metavar=&quot;PORT&quot;,
+    help=f&quot;port of the running server (default {DEFAULT_SERVER_PORT})&quot;,
+)
+p.add_argument(
+    &quot;--port&quot;,
+    type=_port,
+    default=0,
+    metavar=&quot;PORT&quot;,
+    help=&quot;own callback port for server messages (default 0: a free port, logged)&quot;,
+)
+p.add_argument(
+    &quot;--name&quot;, type=_name, default=None, help=&quot;player name (default: &lt;bot&gt;-bot, e.g. rule-bot)&quot;
+)
+p.add_argument(
+    &quot;--stack&quot;,
+    type=_stack,
+    default=DEFAULT_STACK,
+    metavar=&quot;BB&quot;,
+    help=&quot;buy-in in big blinds, also the rebuy target (default %(default)g)&quot;,
+)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">player choice (--bot), seed, rebuy policy, hand limit, log level</span>
+<span class="loc">bot_client/main.py:131–162</span>
+</summary>
+<pre><code># Ways of choosing the player; `--model PATH` joins this group later.
+who = p.add_mutually_exclusive_group()
+who.add_argument(
+    &quot;--bot&quot;,
+    choices=BOT_NAMES,
+    default=&quot;rule&quot;,
+    help=&quot;the arena bot to play (default %(default)s)&quot;,
+)
+p.add_argument(
+    &quot;--seed&quot;, type=_int, default=0, help=&quot;seed for bots that use randomness (default 0)&quot;
+)
+p.add_argument(
+    &quot;--rebuy&quot;,
+    choices=POLICIES,
+    default=&quot;topup&quot;,
+    help=&quot;rebuy policy: topup to --stack, rebuy only when busted, or never (default topup)&quot;,
+)
+p.add_argument(
+    &quot;--hands&quot;,
+    type=_hands,
+    default=None,
+    metavar=&quot;N&quot;,
+    help=&quot;leave after N hands dealt in (default: play until stopped)&quot;,
+)
+p.add_argument(
+    &quot;--log-level&quot;,
+    type=str.lower,
+    choices=tuple(LOG_LEVELS),
+    default=&quot;info&quot;,
+    help=&quot;warning, info (one line per hand; default) or debug (every message)&quot;,
+)
+return p</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def parse_args</span><span class="desc"> – parses and defaults the name to &lt;bot&gt;-bot</span>
+<span class="loc">bot_client/main.py:165–169</span>
+</summary>
+<pre><code>def parse_args(argv: Optional[Sequence[str]] = None) -&gt; argparse.Namespace:
+    args = build_parser().parse_args(argv)
+    if args.name is None:
+        args.name = f&quot;{args.bot}-bot&quot;
+    return args</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def setup_logging</span><span class="desc"> – stderr handler on the root logger once; sets bot_client / cli_client.net levels</span>
+<span class="loc">bot_client/main.py:175–186</span>
+</summary>
+<pre><code>def setup_logging(level: str) -&gt; None:
+    &quot;&quot;&quot;stderr handler on the root logger (once per process); `level` for
+    bot_client&#x27;s loggers and cli_client&#x27;s networking (debug: every message).&quot;&quot;&quot;
+    root = logging.getLogger()
+    if not any(getattr(h, &quot;_bot_client&quot;, False) for h in root.handlers):
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter(LOG_FORMAT))
+        handler._bot_client = True  # type: ignore[attr-defined]
+        root.addHandler(handler)
+    value = LOG_LEVELS[level]
+    logging.getLogger(&quot;bot_client&quot;).setLevel(value)
+    logging.getLogger(&quot;cli_client.net&quot;).setLevel(value)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def bot_logger</span><span class="desc"> – per-bot child logger</span>
+<span class="loc">bot_client/main.py:189–191</span>
+</summary>
+<pre><code>def bot_logger(name: str) -&gt; logging.Logger:
+    &quot;&quot;&quot;The logger of one bot (a child of `bot_client`).&quot;&quot;&quot;
+    return logging.getLogger(&quot;bot_client&quot;).getChild(name.replace(&quot;.&quot;, &quot;_&quot;))</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _describe_settings</span><span class="desc"> – one-line text of the table settings</span>
+<span class="loc">bot_client/main.py:194–201</span>
+</summary>
+<pre><code>def _describe_settings(s: TableSettings) -&gt; str:
+    max_buy_in = &quot;none&quot; if s.max_buy_in_bb is None else f&quot;{s.max_buy_in_bb:g} BB&quot;
+    timeout = &quot;none&quot; if s.action_timeout is None else f&quot;{s.action_timeout:g}s&quot;
+    return (
+        f&quot;table settings: blinds {s.small_blind_bb:g}/{s.big_blind_bb:g} BB, &quot;
+        f&quot;bets {s.small_bet_bb:g}/{s.big_bet_bb:g} BB, {s.max_seats} seats, &quot;
+        f&quot;max buy-in {max_buy_in}, time to act {timeout}&quot;
+    )</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def start_bot</span><span class="desc"> – creates the player, opens the callback listener, joins and builds the BotClient</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">make the player and start the callback listener</span>
+<span class="loc">bot_client/main.py:216–223</span>
+</summary>
+<pre><code>log = bot_logger(args.name)
+player = make_player(args)  # before listening: a failing bot fails before joining
+inbox = inbox if inbox is not None else queue.Queue()
+try:
+    listener = CallbackListener(args.name, inbox, port=args.port).start()
+except OSError as e:
+    raise StartupError(f&quot;cannot listen on port {args.port}: {e}&quot;) from None
+log.info(&quot;listening on port %d&quot;, listener.port)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">send the join request; close everything on failure</span>
+<span class="loc">bot_client/main.py:224–237</span>
+</summary>
+<pre><code>conn = ServerConnection(args.server_port)
+try:
+    try:
+        response = conn.request(join_request(args.name, args.stack, listener.port, None))
+    except ConnectionLost as e:
+        raise StartupError(f&quot;cannot reach the server on port {args.server_port}: {e}&quot;) from None
+    if not response.get(&quot;ok&quot;):
+        raise StartupError(
+            f&quot;join of {args.name} rejected: {response.get(&#x27;error&#x27;) or &#x27;join rejected&#x27;}&quot;
+        )
+except BaseException:
+    listener.close()
+    conn.close()
+    raise</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">log queued / seated and the table settings</span>
+<span class="loc">bot_client/main.py:238–251</span>
+</summary>
+<pre><code>queued = bool(response.get(&quot;queued&quot;))
+if queued:
+    log.info(&quot;joined as %s: queued until the current hand ends&quot;, args.name)
+else:
+    log.info(&quot;joined as %s: seat %s&quot;, args.name, response.get(&quot;seat&quot;))
+try:
+    settings = decode_join_settings(response)
+except ProtocolError as e:
+    log.warning(&quot;table settings not readable: %s&quot;, e)
+    settings = None
+if settings is None:
+    log.info(&quot;table settings: not sent&quot;)
+else:
+    log.info(&quot;%s&quot;, _describe_settings(settings))</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">build the BotClient</span>
+<span class="loc">bot_client/main.py:252–265</span>
+</summary>
+<pre><code>return BotClient(
+    args.name,
+    player,
+    conn,
+    inbox,
+    stack_bb=args.stack,
+    rebuy=args.rebuy,
+    max_hands=args.hands,
+    settings=settings,
+    queued=queued,
+    leave_timeout=leave_timeout,
+    listener=listener,
+    logger=log,
+)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def _install_signal_handlers</span><span class="desc"> – SIGINT / SIGTERM call request_stop (main thread only)</span>
+<span class="loc">bot_client/main.py:268–282</span>
+</summary>
+<pre><code>def _install_signal_handlers(client: BotClient) -&gt; dict:
+    &quot;&quot;&quot;SIGINT / SIGTERM ask the client to stop (only on the main thread).&quot;&quot;&quot;
+    if threading.current_thread() is not threading.main_thread():
+        return {}
+
+    def handler(signum: int, frame: Any) -&gt; None:
+        client.request_stop()
+
+    previous = {}
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            previous[sig] = signal.signal(sig, handler)
+        except (ValueError, OSError):
+            pass
+    return previous</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _restore_signal_handlers</span><span class="desc"> – puts the previous handlers back</span>
+<span class="loc">bot_client/main.py:285–290</span>
+</summary>
+<pre><code>def _restore_signal_handlers(previous: dict) -&gt; None:
+    for sig, handler in previous.items():
+        try:
+            signal.signal(sig, handler)
+        except (ValueError, OSError):
+            pass</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def main</span><span class="desc"> – parses, starts, runs the client, cleans up and logs the summary</span>
+<span class="loc">bot_client/main.py:293–323</span>
+</summary>
+<pre><code>def main(
+    argv: Optional[Sequence[str]] = None,
+    *,
+    on_start: Optional[Callable[[BotClient], None]] = None,
+    leave_timeout: float = 5.0,
+) -&gt; int:
+    &quot;&quot;&quot;Run one bot until an end condition; returns the exit status. Invalid
+    arguments exit through argparse (SystemExit 2). `on_start` (tests) gets the
+    client once it has joined, before it runs.&quot;&quot;&quot;
+    args = parse_args(argv)
+    setup_logging(args.log_level)
+    log = bot_logger(args.name)
+    try:
+        client = start_bot(args, leave_timeout=leave_timeout)
+    except StartupError as e:
+        log.error(&quot;%s&quot;, e)
+        return 2
+    previous = _install_signal_handlers(client)
+    code = 1
+    try:
+        if on_start is not None:
+            on_start(client)
+        code = client.run()
+    except KeyboardInterrupt:
+        code = 1
+    finally:
+        _restore_signal_handlers(previous)
+        client.close()
+        # The summary is shown at every level, also at `warning`.
+        log.log(max(logging.INFO, log.getEffectiveLevel()), &quot;%s&quot;, client.summary())
+    return code</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">run as script</span><span class="desc"> – exits with main()&#x27;s status</span>
+<span class="loc">bot_client/main.py:326–327</span>
+</summary>
+<pre><code>if __name__ == &quot;__main__&quot;:
+    sys.exit(main())</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">players.py</span><span class="desc"> – the Player abstraction: who decides a turn</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – Player interface and the planned model player</span>
+<span class="loc">bot_client/players.py:1–7</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Players: who decides a turn.
+
+The networking, the turn handling and the hand-end handling only see a
+`Player` (`label`, `decide(view, legal) -&gt; ActionType`). `--bot NAME` makes a
+`BotPlayer`; a later `--model PATH` adds another branch in `make_player` (an
+`OnnxPlayer`) and nothing else.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – arena and engine types</span>
+<span class="loc">bot_client/players.py:9–14</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from typing import Any, Protocol
+
+import arena
+from engine import ActionType, LegalActions, TableView</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__</span>
+<span class="loc">bot_client/players.py:16–16</span>
+</summary>
+<pre><code>__all__ = [&quot;Player&quot;, &quot;BotPlayer&quot;, &quot;make_player&quot;]</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Player</span><span class="desc"> – protocol: label and decide(view, legal) -&gt; ActionType</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name def">def decide</span><span class="desc"> – protocol method</span>
+<span class="loc">bot_client/players.py:19–22</span>
+</summary>
+<pre><code>class Player(Protocol):
+    label: str  # for logs: &quot;rule&quot;, later e.g. &quot;model x.onnx&quot;
+
+    def decide(self, view: TableView, legal: LegalActions) -&gt; ActionType: ...</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">BotPlayer</span><span class="desc"> – an arena bot deciding through arena&#x27;s BotAgent</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring</span>
+<span class="loc">bot_client/players.py:25–31</span>
+</summary>
+<pre><code>class BotPlayer:
+    &quot;&quot;&quot;An arena bot, deciding exactly as behind arena&#x27;s `BotAgent`
+    (`DecisionBatch.single` -&gt; `bot.act` -&gt; `to_engine`). One instance lives for
+    the whole process, so a seeded RandomBot makes the same choices for the same
+    sequence of turns. `BotAgent`&#x27;s own rebuy is not used (`rebuy_to_bb=None`):
+    rebuys go through the `hand_end` reply.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – builds the bot and its BotAgent</span>
+<span class="loc">bot_client/players.py:32–34</span>
+</summary>
+<pre><code>def __init__(self, bot_name: str, seed: int = 0) -&gt; None:
+    self.label = bot_name
+    self.agent = arena.BotAgent(arena.make_bot(bot_name, seed))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def decide</span><span class="desc"> – delegates to BotAgent.decide</span>
+<span class="loc">bot_client/players.py:36–37</span>
+</summary>
+<pre><code>def decide(self, view: TableView, legal: LegalActions) -&gt; ActionType:
+    return self.agent.decide(view, legal)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __repr__</span><span class="desc"> – label and bot</span>
+<span class="loc">bot_client/players.py:39–40</span>
+</summary>
+<pre><code>def __repr__(self) -&gt; str:
+    return f&quot;BotPlayer({self.label!r}, {self.agent.bot!r})&quot;</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def make_player</span><span class="desc"> – the player chosen on the command line</span>
+<span class="loc">bot_client/players.py:43–45</span>
+</summary>
+<pre><code>def make_player(args: Any) -&gt; Player:
+    &quot;&quot;&quot;The player chosen on the command line (`--bot` now; `--model` later).&quot;&quot;&quot;
+    return BotPlayer(args.bot, args.seed)</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">policy.py</span><span class="desc"> – pure reply to a hand_end: rebuy, sit in, leave</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – one line</span>
+<span class="loc">bot_client/policy.py:1–1</span>
+</summary>
+<pre><code>&quot;&quot;&quot;The reply to a `hand_end`: rebuy, sit in, leave. Pure, no I/O.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – math, dataclass</span>
+<span class="loc">bot_client/policy.py:3–7</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import Optional</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__ and POLICIES (topup, bust, never)</span>
+<span class="loc">bot_client/policy.py:9–11</span>
+</summary>
+<pre><code>__all__ = [&quot;POLICIES&quot;, &quot;HandEndChoice&quot;, &quot;hand_end_reply&quot;, &quot;is_busted&quot;]
+
+POLICIES = (&quot;topup&quot;, &quot;bust&quot;, &quot;never&quot;)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">HandEndChoice</span><span class="desc"> – rebuy amount, sit-in flag, leave flag, reason</span>
+<span class="loc">bot_client/policy.py:14–19</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class HandEndChoice:
+    rebuy_bb: Optional[float]  # None = no rebuy
+    sit_in: bool
+    leave: bool
+    reason: str = &quot;&quot;  # why the bot leaves (empty when it stays)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def is_busted</span><span class="desc"> – no chips left, in whole cents of a BB</span>
+<span class="loc">bot_client/policy.py:22–24</span>
+</summary>
+<pre><code>def is_busted(stack: float) -&gt; bool:
+    &quot;&quot;&quot;No chips left (in whole cents of a BB, the server&#x27;s chip unit).&quot;&quot;&quot;
+    return round(stack, 2) &lt;= 0</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def hand_end_reply</span><span class="desc"> – the reply for the rebuy window</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">validate the policy; leave when stopping, at the hand limit or busted under never</span>
+<span class="loc">bot_client/policy.py:47–58</span>
+</summary>
+<pre><code>if policy not in POLICIES:
+    raise ValueError(f&quot;unknown rebuy policy {policy!r}; known: {&#x27;, &#x27;.join(POLICIES)}&quot;)
+busted = is_busted(stack)
+reason = &quot;&quot;
+if stopping:
+    reason = &quot;stopping&quot;
+elif max_hands is not None and hands_played &gt;= max_hands:
+    reason = f&quot;{hands_played} hands played&quot;
+elif policy == &quot;never&quot; and busted:
+    reason = &quot;busted, --rebuy never&quot;
+if reason:
+    return HandEndChoice(None, False, True, reason)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">rebuy up to the target (capped by max buy-in) for topup / bust; sit in when sitting out</span>
+<span class="loc">bot_client/policy.py:60–66</span>
+</summary>
+<pre><code>cap = max_buy_in if max_buy_in is not None else math.inf
+rebuy: Optional[float] = None
+if policy == &quot;topup&quot; or (policy == &quot;bust&quot; and busted):
+    missing = round(min(target, cap) - stack, 2)
+    if missing &gt; 0:
+        rebuy = missing
+return HandEndChoice(rebuy, bool(sitting_out), False)</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">stats.py</span><span class="desc"> – per-hand log lines and the final summary, counted in integer chips</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – chip accounting and rounding</span>
+<span class="loc">bot_client/stats.py:1–6</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Per-hand log lines and the final summary. Pure.
+
+Amounts are kept in integer chips (100 per BB, as the server and arena count),
+so totals do not drift over thousands of hands; they are converted to BB / big
+bets only for output, rounded half away from zero to two decimals.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – Decimal</span>
+<span class="loc">bot_client/stats.py:8–11</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Optional</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, CHIPS_PER_BB = 100, cent quantum</span>
+<span class="loc">bot_client/stats.py:13–24</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;CHIPS_PER_BB&quot;,
+    &quot;to_chips&quot;,
+    &quot;format_chips&quot;,
+    &quot;format_bb&quot;,
+    &quot;Stats&quot;,
+    &quot;hand_line&quot;,
+    &quot;summary&quot;,
+]
+
+CHIPS_PER_BB = 100
+_CENT = Decimal(&quot;0.01&quot;)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def to_chips</span><span class="desc"> – BB -&gt; integer chips</span>
+<span class="loc">bot_client/stats.py:27–28</span>
+</summary>
+<pre><code>def to_chips(amount_bb: float) -&gt; int:
+    return int(round(amount_bb * CHIPS_PER_BB))</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _fmt</span><span class="desc"> – two decimals, half up, no -0.00</span>
+<span class="loc">bot_client/stats.py:31–35</span>
+</summary>
+<pre><code>def _fmt(value: Decimal, sign: bool) -&gt; str:
+    q = value.quantize(_CENT, rounding=ROUND_HALF_UP)
+    if q == 0:
+        q = abs(q)  # no &quot;-0.00&quot;
+    return f&quot;{q:+}&quot; if sign else f&quot;{q}&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def format_chips</span><span class="desc"> – chips as BB text</span>
+<span class="loc">bot_client/stats.py:38–40</span>
+</summary>
+<pre><code>def format_chips(chips: int, sign: bool = False) -&gt; str:
+    &quot;&quot;&quot;Chips as BB with two decimals (`+1.50` with `sign`).&quot;&quot;&quot;
+    return _fmt(Decimal(chips) / CHIPS_PER_BB, sign)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def format_bb</span><span class="desc"> – BB amount as text</span>
+<span class="loc">bot_client/stats.py:43–44</span>
+</summary>
+<pre><code>def format_bb(amount_bb: float, sign: bool = False) -&gt; str:
+    return format_chips(to_chips(amount_bb), sign)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Stats</span><span class="desc"> – nets of the hands dealt into and the rebuys</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – zero counters and lists</span>
+<span class="loc">bot_client/stats.py:50–56</span>
+</summary>
+<pre><code>def __init__(self) -&gt; None:
+    self.hands = 0
+    self.net_chips = 0
+    self.rebought_chips = 0
+    self.nets: list[tuple[int, int]] = []  # (hand number, net chips)
+    # (hand number the rebuy followed, chips); None before the first hand
+    self.rebuys: list[tuple[Optional[int], int]] = []</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def add_hand</span><span class="desc"> – adds one hand&#x27;s net</span>
+<span class="loc">bot_client/stats.py:58–62</span>
+</summary>
+<pre><code>def add_hand(self, hand_number: int, net_bb: float) -&gt; None:
+    chips = to_chips(net_bb)
+    self.hands += 1
+    self.net_chips += chips
+    self.nets.append((hand_number, chips))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def add_rebuy</span><span class="desc"> – adds a rebuy</span>
+<span class="loc">bot_client/stats.py:64–67</span>
+</summary>
+<pre><code>def add_rebuy(self, amount_bb: float, after_hand: Optional[int] = None) -&gt; None:
+    chips = to_chips(amount_bb)
+    self.rebought_chips += chips
+    self.rebuys.append((after_hand, chips))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def net_bb</span><span class="desc"> – total net in BB</span>
+<span class="loc">bot_client/stats.py:69–71</span>
+</summary>
+<pre><code>@property
+def net_bb(self) -&gt; float:
+    return self.net_chips / CHIPS_PER_BB</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def rebought_bb</span><span class="desc"> – total rebought in BB</span>
+<span class="loc">bot_client/stats.py:73–75</span>
+</summary>
+<pre><code>@property
+def rebought_bb(self) -&gt; float:
+    return self.rebought_chips / CHIPS_PER_BB</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def big_bets_per_100</span><span class="desc"> – win rate in big bets per 100 hands (None with no hands)</span>
+<span class="loc">bot_client/stats.py:77–82</span>
+</summary>
+<pre><code>def big_bets_per_100(self) -&gt; Optional[Decimal]:
+    &quot;&quot;&quot;`100 * (net_bb / 2) / hands` (one big bet = 2 BB); None with no hands.&quot;&quot;&quot;
+    if self.hands == 0:
+        return None
+    # 100 * (chips / 100 / 2) / hands = chips / (2 * hands)
+    return Decimal(self.net_chips) / Decimal(2 * self.hands)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def hand_line</span><span class="desc"> – &quot;hand N: net X BB, stack Y BB[, rebuy Z BB]&quot;</span>
+<span class="loc">bot_client/stats.py:85–92</span>
+</summary>
+<pre><code>def hand_line(
+    hand_number: int, net_bb: float, stack_bb: float, rebuy_bb: Optional[float] = None
+) -&gt; str:
+    &quot;&quot;&quot;`hand 12: net -2.00 BB, stack 98.00 BB[, rebuy 2.00 BB]`.&quot;&quot;&quot;
+    line = f&quot;hand {hand_number}: net {format_bb(net_bb, sign=True)} BB, stack {format_bb(stack_bb)} BB&quot;
+    if rebuy_bb:
+        line += f&quot;, rebuy {format_bb(rebuy_bb)} BB&quot;
+    return line</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def summary</span><span class="desc"> – final line: hands, net, big bets / 100, rebought, final stack</span>
+<span class="loc">bot_client/stats.py:95–105</span>
+</summary>
+<pre><code>def summary(name: str, label: str, stats: Stats, final_stack_bb: Optional[float]) -&gt; str:
+    &quot;&quot;&quot;`RuleBot (rule): 200 hands, net +34.50 BB = +8.63 big bets/100 hands,
+    rebought 120.00 BB, final stack 100.00 BB`.&quot;&quot;&quot;
+    rate = stats.big_bets_per_100()
+    rate_text = &quot;n/a&quot; if rate is None else _fmt(rate, sign=True)
+    final = &quot;n/a&quot; if final_stack_bb is None else f&quot;{format_bb(final_stack_bb)} BB&quot;
+    return (
+        f&quot;{name} ({label}): {stats.hands} hands, net {format_chips(stats.net_chips, sign=True)} BB&quot;
+        f&quot; = {rate_text} big bets/100 hands, rebought {format_chips(stats.rebought_chips)} BB,&quot;
+        f&quot; final stack {final}&quot;
+    )</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+</main>
+<script>
+function setAll(open) { document.querySelectorAll('details').forEach(d => d.open = open); }
+function expandTo(depth) {
+  document.querySelectorAll('details').forEach(d => {
+    const m = d.className.match(/d(\d+)/); d.open = m && +m[1] < depth;
+  });
+}
+function filter(q) {
+  q = q.trim().toLowerCase();
+  const all = document.querySelectorAll('details');
+  if (!q) { all.forEach(d => d.style.display = ''); expandTo(1); return; }
+  all.forEach(d => { d.style.display = 'none'; d.open = false; });
+  all.forEach(d => {
+    const s = d.querySelector(':scope > summary').textContent.toLowerCase();
+    if (s.includes(q)) {
+      d.style.display = '';
+      let p = d.parentElement;
+      while (p) { if (p.tagName === 'DETAILS') { p.style.display = ''; p.open = true; } p = p.parentElement; }
+    }
+  });
+}
+expandTo(1);
+</script>
+</body>
+</html>

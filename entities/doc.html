@@ -1,0 +1,869 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>entities documentation</title>
+<style>
+:root {
+  --bg: #fbfaf7; --fg: #1f2328; --muted: #6a6f76; --line: #e3e0d8;
+  --name: #0b5cad; --def: #7a3e9d; --code-bg: #f2efe8; --loc: #8a8f96;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a8; --line: #2c3036;
+    --name: #6cb6ff; --def: #d2a8ff; --code-bg: #1e2228; --loc: #7d838c;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a8; --line: #2c3036;
+  --name: #6cb6ff; --def: #d2a8ff; --code-bg: #1e2228; --loc: #7d838c;
+}
+body { background: var(--bg); color: var(--fg); margin: 0;
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+p.lead { color: var(--muted); margin: 0 0 16px; }
+.toolbar button { font: inherit; font-size: 13px; padding: 4px 10px; margin-right: 6px;
+  border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 6px; cursor: pointer; }
+.toolbar { margin-bottom: 16px; }
+details { margin: 2px 0; }
+.kids { margin-left: 18px; padding-left: 10px; border-left: 1px solid var(--line); }
+summary { cursor: pointer; padding: 2px 0; list-style-position: outside; }
+summary:hover { background: color-mix(in srgb, var(--line) 40%, transparent); }
+.name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; color: var(--name); font-weight: 600; }
+.name.def { color: var(--def); }
+.desc { color: var(--fg); }
+.d0 > summary .desc, .kids .desc { }
+.loc { float: right; font: 12px ui-monospace, Menlo, monospace; color: var(--loc); margin-left: 12px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;
+  margin: 6px 0 8px 18px; overflow-x: auto; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+input#q { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: transparent; color: var(--fg); width: 220px; max-width: 100%; }
+mark { background: #ffe48a; color: #000; }
+</style>
+</head>
+<body>
+<main>
+<h1>entities</h1>
+<p class="lead">Core value types of the Omaha Hi-Lo 8-or-better project: Rank, Suit, Card, Hand, Board, Street and Deck.
+Tree: folders → files → classes / functions → logical blocks → code. Only <code>.py</code> sources are covered (BUCK, JSON test sets, markdown and unit tests are omitted).</p>
+<div class="toolbar">
+<button onclick="setAll(true)">Expand all</button>
+<button onclick="setAll(false)">Collapse all</button>
+<button onclick="expandTo(1)">Files</button>
+<button onclick="expandTo(2)">Classes &amp; functions</button>
+<input id="q" placeholder="Filter by name / description" oninput="filter(this.value)">
+</div>
+<details class="d0"><summary><span class="name ">./entities</span><span class="desc"> – core immutable value types of the game: ranks, suits, cards, hole hands, the board and the deck</span>
+</summary>
+<div class="kids">
+<details class="d1"><summary><span class="name ">__init__.py</span><span class="desc"> – package entry; re-exports Rank, Suit, Card, ALL_CARDS, Hand, Board, Street, Deck</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – core value types for the Omaha Hi-Lo 8-or-better engine</span>
+<span class="loc">entities/__init__.py:1–1</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Core value types for the Omaha Hi-Lo 8-or-better engine.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – the public types from the submodules</span>
+<span class="loc">entities/__init__.py:3–6</span>
+</summary>
+<pre><code>from .board import Board, Street
+from .card import ALL_CARDS, Card, Rank, Suit
+from .deck import Deck
+from .hand import Hand</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__</span>
+<span class="loc">entities/__init__.py:8–8</span>
+</summary>
+<pre><code>__all__ = [&quot;Rank&quot;, &quot;Suit&quot;, &quot;Card&quot;, &quot;ALL_CARDS&quot;, &quot;Hand&quot;, &quot;Board&quot;, &quot;Street&quot;, &quot;Deck&quot;]</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">board.py</span><span class="desc"> – Board: the shared community cards (flop, turn, river) and the Street enum</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – what the module holds</span>
+<span class="loc">entities/board.py:1–1</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Board: the shared community cards (flop, turn, river).&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – dataclass, Enum, typing and Card / parse_cards</span>
+<span class="loc">entities/board.py:3–9</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from typing import Iterator, Optional
+
+from .card import Card, parse_cards</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__</span>
+<span class="loc">entities/board.py:11–11</span>
+</summary>
+<pre><code>__all__ = [&quot;Board&quot;, &quot;Street&quot;]</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Street</span><span class="desc"> – betting round enum: PREFLOP, FLOP, TURN, RIVER</span>
+<span class="loc">entities/board.py:14–18</span>
+</summary>
+<pre><code>class Street(Enum):
+    PREFLOP = 0
+    FLOP = 1
+    TURN = 2
+    RIVER = 3</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Board</span><span class="desc"> – frozen dataclass of the community cards, validated so a turn needs a flop and a river needs a turn</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – optional flop (3 cards), turn and river</span>
+<span class="loc">entities/board.py:21–26</span>
+</summary>
+<pre><code>@dataclass(frozen=True, slots=True)
+class Board:
+    flop: Optional[tuple[Card, Card, Card]] = None
+    turn: Optional[Card] = None
+    river: Optional[Card] = None</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __post_init__</span><span class="desc"> – validates the stage and that no card repeats</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">flop: real Cards (not a string), exactly 3, stored as a tuple</span>
+<span class="loc">entities/board.py:28–40</span>
+</summary>
+<pre><code>if self.flop is not None:
+    if isinstance(self.flop, (str, bytes)):
+        raise ValueError(&quot;flop must be Card objects; use Board.parse() for strings&quot;)
+    try:
+        flop = tuple(self.flop)
+    except TypeError:
+        raise ValueError(f&quot;flop must be an iterable of cards, got {self.flop!r}&quot;) from None
+    if len(flop) != 3:
+        raise ValueError(f&quot;flop needs exactly 3 cards, got {len(flop)}&quot;)
+    for c in flop:
+        if not isinstance(c, Card):
+            raise ValueError(f&quot;not a Card: {c!r}&quot;)
+    object.__setattr__(self, &quot;flop&quot;, flop)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">turn: a Card, only after a flop</span>
+<span class="loc">entities/board.py:41–45</span>
+</summary>
+<pre><code>if self.turn is not None:
+    if not isinstance(self.turn, Card):
+        raise ValueError(f&quot;turn is not a Card: {self.turn!r}&quot;)
+    if self.flop is None:
+        raise ValueError(&quot;a turn requires a flop&quot;)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">river: a Card, only after a turn</span>
+<span class="loc">entities/board.py:46–50</span>
+</summary>
+<pre><code>if self.river is not None:
+    if not isinstance(self.river, Card):
+        raise ValueError(f&quot;river is not a Card: {self.river!r}&quot;)
+    if self.turn is None:
+        raise ValueError(&quot;a river requires a turn&quot;)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">no duplicate cards on the board</span>
+<span class="loc">entities/board.py:51–53</span>
+</summary>
+<pre><code>cards = self.cards
+if len(set(cards)) != len(cards):
+    raise ValueError(f&quot;duplicate cards on board: {&#x27;&#x27;.join(map(str, cards))}&quot;)</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def empty</span><span class="desc"> – a preflop board</span>
+<span class="loc">entities/board.py:56–59</span>
+</summary>
+<pre><code>
+@classmethod
+def empty(cls) -&gt; &quot;Board&quot;:
+    return cls()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def with_flop</span><span class="desc"> – new board with the flop dealt (only preflop)</span>
+<span class="loc">entities/board.py:61–64</span>
+</summary>
+<pre><code>def with_flop(self, c1: Card, c2: Card, c3: Card) -&gt; &quot;Board&quot;:
+    if self.street is not Street.PREFLOP:
+        raise ValueError(f&quot;cannot deal the flop on {self.street.name}&quot;)
+    return Board(flop=(c1, c2, c3))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def with_turn</span><span class="desc"> – new board with the turn dealt (only on the flop)</span>
+<span class="loc">entities/board.py:66–69</span>
+</summary>
+<pre><code>def with_turn(self, c: Card) -&gt; &quot;Board&quot;:
+    if self.street is not Street.FLOP:
+        raise ValueError(f&quot;cannot deal the turn on {self.street.name}&quot;)
+    return Board(flop=self.flop, turn=c)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def with_river</span><span class="desc"> – new board with the river dealt (only on the turn)</span>
+<span class="loc">entities/board.py:71–74</span>
+</summary>
+<pre><code>def with_river(self, c: Card) -&gt; &quot;Board&quot;:
+    if self.street is not Street.TURN:
+        raise ValueError(f&quot;cannot deal the river on {self.street.name}&quot;)
+    return Board(flop=self.flop, turn=self.turn, river=c)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def cards</span><span class="desc"> – all dealt cards in order (flop, turn, river)</span>
+<span class="loc">entities/board.py:77–85</span>
+</summary>
+<pre><code>
+@property
+def cards(self) -&gt; tuple[Card, ...]:
+    out: tuple[Card, ...] = self.flop or ()
+    if self.turn is not None:
+        out += (self.turn,)
+    if self.river is not None:
+        out += (self.river,)
+    return out</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def street</span><span class="desc"> – the current street, derived from which cards are present</span>
+<span class="loc">entities/board.py:87–95</span>
+</summary>
+<pre><code>@property
+def street(self) -&gt; Street:
+    if self.river is not None:
+        return Street.RIVER
+    if self.turn is not None:
+        return Street.TURN
+    if self.flop is not None:
+        return Street.FLOP
+    return Street.PREFLOP</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def parse</span><span class="desc"> – builds a board from text with 0, 3, 4 or 5 cards, e.g. &quot;Ah7d2c 9s Td&quot;</span>
+<span class="loc">entities/board.py:97–110</span>
+</summary>
+<pre><code>@classmethod
+def parse(cls, s: str) -&gt; &quot;Board&quot;:
+    &quot;&quot;&quot;Parse e.g. &quot;Ah7d2c 9s Td&quot;, &quot;Ah7d2c&quot; or &quot;&quot;.&quot;&quot;&quot;
+    cards = parse_cards(s)
+    n = len(cards)
+    if n == 0:
+        return cls()
+    if n not in (3, 4, 5):
+        raise ValueError(f&quot;a board has 0, 3, 4 or 5 cards, got {n}: {s!r}&quot;)
+    return cls(
+        flop=cards[:3],
+        turn=cards[3] if n &gt;= 4 else None,
+        river=cards[4] if n == 5 else None,
+    )</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __str__</span><span class="desc"> – flop cards joined, then turn and river separated by spaces</span>
+<span class="loc">entities/board.py:112–120</span>
+</summary>
+<pre><code>def __str__(self) -&gt; str:
+    if self.flop is None:
+        return &quot;&quot;
+    parts = [&quot;&quot;.join(str(c) for c in self.flop)]
+    if self.turn is not None:
+        parts.append(str(self.turn))
+    if self.river is not None:
+        parts.append(str(self.river))
+    return &quot; &quot;.join(parts)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __repr__ / def __iter__ / def __len__ / def __contains__</span><span class="desc"> – sequence-like access to the dealt cards</span>
+<span class="loc">entities/board.py:122–132</span>
+</summary>
+<pre><code>def __repr__(self) -&gt; str:
+    return f&quot;Board(&#x27;{self}&#x27;)&quot;
+
+def __iter__(self) -&gt; Iterator[Card]:
+    return iter(self.cards)
+
+def __len__(self) -&gt; int:
+    return len(self.cards)
+
+def __contains__(self, card: object) -&gt; bool:
+    return card in self.cards</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">card.py</span><span class="desc"> – Rank, Suit and the interned Card value type, plus card-string parsing</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – what the module holds</span>
+<span class="loc">entities/card.py:1–1</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Rank, Suit and Card value types.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – dataclass, field, Enum, IntEnum</span>
+<span class="loc">entities/card.py:3–6</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum, IntEnum</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__</span>
+<span class="loc">entities/card.py:8–8</span>
+</summary>
+<pre><code>__all__ = [&quot;Rank&quot;, &quot;Suit&quot;, &quot;Card&quot;, &quot;ALL_CARDS&quot;, &quot;parse_cards&quot;]</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Rank</span><span class="desc"> – IntEnum of ranks; integer order is high-hand order (deuce lowest, ace highest)</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – TWO = 2 ... ACE = 14</span>
+<span class="loc">entities/card.py:11–27</span>
+</summary>
+<pre><code>class Rank(IntEnum):
+    &quot;&quot;&quot;Card rank. Integer order is high-hand order (deuce lowest, ace highest).&quot;&quot;&quot;
+
+    TWO = 2
+    THREE = 3
+    FOUR = 4
+    FIVE = 5
+    SIX = 6
+    SEVEN = 7
+    EIGHT = 8
+    NINE = 9
+    TEN = 10
+    JACK = 11
+    QUEEN = 12
+    KING = 13
+    ACE = 14</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def symbol</span><span class="desc"> – one-character symbol (&quot;2&quot;..&quot;9&quot;, T, J, Q, K, A)</span>
+<span class="loc">entities/card.py:28–30</span>
+</summary>
+<pre><code>@property
+def symbol(self) -&gt; str:
+    return _RANK_TO_SYMBOL[self]</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def low_value</span><span class="desc"> – value for low hands: ace is 1, others their integer value</span>
+<span class="loc">entities/card.py:32–35</span>
+</summary>
+<pre><code>@property
+def low_value(self) -&gt; int:
+    &quot;&quot;&quot;Value for low hands: ace is 1, every other rank is its integer value.&quot;&quot;&quot;
+    return 1 if self is Rank.ACE else int(self)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def from_symbol</span><span class="desc"> – parses a rank symbol (case-insensitive, &quot;10&quot; allowed)</span>
+<span class="loc">entities/card.py:37–44</span>
+</summary>
+<pre><code>@classmethod
+def from_symbol(cls, s: str) -&gt; &quot;Rank&quot;:
+    if not isinstance(s, str):
+        raise ValueError(f&quot;rank symbol must be a string, got {s!r}&quot;)
+    try:
+        return _SYMBOL_TO_RANK[s.upper()]
+    except KeyError:
+        raise ValueError(f&quot;invalid rank symbol: {s!r}&quot;) from None</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – rank &lt;-&gt; symbol lookup tables</span>
+<span class="loc">entities/card.py:47–56</span>
+</summary>
+<pre><code>_RANK_TO_SYMBOL: dict[Rank, str] = {
+    **{Rank(v): str(v) for v in range(2, 10)},
+    Rank.TEN: &quot;T&quot;,
+    Rank.JACK: &quot;J&quot;,
+    Rank.QUEEN: &quot;Q&quot;,
+    Rank.KING: &quot;K&quot;,
+    Rank.ACE: &quot;A&quot;,
+}
+_SYMBOL_TO_RANK: dict[str, Rank] = {sym: r for r, sym in _RANK_TO_SYMBOL.items()}
+_SYMBOL_TO_RANK[&quot;10&quot;] = Rank.TEN</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Suit</span><span class="desc"> – Enum of suits (c, d, h, s); no poker order, index only fixes the encoding</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – CLUBS, DIAMONDS, HEARTS, SPADES</span>
+<span class="loc">entities/card.py:59–66</span>
+</summary>
+<pre><code>class Suit(Enum):
+    &quot;&quot;&quot;Card suit. Suits have no poker ordering; `index` only fixes the encoding.&quot;&quot;&quot;
+
+    CLUBS = &quot;c&quot;
+    DIAMONDS = &quot;d&quot;
+    HEARTS = &quot;h&quot;
+    SPADES = &quot;s&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def symbol</span><span class="desc"> – the one-letter suit symbol</span>
+<span class="loc">entities/card.py:67–69</span>
+</summary>
+<pre><code>@property
+def symbol(self) -&gt; str:
+    return self.value</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def index</span><span class="desc"> – 0..3 position used in the card index</span>
+<span class="loc">entities/card.py:71–73</span>
+</summary>
+<pre><code>@property
+def index(self) -&gt; int:
+    return _SUIT_TO_INDEX[self]</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def from_symbol</span><span class="desc"> – parses a suit letter (case-insensitive)</span>
+<span class="loc">entities/card.py:75–82</span>
+</summary>
+<pre><code>@classmethod
+def from_symbol(cls, s: str) -&gt; &quot;Suit&quot;:
+    if not isinstance(s, str):
+        raise ValueError(f&quot;suit symbol must be a string, got {s!r}&quot;)
+    try:
+        return cls(s.lower())
+    except ValueError:
+        raise ValueError(f&quot;invalid suit symbol: {s!r}&quot;) from None</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – suit order and suit -&gt; index table</span>
+<span class="loc">entities/card.py:85–86</span>
+</summary>
+<pre><code>_SUIT_ORDER: tuple[Suit, ...] = (Suit.CLUBS, Suit.DIAMONDS, Suit.HEARTS, Suit.SPADES)
+_SUIT_TO_INDEX: dict[Suit, int] = {s: i for i, s in enumerate(_SUIT_ORDER)}</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _card_from_index</span><span class="desc"> – unpickling hook returning the interned ALL_CARDS instance</span>
+<span class="loc">entities/card.py:89–91</span>
+</summary>
+<pre><code>def _card_from_index(i: int) -&gt; &quot;Card&quot;:
+    &quot;&quot;&quot;Unpickling hook: resolve a pickled card to its interned `ALL_CARDS` instance.&quot;&quot;&quot;
+    return Card.from_index(i)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Card</span><span class="desc"> – immutable card; equality / order / hash by (rank, suit index), index 0..51 precomputed</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – rank, suit, hidden _key and index slots</span>
+<span class="loc">entities/card.py:94–110</span>
+</summary>
+<pre><code>@dataclass(frozen=True, slots=True, order=True)
+class Card:
+    &quot;&quot;&quot;An immutable playing card.
+
+    Equality, hashing and ordering use the `(rank, suit_index)` key. Ordering is
+    only for deterministic display and sorting, not a poker comparison.
+
+    `index` (0..51) is computed once at construction and stored in a slot, so
+    reading it is a plain attribute read. It takes no part in equality, ordering
+    or hashing.
+    &quot;&quot;&quot;
+
+    rank: Rank = field(compare=False)
+    suit: Suit = field(compare=False)
+    _key: tuple[int, int] = field(init=False, repr=False, compare=True)
+    index: int = field(init=False, repr=False, compare=False)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __post_init__</span><span class="desc"> – normalises and validates rank / suit and precomputes key and index</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">accept a Rank or an int convertible to one</span>
+<span class="loc">entities/card.py:112–121</span>
+</summary>
+<pre><code>rank = self.rank
+if not isinstance(rank, Rank):
+    if isinstance(rank, int) and not isinstance(rank, bool):
+        try:
+            rank = Rank(rank)
+        except ValueError:
+            raise ValueError(f&quot;invalid rank: {self.rank!r}&quot;) from None
+    else:
+        raise ValueError(f&quot;invalid rank: {self.rank!r}&quot;)
+    object.__setattr__(self, &quot;rank&quot;, rank)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">require a Suit</span>
+<span class="loc">entities/card.py:122–123</span>
+</summary>
+<pre><code>if not isinstance(self.suit, Suit):
+    raise ValueError(f&quot;invalid suit: {self.suit!r}&quot;)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">store the comparison key and the 0..51 index</span>
+<span class="loc">entities/card.py:124–127</span>
+</summary>
+<pre><code>r = int(rank)
+s = _SUIT_TO_INDEX[self.suit]
+object.__setattr__(self, &quot;_key&quot;, (r, s))
+object.__setattr__(self, &quot;index&quot;, (r - 2) * 4 + s)</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def __reduce__</span><span class="desc"> – pickles as the compact index</span>
+<span class="loc">entities/card.py:129–131</span>
+</summary>
+<pre><code>def __reduce__(self):
+    # Pickle as the compact card index; unpickling returns the interned card.
+    return (_card_from_index, (self.index,))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def from_index</span><span class="desc"> – the interned card for index 0..51</span>
+<span class="loc">entities/card.py:133–137</span>
+</summary>
+<pre><code>@classmethod
+def from_index(cls, i: int) -&gt; &quot;Card&quot;:
+    if isinstance(i, bool) or not isinstance(i, int) or not 0 &lt;= i &lt; 52:
+        raise ValueError(f&quot;card index must be an int in 0..51, got {i!r}&quot;)
+    return ALL_CARDS[i]</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def parse</span><span class="desc"> – parses &quot;As&quot;, &quot;td&quot; or &quot;10s&quot; into the interned card (alias from_str)</span>
+<span class="loc">entities/card.py:139–151</span>
+</summary>
+<pre><code>@classmethod
+def parse(cls, s: str) -&gt; &quot;Card&quot;:
+    &quot;&quot;&quot;Parse a card such as &quot;As&quot;, &quot;td&quot; or &quot;10s&quot;.&quot;&quot;&quot;
+    if not isinstance(s, str):
+        raise ValueError(f&quot;card string must be a string, got {s!r}&quot;)
+    text = s.strip()
+    if len(text) not in (2, 3):
+        raise ValueError(f&quot;invalid card string: {s!r}&quot;)
+    rank = Rank.from_symbol(text[:-1])
+    suit = Suit.from_symbol(text[-1])
+    return ALL_CARDS[(int(rank) - 2) * 4 + suit.index]
+
+from_str = parse</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __str__ / def __repr__</span><span class="desc"> – &quot;As&quot; / Card(&#x27;As&#x27;)</span>
+<span class="loc">entities/card.py:153–157</span>
+</summary>
+<pre><code>def __str__(self) -&gt; str:
+    return self.rank.symbol + self.suit.symbol
+
+def __repr__(self) -&gt; str:
+    return f&quot;Card(&#x27;{self}&#x27;)&quot;</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – ALL_CARDS, the 52 interned cards in index order</span>
+<span class="loc">entities/card.py:160–162</span>
+</summary>
+<pre><code>ALL_CARDS: tuple[Card, ...] = tuple(
+    Card(Rank(r), s) for r in range(2, 15) for s in _SUIT_ORDER
+)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def parse_cards</span><span class="desc"> – parses a run of cards such as &quot;AsKd7h2c&quot; or &quot;Ah 7d 10c&quot;, ignoring whitespace</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">strip whitespace and validate the input type</span>
+<span class="loc">entities/card.py:166–170</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Parse a run of cards such as &quot;AsKd7h2c&quot; or &quot;Ah 7d 10c&quot;. Whitespace is ignored.&quot;&quot;&quot;
+if not isinstance(s, str):
+    raise ValueError(f&quot;cards string must be a string, got {s!r}&quot;)
+text = &quot;&quot;.join(s.split())
+cards: list[Card] = []</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">walk the text taking 2 (or 3 for &quot;10&quot;) characters per card</span>
+<span class="loc">entities/card.py:171–179</span>
+</summary>
+<pre><code>i = 0
+while i &lt; len(text):
+    width = 3 if text.startswith(&quot;10&quot;, i) else 2
+    token = text[i : i + width]
+    if len(token) != width:
+        raise ValueError(f&quot;invalid cards string: {s!r}&quot;)
+    cards.append(Card.parse(token))
+    i += width
+return tuple(cards)</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">deck.py</span><span class="desc"> – Deck: a mutable, seedable 52-card deck dealt from the top</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – what the module holds</span>
+<span class="loc">entities/deck.py:1–1</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Deck: a mutable 52-card deck.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – random, typing, ALL_CARDS / Card and Hand</span>
+<span class="loc">entities/deck.py:3–9</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import random
+from typing import Iterable, Optional, Union
+
+from .card import ALL_CARDS, Card
+from .hand import HAND_SIZE, Hand</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__ and the canonical order stored bottom first</span>
+<span class="loc">entities/deck.py:11–14</span>
+</summary>
+<pre><code>__all__ = [&quot;Deck&quot;]
+
+# Canonical order, bottom first: the top of a fresh deck (ALL_CARDS[0]) is last.
+_REVERSED_ALL_CARDS: tuple[Card, ...] = ALL_CARDS[::-1]</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Deck</span><span class="desc"> – mutable deck; storage is bottom first so dealing is an O(1) pop, the API is top first</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring and __slots__ (_rng, _pile)</span>
+<span class="loc">entities/deck.py:17–26</span>
+</summary>
+<pre><code>class Deck:
+    &quot;&quot;&quot;A mutable deck. Cards are dealt from the top of the deck.
+
+    Storage: ``_pile`` is kept **bottom first**, so the top card (the next one
+    dealt) is ``_pile[-1]`` and dealing one card is an O(1) ``list.pop()``. All
+    public methods use top-first order.
+    &quot;&quot;&quot;
+
+    __slots__ = (&quot;_rng&quot;, &quot;_pile&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – full canonical deck with the given (or a new) RNG</span>
+<span class="loc">entities/deck.py:27–29</span>
+</summary>
+<pre><code>def __init__(self, rng: Optional[random.Random] = None) -&gt; None:
+    self._rng = rng if rng is not None else random.Random()
+    self._pile: list[Card] = list(_REVERSED_ALL_CARDS)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __getstate__ / def __setstate__</span><span class="desc"> – explicit pickle state (RNG, cards top first)</span>
+<span class="loc">entities/deck.py:31–43</span>
+</summary>
+<pre><code># Explicit pickle state (a __slots__ class has no __dict__), so every pickle
+# protocol works. The RNG state travels with the deck, so an unpickled deck
+# shuffles exactly like the original would have. The card list in the state
+# is top first, the format used before storage became bottom first.
+def __getstate__(self) -&gt; tuple[random.Random, list[Card]]:
+    return (self._rng, self._pile[::-1])
+
+def __setstate__(self, state: tuple[random.Random, list[Card]]) -&gt; None:
+    rng, cards = state
+    self._rng = rng
+    pile = list(cards)
+    pile.reverse()
+    self._pile = pile</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def shuffle</span><span class="desc"> – shuffles in top-first order with the deck&#x27;s RNG, stores bottom first</span>
+<span class="loc">entities/deck.py:45–51</span>
+</summary>
+<pre><code>def shuffle(self) -&gt; None:
+    # Shuffle the top-first list (same RNG calls and permutation as a
+    # top-first deck), then store it bottom first.
+    cards = self._pile[::-1]
+    self._rng.shuffle(cards)
+    cards.reverse()
+    self._pile = cards</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def deal</span><span class="desc"> – deals n cards from the top (validated count)</span>
+<span class="loc">entities/deck.py:53–64</span>
+</summary>
+<pre><code>def deal(self, n: int = 1) -&gt; list[Card]:
+    if isinstance(n, bool) or not isinstance(n, int) or n &lt; 0:
+        raise ValueError(f&quot;n must be a non-negative int, got {n!r}&quot;)
+    pile = self._pile
+    if n &gt; len(pile):
+        raise ValueError(f&quot;cannot deal {n} cards, only {len(pile)} remain&quot;)
+    if n == 0:
+        return []  # pile[-0:] would be the whole pile
+    dealt = pile[-n:]
+    del pile[-n:]
+    dealt.reverse()
+    return dealt</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def deal_one</span><span class="desc"> – deals the top card</span>
+<span class="loc">entities/deck.py:66–70</span>
+</summary>
+<pre><code>def deal_one(self) -&gt; Card:
+    try:
+        return self._pile.pop()
+    except IndexError:
+        raise ValueError(&quot;cannot deal 1 cards, only 0 remain&quot;) from None</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def deal_hand</span><span class="desc"> – deals a 4-card Hand</span>
+<span class="loc">entities/deck.py:72–73</span>
+</summary>
+<pre><code>def deal_hand(self) -&gt; Hand:
+    return Hand(self.deal(HAND_SIZE))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def remove</span><span class="desc"> – removes known cards; all-or-nothing</span>
+<span class="loc">entities/deck.py:75–87</span>
+</summary>
+<pre><code>def remove(self, cards: Union[Card, Iterable[Card]]) -&gt; None:
+    &quot;&quot;&quot;Remove known cards from the deck. All-or-nothing: on error the deck is unchanged.&quot;&quot;&quot;
+    if isinstance(cards, Card):
+        cards = (cards,)
+    to_remove = list(cards)
+    seen: set[Card] = set()
+    for c in to_remove:
+        if c in seen:
+            raise ValueError(f&quot;card listed twice: {c}&quot;)
+        if c not in self._pile:
+            raise ValueError(f&quot;card not in deck: {c}&quot;)
+        seen.add(c)
+    self._pile = [c for c in self._pile if c not in seen]</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def put_on_top</span><span class="desc"> – stacks the deck: moves the given cards to the top in order; all-or-nothing</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">validate: Cards only, listed once, still in the deck</span>
+<span class="loc">entities/deck.py:96–109</span>
+</summary>
+<pre><code>&quot;&quot;&quot;
+if isinstance(cards, Card):
+    cards = (cards,)
+stacked = list(cards)
+stacked_set: set[Card] = set()
+present = set(self._pile)
+for c in stacked:
+    if not isinstance(c, Card):
+        raise TypeError(f&quot;expected a Card, got {type(c).__name__}: {c!r}&quot;)
+    if c in stacked_set:
+        raise ValueError(f&quot;card listed twice: {c}&quot;)
+    if c not in present:
+        raise ValueError(f&quot;card not in deck: {c}&quot;)
+    stacked_set.add(c)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">rebuild the pile with the stacked cards on top</span>
+<span class="loc">entities/deck.py:110–114</span>
+</summary>
+<pre><code>if not stacked:
+    return
+rest = [c for c in self._pile if c not in stacked_set]
+rest.extend(reversed(stacked))
+self._pile = rest</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def remaining</span><span class="desc"> – cards left, top first</span>
+<span class="loc">entities/deck.py:116–118</span>
+</summary>
+<pre><code>def remaining(self) -&gt; tuple[Card, ...]:
+    &quot;&quot;&quot;The cards left, in deal order (top first).&quot;&quot;&quot;
+    return tuple(reversed(self._pile))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def reset</span><span class="desc"> – restores all 52 cards in canonical order</span>
+<span class="loc">entities/deck.py:120–122</span>
+</summary>
+<pre><code>def reset(self) -&gt; None:
+    &quot;&quot;&quot;Restore all 52 cards in canonical order. Does not shuffle.&quot;&quot;&quot;
+    self._pile = list(_REVERSED_ALL_CARDS)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __len__ / def __contains__ / def __repr__</span><span class="desc"> – size, membership, &quot;Deck(N cards)&quot;</span>
+<span class="loc">entities/deck.py:124–131</span>
+</summary>
+<pre><code>def __len__(self) -&gt; int:
+    return len(self._pile)
+
+def __contains__(self, card: object) -&gt; bool:
+    return card in self._pile
+
+def __repr__(self) -&gt; str:
+    return f&quot;Deck({len(self._pile)} cards)&quot;</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">hand.py</span><span class="desc"> – Hand: a player&#x27;s four distinct private hole cards</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – what the module holds</span>
+<span class="loc">entities/hand.py:1–1</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Hand: a player&#x27;s four private hole cards.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – dataclass, typing, Card / parse_cards</span>
+<span class="loc">entities/hand.py:3–8</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Iterable, Iterator
+
+from .card import Card, parse_cards</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__ and HAND_SIZE = 4</span>
+<span class="loc">entities/hand.py:10–12</span>
+</summary>
+<pre><code>__all__ = [&quot;Hand&quot;]
+
+HAND_SIZE = 4</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Hand</span><span class="desc"> – frozen dataclass of exactly 4 distinct cards, input order kept</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – cards tuple</span>
+<span class="loc">entities/hand.py:15–20</span>
+</summary>
+<pre><code>@dataclass(frozen=True, slots=True)
+class Hand:
+    &quot;&quot;&quot;Exactly 4 distinct cards. Input order is preserved.&quot;&quot;&quot;
+
+    cards: tuple[Card, Card, Card, Card]</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – accepts any iterable of cards (not a string) and validates</span>
+<span class="loc">entities/hand.py:21–29</span>
+</summary>
+<pre><code>def __init__(self, cards: Iterable[Card]) -&gt; None:
+    if isinstance(cards, (str, bytes)):
+        raise ValueError(&quot;Hand expects Card objects; use Hand.parse() for strings&quot;)
+    try:
+        items = tuple(cards)
+    except TypeError:
+        raise ValueError(f&quot;Hand expects an iterable of cards, got {cards!r}&quot;) from None
+    object.__setattr__(self, &quot;cards&quot;, items)
+    self.__post_init__()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __post_init__</span><span class="desc"> – Cards only, exactly 4, no duplicates</span>
+<span class="loc">entities/hand.py:31–39</span>
+</summary>
+<pre><code>def __post_init__(self) -&gt; None:
+    cards = self.cards
+    for c in cards:
+        if not isinstance(c, Card):
+            raise ValueError(f&quot;not a Card: {c!r}&quot;)
+    if len(cards) != HAND_SIZE:
+        raise ValueError(f&quot;a hand needs exactly {HAND_SIZE} cards, got {len(cards)}&quot;)
+    if len(set(cards)) != len(cards):
+        raise ValueError(f&quot;duplicate cards in hand: {&#x27;&#x27;.join(map(str, cards))}&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def parse</span><span class="desc"> – builds a hand from text such as &quot;AsKd7h2c&quot;</span>
+<span class="loc">entities/hand.py:41–43</span>
+</summary>
+<pre><code>@classmethod
+def parse(cls, s: str) -&gt; &quot;Hand&quot;:
+    return cls(parse_cards(s))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __str__ / def __repr__ / def __iter__ / def __len__ / def __contains__</span><span class="desc"> – text and sequence-like access</span>
+<span class="loc">entities/hand.py:45–58</span>
+</summary>
+<pre><code>def __str__(self) -&gt; str:
+    return &quot;&quot;.join(str(c) for c in self.cards)
+
+def __repr__(self) -&gt; str:
+    return f&quot;Hand(&#x27;{self}&#x27;)&quot;
+
+def __iter__(self) -&gt; Iterator[Card]:
+    return iter(self.cards)
+
+def __len__(self) -&gt; int:
+    return len(self.cards)
+
+def __contains__(self, card: object) -&gt; bool:
+    return card in self.cards</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+</div>
+</details>
+</main>
+<script>
+function setAll(open) { document.querySelectorAll('details').forEach(d => d.open = open); }
+function expandTo(depth) {
+  document.querySelectorAll('details').forEach(d => {
+    const m = d.className.match(/d(\d+)/); d.open = m && +m[1] < depth;
+  });
+}
+function filter(q) {
+  q = q.trim().toLowerCase();
+  const all = document.querySelectorAll('details');
+  if (!q) { all.forEach(d => d.style.display = ''); expandTo(1); return; }
+  all.forEach(d => { d.style.display = 'none'; d.open = false; });
+  all.forEach(d => {
+    const s = d.querySelector(':scope > summary').textContent.toLowerCase();
+    if (s.includes(q)) {
+      d.style.display = '';
+      let p = d.parentElement;
+      while (p) { if (p.tagName === 'DETAILS') { p.style.display = ''; p.open = true; } p = p.parentElement; }
+    }
+  });
+}
+expandTo(1);
+</script>
+</body>
+</html>

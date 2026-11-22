@@ -1,0 +1,760 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>trainer documentation</title>
+<style>
+:root {
+  --bg: #fbfaf7; --fg: #1f2328; --muted: #6a6f76; --line: #e3e0d8;
+  --name: #0b5cad; --def: #7a3e9d; --code-bg: #f2efe8; --loc: #8a8f96;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a8; --line: #2c3036;
+    --name: #6cb6ff; --def: #d2a8ff; --code-bg: #1e2228; --loc: #7d838c;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a8; --line: #2c3036;
+  --name: #6cb6ff; --def: #d2a8ff; --code-bg: #1e2228; --loc: #7d838c;
+}
+body { background: var(--bg); color: var(--fg); margin: 0;
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+p.lead { color: var(--muted); margin: 0 0 16px; }
+.toolbar button { font: inherit; font-size: 13px; padding: 4px 10px; margin-right: 6px;
+  border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 6px; cursor: pointer; }
+.toolbar { margin-bottom: 16px; }
+details { margin: 2px 0; }
+.kids { margin-left: 18px; padding-left: 10px; border-left: 1px solid var(--line); }
+summary { cursor: pointer; padding: 2px 0; list-style-position: outside; }
+summary:hover { background: color-mix(in srgb, var(--line) 40%, transparent); }
+.name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; color: var(--name); font-weight: 600; }
+.name.def { color: var(--def); }
+.desc { color: var(--fg); }
+.d0 > summary .desc, .kids .desc { }
+.loc { float: right; font: 12px ui-monospace, Menlo, monospace; color: var(--loc); margin-left: 12px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;
+  margin: 6px 0 8px 18px; overflow-x: auto; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+input#q { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: transparent; color: var(--fg); width: 220px; max-width: 100%; }
+mark { background: #ffe48a; color: #000; }
+</style>
+</head>
+<body>
+<main>
+<h1>trainer</h1>
+<p class="lead">Neural networks and the acting policy of the Omaha Hi-Lo 8-or-better bot, built on rl_env: PolicyNet, CriticNet and NeuralPolicy.
+Tree: folders → files → classes / functions → logical blocks → code. Only <code>.py</code> sources are covered (BUCK, JSON test sets, markdown and unit tests are omitted).</p>
+<div class="toolbar">
+<button onclick="setAll(true)">Expand all</button>
+<button onclick="setAll(false)">Collapse all</button>
+<button onclick="expandTo(1)">Files</button>
+<button onclick="expandTo(2)">Classes &amp; functions</button>
+<input id="q" placeholder="Filter by name / description" oninput="filter(this.value)">
+</div>
+<details class="d0"><summary><span class="name ">./trainer</span><span class="desc"> – neural networks and the acting policy of the learning bot, on top of rl_env (the training loop comes in later stages)</span>
+</summary>
+<div class="kids">
+<details class="d1"><summary><span class="name ">__init__.py</span><span class="desc"> – package entry: describes the policy / critic networks and NeuralPolicy, and re-exports them</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – this stage&#x27;s pieces and the rule that trainer only consumes rl_env arrays</span>
+<span class="loc">trainer/__init__.py:1–15</span>
+</summary>
+<pre><code>&quot;&quot;&quot;trainer: neural networks (and, in later stages, the training loop) for a
+fixed-limit Omaha Hi-Lo 8-or-better bot, on top of `//rl_env`.
+
+This stage: the policy and critic networks and the acting policy.
+
+- `PolicyNet(obs, mask) -&gt; logits` sees only rl_env&#x27;s observation and action
+  mask; illegal actions get the finite logit `MASK_VALUE` (never -inf).
+- `CriticNet(critic_input(obs, critic_cards)) -&gt; value` (big bets) is the only
+  network that receives the privileged critic input.
+- `NeuralPolicy(net, seed=...)` is an rl_env Controller over a private copy of a
+  `PolicyNet`: samples with its own generator, returns `(actions, logp)`.
+
+trainer never re-implements rl_env&#x27;s encoder, mask or critic expansion; it only
+consumes their arrays.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – networks, helpers and NeuralPolicy</span>
+<span class="loc">trainer/__init__.py:17–29</span>
+</summary>
+<pre><code>from .nets import (
+    LOGIT_LIMIT,
+    MASK_VALUE,
+    CriticNet,
+    NetConfigError,
+    PolicyNet,
+    check_state_dict,
+    critic_input,
+    log_probs,
+    masked_logits,
+    mlp,
+)
+from .policy import NeuralPolicy</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__</span>
+<span class="loc">trainer/__init__.py:31–43</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;PolicyNet&quot;,
+    &quot;CriticNet&quot;,
+    &quot;NeuralPolicy&quot;,
+    &quot;mlp&quot;,
+    &quot;masked_logits&quot;,
+    &quot;log_probs&quot;,
+    &quot;critic_input&quot;,
+    &quot;check_state_dict&quot;,
+    &quot;MASK_VALUE&quot;,
+    &quot;LOGIT_LIMIT&quot;,
+    &quot;NetConfigError&quot;,
+]</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">nets.py</span><span class="desc"> – PolicyNet and CriticNet, masking, log-probabilities, config-checked state dicts and the privileged critic input</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – shapes, masking with finite values, config in the state dict</span>
+<span class="loc">trainer/nets.py:1–19</span>
+</summary>
+<pre><code>&quot;&quot;&quot;The policy and critic networks.
+
+- `PolicyNet(obs, mask)`: obs float32 (B, OBS_DIM), mask bool (B, N_ACTIONS)
+  (True = legal, rl_env&#x27;s order fold / check-or-call / bet-or-raise) -&gt; masked
+  logits (B, N_ACTIONS). It has no other input and refuses an input of any other
+  width, so the critic&#x27;s privileged input can never reach it.
+- `CriticNet(x)`: x float32 (B, OBS_DIM + PRIV_DIM) from `critic_input` -&gt; value
+  (B,) in big bets.
+
+Masking sets illegal logits to the finite `MASK_VALUE = -1e9` (never -inf) and
+clamps legal logits to +-`LOGIT_LIMIT`, so softmax, log-probabilities and entropy
+never produce NaN and illegal actions get exactly zero probability.
+`log_probs(logits)` is the one place action log-probabilities are computed.
+
+Both networks record their config and the rl_env `ENCODER_VERSION` in the state
+dict (`_extra_state`) and refuse to load a state dict built for another one.
+`check_state_dict` validates a state dict against a network without copying
+anything.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – math, numpy, torch and rl_env sizes / expand_critic</span>
+<span class="loc">trainer/nets.py:21–30</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import math
+from typing import Any, Mapping, Optional
+
+import numpy as np
+import torch
+from torch import Tensor, nn
+
+from rl_env import ENCODER_VERSION, N_ACTIONS, OBS_DIM, PRIV_DIM, expand_critic</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, MASK_VALUE = -1e9, LOGIT_LIMIT = 1e4, default size 3 x 512, init gains, extra-state key</span>
+<span class="loc">trainer/nets.py:32–56</span>
+</summary>
+<pre><code>__all__ = [
+    &quot;MASK_VALUE&quot;,
+    &quot;LOGIT_LIMIT&quot;,
+    &quot;DEFAULT_HIDDEN&quot;,
+    &quot;DEFAULT_LAYERS&quot;,
+    &quot;NetConfigError&quot;,
+    &quot;mlp&quot;,
+    &quot;masked_logits&quot;,
+    &quot;log_probs&quot;,
+    &quot;PolicyNet&quot;,
+    &quot;CriticNet&quot;,
+    &quot;critic_input&quot;,
+    &quot;check_state_dict&quot;,
+]
+
+MASK_VALUE = -1e9  # logit of an illegal action (finite: never -inf)
+LOGIT_LIMIT = 1e4  # legal logits are clamped to [-LOGIT_LIMIT, LOGIT_LIMIT]
+DEFAULT_HIDDEN = 512
+DEFAULT_LAYERS = 3
+
+_HIDDEN_GAIN = math.sqrt(2.0)
+_POLICY_HEAD_GAIN = 0.01
+_CRITIC_HEAD_GAIN = 1.0
+
+_EXTRA = &quot;_extra_state&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">NetConfigError</span><span class="desc"> – a state dict built for another network kind, config or encoder version</span>
+<span class="loc">trainer/nets.py:59–61</span>
+</summary>
+<pre><code>class NetConfigError(ValueError):
+    &quot;&quot;&quot;A state dict was built for a network of another kind, config or encoder
+    version (or does not have this network&#x27;s keys and shapes).&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _positive_int</span><span class="desc"> – validates a positive int argument</span>
+<span class="loc">trainer/nets.py:67–70</span>
+</summary>
+<pre><code>def _positive_int(name: str, value: Any) -&gt; int:
+    if isinstance(value, bool) or not isinstance(value, int) or value &lt; 1:
+        raise ValueError(f&quot;{name} must be a positive int, got {value!r}&quot;)
+    return value</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _linear</span><span class="desc"> – linear layer with orthogonal weights and zero bias, without torch&#x27;s default random init</span>
+<span class="loc">trainer/nets.py:73–81</span>
+</summary>
+<pre><code>def _linear(in_dim: int, out_dim: int, gain: float) -&gt; nn.Linear:
+    &quot;&quot;&quot;A linear layer with orthogonal weights (`gain`) and zero bias. Built with
+    `skip_init`, so torch&#x27;s default init draws no random numbers: the only draws
+    are the orthogonal init&#x27;s, in construction order.&quot;&quot;&quot;
+    layer = torch.nn.utils.skip_init(nn.Linear, in_dim, out_dim)
+    with torch.no_grad():
+        nn.init.orthogonal_(layer.weight, gain=gain)
+        nn.init.zeros_(layer.bias)
+    return layer</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def mlp</span><span class="desc"> – the body: layers x (Linear, ReLU) with orthogonal sqrt(2) init</span>
+<span class="loc">trainer/nets.py:84–97</span>
+</summary>
+<pre><code>def mlp(in_dim: int, hidden: int = DEFAULT_HIDDEN, layers: int = DEFAULT_LAYERS) -&gt; nn.Sequential:
+    &quot;&quot;&quot;`layers` x (Linear(d, hidden), ReLU), d = `in_dim` then `hidden`; the body
+    only (each network adds its own head). Hidden layers are initialised
+    orthogonally with gain sqrt(2), bias 0, first to last.&quot;&quot;&quot;
+    _positive_int(&quot;in_dim&quot;, in_dim)
+    _positive_int(&quot;hidden&quot;, hidden)
+    _positive_int(&quot;layers&quot;, layers)
+    mods: list[nn.Module] = []
+    d = in_dim
+    for _ in range(layers):
+        mods.append(_linear(d, hidden, _HIDDEN_GAIN))
+        mods.append(nn.ReLU())
+        d = hidden
+    return nn.Sequential(*mods)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _check_input</span><span class="desc"> – a float32 tensor of shape (B, width)</span>
+<span class="loc">trainer/nets.py:100–109</span>
+</summary>
+<pre><code>def _check_input(x: Any, width: int, name: str) -&gt; None:
+    if not isinstance(x, Tensor):
+        raise TypeError(
+            f&quot;{name} must be a torch.Tensor (use torch.from_numpy on rl_env&#x27;s array), &quot;
+            f&quot;got {type(x).__name__}&quot;
+        )
+    if x.dtype != torch.float32:
+        raise TypeError(f&quot;{name} must be float32, got {x.dtype}&quot;)
+    if x.ndim != 2 or x.shape[1] != width:
+        raise ValueError(f&quot;{name} must have shape (B, {width}), got {tuple(x.shape)}&quot;)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _check_mask</span><span class="desc"> – a bool tensor of the logits&#x27; shape (uint8 would mask nothing)</span>
+<span class="loc">trainer/nets.py:112–122</span>
+</summary>
+<pre><code>def _check_mask(mask: Any, shape: Any) -&gt; None:
+    if not isinstance(mask, Tensor):
+        raise TypeError(
+            f&quot;mask must be a torch.Tensor (use torch.from_numpy on rl_env&#x27;s array), &quot;
+            f&quot;got {type(mask).__name__}&quot;
+        )
+    if mask.dtype != torch.bool:
+        # On a uint8 mask `~mask` is a bitwise not (1 -&gt; 254): it would mask nothing.
+        raise TypeError(f&quot;mask must be torch.bool, got {mask.dtype}&quot;)
+    if tuple(mask.shape) != tuple(shape):
+        raise ValueError(f&quot;mask must have shape {tuple(shape)}, got {tuple(mask.shape)}&quot;)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def masked_logits</span><span class="desc"> – legal logits clamped to +-LOGIT_LIMIT, illegal ones exactly MASK_VALUE</span>
+<span class="loc">trainer/nets.py:125–130</span>
+</summary>
+<pre><code>def masked_logits(raw: Tensor, mask: Tensor) -&gt; Tensor:
+    &quot;&quot;&quot;Legal logits clamped to +-`LOGIT_LIMIT`, illegal logits exactly
+    `MASK_VALUE`. Every legal logit exceeds every illegal one by at least
+    1e9 - 1e4, so a float32 softmax gives illegal actions exactly 0.&quot;&quot;&quot;
+    _check_mask(mask, raw.shape)
+    return raw.clamp(-LOGIT_LIMIT, LOGIT_LIMIT).masked_fill(~mask, MASK_VALUE)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def log_probs</span><span class="desc"> – log_softmax of masked logits; the one place log-probabilities are computed</span>
+<span class="loc">trainer/nets.py:133–137</span>
+</summary>
+<pre><code>def log_probs(logits: Tensor) -&gt; Tensor:
+    &quot;&quot;&quot;Action log-probabilities `log_softmax(logits, -1)` of masked logits,
+    (B, N_ACTIONS). The one place they are computed from logits (acting policy
+    and, later, the PPO loss), so an unchanged network gives a ratio of 1.&quot;&quot;&quot;
+    return torch.log_softmax(logits, dim=-1)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – _MISSING sentinel</span>
+<span class="loc">trainer/nets.py:142–142</span>
+</summary>
+<pre><code>_MISSING = object()</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _config_diff</span><span class="desc"> – None if two configs match, else a message naming the differing keys</span>
+<span class="loc">trainer/nets.py:145–157</span>
+</summary>
+<pre><code>def _config_diff(own: dict, state: Any) -&gt; Optional[str]:
+    &quot;&quot;&quot;None if `state` equals the config `own`, else a message naming the
+    differing keys.&quot;&quot;&quot;
+    if not isinstance(state, dict):
+        return f&quot;expected a config dict in {_EXTRA}, got {type(state).__name__}&quot;
+    keys = sorted(set(own) | set(state), key=str)
+    diff = [k for k in keys if own.get(k, _MISSING) != state.get(k, _MISSING)]
+    if not diff:
+        return None
+    return &quot;, &quot;.join(
+        f&quot;{k}: state {state.get(k, &#x27;&lt;missing&gt;&#x27;)!r} != net {own.get(k, &#x27;&lt;missing&gt;&#x27;)!r}&quot;
+        for k in diff
+    )</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">_ConfigMixin</span><span class="desc"> – stores the network config in the state dict and refuses a mismatching one on load</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring</span>
+<span class="loc">trainer/nets.py:160–164</span>
+</summary>
+<pre><code>class _ConfigMixin:
+    &quot;&quot;&quot;`get_extra_state` / `set_extra_state`: the network&#x27;s config (plain ints and
+    strings, readable with `torch.load(weights_only=True)`) is stored in the state
+    dict and must match on load.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _config</span><span class="desc"> – the network&#x27;s config (implemented by each network)</span>
+<span class="loc">trainer/nets.py:165–166</span>
+</summary>
+<pre><code>def _config(self) -&gt; dict:
+    raise NotImplementedError</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def get_extra_state</span><span class="desc"> – the config as extra state</span>
+<span class="loc">trainer/nets.py:168–169</span>
+</summary>
+<pre><code>def get_extra_state(self) -&gt; dict:
+    return dict(self._config())</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def set_extra_state</span><span class="desc"> – raises NetConfigError when the loaded config differs</span>
+<span class="loc">trainer/nets.py:171–174</span>
+</summary>
+<pre><code>def set_extra_state(self, state: Any) -&gt; None:
+    diff = _config_diff(self._config(), state)
+    if diff is not None:
+        raise NetConfigError(f&quot;state dict does not match this network ({diff})&quot;)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def check_state_dict</span><span class="desc"> – validates a state dict against a network without copying</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">argument types</span>
+<span class="loc">trainer/nets.py:183–186</span>
+</summary>
+<pre><code>if not isinstance(net, _ConfigMixin) or not isinstance(net, nn.Module):
+    raise TypeError(f&quot;net must be a PolicyNet or CriticNet, got {type(net).__name__}&quot;)
+if not isinstance(state_dict, Mapping):
+    raise NetConfigError(f&quot;a state dict must be a mapping, got {type(state_dict).__name__}&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">recorded config must match</span>
+<span class="loc">trainer/nets.py:187–193</span>
+</summary>
+<pre><code>problems: list[str] = []
+if _EXTRA not in state_dict:
+    problems.append(f&quot;missing {_EXTRA} (the recorded config)&quot;)
+else:
+    diff = _config_diff(net._config(), state_dict[_EXTRA])
+    if diff is not None:
+        problems.append(diff)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">missing / unexpected keys</span>
+<span class="loc">trainer/nets.py:194–202</span>
+</summary>
+<pre><code>own = net.state_dict()
+expected = [k for k in own if k != _EXTRA]
+given = [k for k in state_dict if k != _EXTRA]
+missing = sorted(set(expected) - set(given))
+unexpected = sorted(set(given) - set(expected), key=str)
+if missing:
+    problems.append(f&quot;missing keys {missing}&quot;)
+if unexpected:
+    problems.append(f&quot;unexpected keys {unexpected}&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">per-tensor shape and dtype; raise naming every problem</span>
+<span class="loc">trainer/nets.py:203–214</span>
+</summary>
+<pre><code>for k in expected:
+    if k not in state_dict:
+        continue
+    v, ref = state_dict[k], own[k]
+    if not isinstance(v, Tensor):
+        problems.append(f&quot;{k}: expected a tensor, got {type(v).__name__}&quot;)
+    elif tuple(v.shape) != tuple(ref.shape):
+        problems.append(f&quot;{k}: shape {tuple(v.shape)} != net {tuple(ref.shape)}&quot;)
+    elif v.dtype != ref.dtype:
+        problems.append(f&quot;{k}: dtype {v.dtype} != net {ref.dtype}&quot;)
+if problems:
+    raise NetConfigError(&quot;state dict does not match this network: &quot; + &quot;; &quot;.join(problems))</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">PolicyNet</span><span class="desc"> – masked action logits from the observation and the mask only</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – validated sizes and encoder version; body then head (fixed RNG order)</span>
+<span class="loc">trainer/nets.py:223–239</span>
+</summary>
+<pre><code>def __init__(
+    self,
+    obs_dim: int = OBS_DIM,
+    n_actions: int = N_ACTIONS,
+    hidden: int = DEFAULT_HIDDEN,
+    layers: int = DEFAULT_LAYERS,
+    encoder_version: int = ENCODER_VERSION,
+) -&gt; None:
+    super().__init__()
+    self.obs_dim = _positive_int(&quot;obs_dim&quot;, obs_dim)
+    self.n_actions = _positive_int(&quot;n_actions&quot;, n_actions)
+    self.hidden = _positive_int(&quot;hidden&quot;, hidden)
+    self.layers = _positive_int(&quot;layers&quot;, layers)
+    self.encoder_version = int(encoder_version)
+    # Body first (first to last layer), then the head: a fixed RNG order.
+    self.body = mlp(obs_dim, hidden, layers)
+    self.head = _linear(hidden, n_actions, _POLICY_HEAD_GAIN)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _config</span><span class="desc"> – kind &quot;policy&quot;, encoder version and sizes</span>
+<span class="loc">trainer/nets.py:241–249</span>
+</summary>
+<pre><code>def _config(self) -&gt; dict:
+    return {
+        &quot;net&quot;: &quot;policy&quot;,
+        &quot;encoder_version&quot;: self.encoder_version,
+        &quot;in_dim&quot;: self.obs_dim,
+        &quot;hidden&quot;: self.hidden,
+        &quot;layers&quot;: self.layers,
+        &quot;n_actions&quot;: self.n_actions,
+    }</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def forward</span><span class="desc"> – checks obs / mask and returns masked logits</span>
+<span class="loc">trainer/nets.py:251–257</span>
+</summary>
+<pre><code>def forward(self, obs: Tensor, mask: Tensor) -&gt; Tensor:
+    &quot;&quot;&quot;obs float32 (B, obs_dim), mask bool (B, n_actions) -&gt; logits float32
+    (B, n_actions), columns in rl_env&#x27;s action order. No copy, reshape or
+    dtype conversion of the inputs.&quot;&quot;&quot;
+    _check_input(obs, self.obs_dim, &quot;obs&quot;)
+    _check_mask(mask, (obs.shape[0], self.n_actions))
+    return masked_logits(self.head(self.body(obs)), mask)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">CriticNet</span><span class="desc"> – value in big bets from observation + privileged critic input (training only)</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring</span>
+<span class="loc">trainer/nets.py:260–263</span>
+</summary>
+<pre><code>class CriticNet(_ConfigMixin, nn.Module):
+    &quot;&quot;&quot;Value (big bets) of the acting seat from the observation plus the
+    privileged critic input. Training only; never used at play time.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – validated sizes and encoder version; body and a 1-wide head</span>
+<span class="loc">trainer/nets.py:264–277</span>
+</summary>
+<pre><code>def __init__(
+    self,
+    in_dim: int = OBS_DIM + PRIV_DIM,
+    hidden: int = DEFAULT_HIDDEN,
+    layers: int = DEFAULT_LAYERS,
+    encoder_version: int = ENCODER_VERSION,
+) -&gt; None:
+    super().__init__()
+    self.in_dim = _positive_int(&quot;in_dim&quot;, in_dim)
+    self.hidden = _positive_int(&quot;hidden&quot;, hidden)
+    self.layers = _positive_int(&quot;layers&quot;, layers)
+    self.encoder_version = int(encoder_version)
+    self.body = mlp(in_dim, hidden, layers)
+    self.head = _linear(hidden, 1, _CRITIC_HEAD_GAIN)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def _config</span><span class="desc"> – kind &quot;critic&quot;, encoder version and sizes</span>
+<span class="loc">trainer/nets.py:279–287</span>
+</summary>
+<pre><code>def _config(self) -&gt; dict:
+    return {
+        &quot;net&quot;: &quot;critic&quot;,
+        &quot;encoder_version&quot;: self.encoder_version,
+        &quot;in_dim&quot;: self.in_dim,
+        &quot;hidden&quot;: self.hidden,
+        &quot;layers&quot;: self.layers,
+        &quot;n_actions&quot;: 1,
+    }</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def forward</span><span class="desc"> – checks the input and returns one value per row</span>
+<span class="loc">trainer/nets.py:289–292</span>
+</summary>
+<pre><code>def forward(self, x: Tensor) -&gt; Tensor:
+    &quot;&quot;&quot;x float32 (B, in_dim) -&gt; values float32 (B,) (also for B = 1).&quot;&quot;&quot;
+    _check_input(x, self.in_dim, &quot;critic input&quot;)
+    return self.head(self.body(x)).squeeze(-1)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def critic_input</span><span class="desc"> – PRIVILEGED: observations concatenated with the expanded other-seat hole cards</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">validate obs type, dtype and shape</span>
+<span class="loc">trainer/nets.py:307–312</span>
+</summary>
+<pre><code>if not isinstance(obs, np.ndarray):
+    raise TypeError(f&quot;obs must be a numpy array, got {type(obs).__name__}&quot;)
+if obs.dtype != np.float32:
+    raise TypeError(f&quot;obs must be float32, got {obs.dtype}&quot;)
+if obs.ndim != 2 or obs.shape[1] != OBS_DIM:
+    raise ValueError(f&quot;obs must have shape (B, {OBS_DIM}), got {obs.shape}&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">validate the critic cards and concatenate with expand_critic</span>
+<span class="loc">trainer/nets.py:313–318</span>
+</summary>
+<pre><code>cards = np.asarray(critic_cards)
+if cards.ndim != 3 or len(cards) != obs.shape[0]:
+    raise ValueError(
+        f&quot;critic_cards must have shape ({obs.shape[0]}, 9, 4), got {cards.shape}&quot;
+    )
+return np.ascontiguousarray(np.concatenate([obs, expand_critic(cards)], axis=1))</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">policy.py</span><span class="desc"> – NeuralPolicy: an rl_env Controller sampling actions from a private PolicyNet copy</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – one network call per batch, own generator, (actions, logp) output</span>
+<span class="loc">trainer/policy.py:1–13</span>
+</summary>
+<pre><code>&quot;&quot;&quot;The acting policy: an rl_env `Controller` over a `PolicyNet`.
+
+`NeuralPolicy` answers a whole `DecisionBatch` with one network call, reading
+only `batch.obs` and `batch.mask` (a DecisionBatch never carries the critic&#x27;s
+privileged input). It samples from the masked distribution with its own seeded
+`torch.Generator` - torch&#x27;s global RNG is never used - and returns
+`(actions, logp)`, the tuple form of `Controller.act`, so rl_env&#x27;s Recorder
+keeps the log-probability of every chosen action.
+
+The policy holds a private copy of the network (eval mode, no gradients); it
+changes only through `load_state_dict`, which validates the state dict before
+copying anything.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – copy, numbers, numpy, torch, rl_env, nets</span>
+<span class="loc">trainer/policy.py:15–26</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import copy
+import numbers
+from typing import Any, Mapping, Optional
+
+import numpy as np
+import torch
+
+from rl_env import ENCODER_VERSION, N_ACTIONS, OBS_DIM, DecisionBatch
+
+from .nets import NetConfigError, PolicyNet, check_state_dict, log_probs</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__ and the seed limit</span>
+<span class="loc">trainer/policy.py:28–30</span>
+</summary>
+<pre><code>__all__ = [&quot;NeuralPolicy&quot;]
+
+_SEED_LIMIT = 2**64  # torch.Generator.manual_seed accepts [0, 2**64)</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _check_seed</span><span class="desc"> – an int in [0, 2**64)</span>
+<span class="loc">trainer/policy.py:33–39</span>
+</summary>
+<pre><code>def _check_seed(seed: Any) -&gt; int:
+    if isinstance(seed, (bool, np.bool_)) or not isinstance(seed, numbers.Integral):
+        raise TypeError(f&quot;seed must be an int, got {seed!r}&quot;)
+    seed = int(seed)
+    if not 0 &lt;= seed &lt; _SEED_LIMIT:
+        raise ValueError(f&quot;seed must be in [0, 2**64), got {seed}&quot;)
+    return seed</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _check_threads</span><span class="desc"> – None or a positive int</span>
+<span class="loc">trainer/policy.py:42–50</span>
+</summary>
+<pre><code>def _check_threads(num_threads: Any) -&gt; Optional[int]:
+    if num_threads is None:
+        return None
+    if isinstance(num_threads, (bool, np.bool_)) or not isinstance(num_threads, numbers.Integral):
+        raise TypeError(f&quot;num_threads must be an int or None, got {num_threads!r}&quot;)
+    num_threads = int(num_threads)
+    if num_threads &lt; 1:
+        raise ValueError(f&quot;num_threads must be &gt;= 1, got {num_threads}&quot;)
+    return num_threads</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">NeuralPolicy</span><span class="desc"> – Controller over a private eval-mode network with a seeded torch.Generator</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring and wants_views = False / wants_obs = True</span>
+<span class="loc">trainer/policy.py:53–64</span>
+</summary>
+<pre><code>class NeuralPolicy:
+    &quot;&quot;&quot;rl_env Controller sampling from a private copy of a `PolicyNet`.
+
+    `num_threads` (default 1: a rollout worker owns one core) is passed to
+    `torch.set_num_threads` at construction; None leaves it alone. This is a
+    PROCESS-WIDE torch setting: all policies of one process should use the same
+    value (the last one constructed wins).
+    &quot;&quot;&quot;
+
+    wants_views = False  # the batch builds no views for it
+    wants_obs = True  # it reads DecisionBatch.obs</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – validates, deep-copies the net (eval, no grads), seeds the generator, sets torch threads</span>
+<span class="loc">trainer/policy.py:65–81</span>
+</summary>
+<pre><code>def __init__(self, net: PolicyNet, *, seed: int, num_threads: Optional[int] = 1) -&gt; None:
+    if not isinstance(net, PolicyNet):
+        raise TypeError(f&quot;net must be a PolicyNet, got {type(net).__name__}&quot;)
+    seed = _check_seed(seed)
+    num_threads = _check_threads(num_threads)
+    # deepcopy draws no random numbers; the learner&#x27;s later steps on `net`
+    # do not reach this copy.
+    own = copy.deepcopy(net)
+    own.eval()
+    for p in own.parameters():
+        p.requires_grad_(False)
+        p.grad = None
+    self._net = own
+    self._gen = torch.Generator(device=&quot;cpu&quot;)
+    self._gen.manual_seed(seed)
+    if num_threads is not None:
+        torch.set_num_threads(num_threads)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def from_state_dict</span><span class="desc"> – builds a policy from weights only</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">require a recorded policy config for this encoder with valid sizes</span>
+<span class="loc">trainer/policy.py:91–111</span>
+</summary>
+<pre><code>if not isinstance(state_dict, Mapping):
+    raise NetConfigError(f&quot;a state dict must be a mapping, got {type(state_dict).__name__}&quot;)
+extra = state_dict.get(&quot;_extra_state&quot;)
+if not isinstance(extra, dict):
+    raise NetConfigError(&quot;state dict has no recorded config (_extra_state)&quot;)
+wanted = {
+    &quot;net&quot;: &quot;policy&quot;,
+    &quot;encoder_version&quot;: ENCODER_VERSION,
+    &quot;in_dim&quot;: OBS_DIM,
+    &quot;n_actions&quot;: N_ACTIONS,
+}
+bad = [k for k, v in wanted.items() if extra.get(k) != v]
+if bad:
+    details = &quot;, &quot;.join(f&quot;{k}: state {extra.get(k)!r} != {wanted[k]!r}&quot; for k in bad)
+    raise NetConfigError(f&quot;not a policy state dict for this encoder ({details})&quot;)
+hidden, layers = extra.get(&quot;hidden&quot;), extra.get(&quot;layers&quot;)
+for name, v in ((&quot;hidden&quot;, hidden), (&quot;layers&quot;, layers)):
+    if isinstance(v, bool) or not isinstance(v, int) or v &lt; 1:
+        raise NetConfigError(f&quot;recorded {name} must be a positive int, got {v!r}&quot;)
+seed = _check_seed(seed)
+num_threads = _check_threads(num_threads)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">build the net without moving torch&#x27;s global RNG, then load the weights</span>
+<span class="loc">trainer/policy.py:112–116</span>
+</summary>
+<pre><code>with torch.random.fork_rng(devices=[]):
+    net = PolicyNet(hidden=hidden, layers=layers)
+policy = cls(net, seed=seed, num_threads=num_threads)
+policy.load_state_dict(state_dict)
+return policy</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def net</span><span class="desc"> – the private network</span>
+<span class="loc">trainer/policy.py:120–123</span>
+</summary>
+<pre><code>@property
+def net(self) -&gt; PolicyNet:
+    &quot;&quot;&quot;The private network (eval mode, no gradients). Read-only use.&quot;&quot;&quot;
+    return self._net</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def seed</span><span class="desc"> – re-seeds the sampling generator</span>
+<span class="loc">trainer/policy.py:125–127</span>
+</summary>
+<pre><code>def seed(self, seed: int) -&gt; None:
+    &quot;&quot;&quot;Re-seed the sampling generator (restarts its sequence).&quot;&quot;&quot;
+    self._gen.manual_seed(_check_seed(seed))</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def load_state_dict</span><span class="desc"> – validated, copying weight replacement</span>
+<span class="loc">trainer/policy.py:129–134</span>
+</summary>
+<pre><code>def load_state_dict(self, state_dict: Mapping[str, Any]) -&gt; None:
+    &quot;&quot;&quot;Replace all weights. Validated first (config, encoder version, keys,
+    shapes, dtypes): a refused state dict raises NetConfigError and leaves the
+    current weights untouched. Tensors are copied, never aliased.&quot;&quot;&quot;
+    check_state_dict(self._net, state_dict)
+    self._net.load_state_dict(state_dict, strict=True)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def state_dict</span><span class="desc"> – the private network&#x27;s weights</span>
+<span class="loc">trainer/policy.py:136–138</span>
+</summary>
+<pre><code>def state_dict(self) -&gt; dict:
+    &quot;&quot;&quot;The private network&#x27;s `state_dict()`.&quot;&quot;&quot;
+    return self._net.state_dict()</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def act</span><span class="desc"> – samples one action per row and returns (actions, logp)</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">require observations; empty batch shortcut</span>
+<span class="loc">trainer/policy.py:146–151</span>
+</summary>
+<pre><code>if batch.obs is None:
+    raise ValueError(&quot;NeuralPolicy needs observation vectors&quot;)
+mask = batch.mask
+n = mask.shape[0]
+if n == 0:
+    return np.empty(0, np.int64), np.empty(0, np.float32)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">one network call: logits, log-probs, multinomial sample with the own generator</span>
+<span class="loc">trainer/policy.py:152–157</span>
+</summary>
+<pre><code>with torch.inference_mode():
+    logits = self._net(torch.from_numpy(batch.obs), torch.from_numpy(mask))
+    lp = log_probs(logits)  # (n, N_ACTIONS)
+    a = torch.multinomial(lp.exp(), 1, generator=self._gen)  # (n, 1)
+    logp = lp.gather(1, a).squeeze(1)
+actions = a.squeeze(1).numpy()</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">guard against an illegal sample</span>
+<span class="loc">trainer/policy.py:158–162</span>
+</summary>
+<pre><code># Cannot happen (illegal probability is exactly 0); an error rather than a
+# silent illegal action.
+if not mask[np.arange(n), actions].all():
+    raise RuntimeError(&quot;sampled an illegal action&quot;)
+return actions, logp.numpy()</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+</div>
+</details>
+</div>
+</details>
+</main>
+<script>
+function setAll(open) { document.querySelectorAll('details').forEach(d => d.open = open); }
+function expandTo(depth) {
+  document.querySelectorAll('details').forEach(d => {
+    const m = d.className.match(/d(\d+)/); d.open = m && +m[1] < depth;
+  });
+}
+function filter(q) {
+  q = q.trim().toLowerCase();
+  const all = document.querySelectorAll('details');
+  if (!q) { all.forEach(d => d.style.display = ''); expandTo(1); return; }
+  all.forEach(d => { d.style.display = 'none'; d.open = false; });
+  all.forEach(d => {
+    const s = d.querySelector(':scope > summary').textContent.toLowerCase();
+    if (s.includes(q)) {
+      d.style.display = '';
+      let p = d.parentElement;
+      while (p) { if (p.tagName === 'DETAILS') { p.style.display = ''; p.open = true; } p = p.parentElement; }
+    }
+  });
+}
+expandTo(1);
+</script>
+</body>
+</html>
