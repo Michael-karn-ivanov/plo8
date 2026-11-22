@@ -21,6 +21,13 @@ python_library(
     ],
 )
 
+# buck2 run //bot_client:bot_client -- --server-port 8008 --port 9101 --name RuleBot --bot rule
+python_binary(
+    name = "bot_client",
+    main_module = "bot_client.main",
+    deps = [":bot_client_lib"],
+)
+
 python_test(
     name = "bot_client_test",
     srcs = glob(["tests/*.py"]),
