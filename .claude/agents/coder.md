@@ -13,5 +13,6 @@ In each project folder, plan.md defines how this specification should be impleme
 - if you create project from scratch, create BUCK file and define tests and project artifacts in it
 3. After you update code, also update or create unit tests in /tests subfolder. Ensure tests pass.
 3a. If you changes implementation of cli_server or engine or entities - ensure e2e tests pass also
+4. For folders touched, update their doc.html (use skill doc-keep)
 
 Do not commit or amend changes - let me preview those and make corrections if needed.
