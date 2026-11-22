@@ -14,6 +14,10 @@ from the server. The client only:
 - draws that model;
 - turns key presses into protocol requests.
 
+Its networking (`net.py`) is also a library of its own. Other projects use it to talk
+to the server without the table model or the curses UI: `//bot_client` uses it to seat
+bots at the table (see Networking library).
+
 ## Layout
 
 ```
@@ -22,7 +26,7 @@ cli_client/
   plan.md
   BUCK
   cli_client/
-    __init__.py
+    __init__.py     # package marker only: no imports (owned by :net)
     main.py         # command line, startup / join, run the UI, shutdown
     net.py          # CallbackListener (server -> client), ServerConnection (client -> server)
     state.py        # TableState: local table model updated from server messages
@@ -36,26 +40,39 @@ cli_client/
     test_controller.py
     test_render.py
     test_net.py
+    test_net_library.py   # built against :net only
     test_integration.py
 ```
 
 ## Build (buck2)
 
-`cli_client/BUCK`:
-- `python_library(name = "cli_client_lib", srcs = glob(["cli_client/*.py"]),
-  base_module = "", deps = ["//cli_server:protocol", "//engine:engine",
-  "//entities:entities"])`. The wire format, its encode/decode functions and the
-  engine dataclasses are reused from `//cli_server:protocol`. No code is copied.
+`cli_client/BUCK` has three targets. The networking library is split out so that
+projects using it do not get the UI.
+- `python_library(name = "net", srcs = ["cli_client/__init__.py",
+  "cli_client/net.py"], base_module = "", deps = ["//cli_server:protocol"],
+  visibility = ["PUBLIC"])`. This is the reusable networking library (see Networking
+  library). It owns the package file `cli_client/__init__.py`. That file must stay
+  empty of imports, so importing `cli_client.net` loads nothing else from the package.
+  This follows the same pattern as `//cli_server:protocol`.
+- `python_library(name = "cli_client_lib", srcs = glob(["cli_client/*.py"],
+  exclude = ["cli_client/__init__.py", "cli_client/net.py"]), base_module = "",
+  deps = [":net", "//cli_server:protocol", "//engine:engine",
+  "//entities:entities"])`. This is the table model, controller, rendering, curses UI
+  and `main`. The wire format, its encode/decode functions and the engine dataclasses
+  are reused from `//cli_server:protocol`. No code is copied.
 - `python_binary(name = "cli_client", main_module = "cli_client.main",
   deps = [":cli_client_lib"])`.
-- `python_test(name = "cli_client_test", srcs = glob(["tests/*.py"]),
-  base_module = "cli_client_tests", deps = [":cli_client_lib",
-  "//cli_server:cli_server_lib"])`. The integration test runs a real `GameServer`
-  in-process, so `//cli_server:cli_server_lib` must be visible to `//cli_client/...`.
-  This needs a `visibility` entry in `cli_server/BUCK`.
+- `python_test(name = "cli_client_test", srcs = glob(["tests/*.py"], exclude =
+  ["tests/test_net_library.py"]), base_module = "cli_client_tests", deps =
+  [":cli_client_lib", "//cli_server:cli_server_lib"])`. The integration test runs a
+  real `GameServer` in-process. `cli_server/BUCK` makes `//cli_server:cli_server_lib`
+  visible to `//cli_client/...` (and to `//bot_client/...`, per `cli_server/spec.md`).
+- `python_test(name = "net_library_test", srcs = ["tests/test_net_library.py"],
+  base_module = "cli_client_tests", deps = [":net"])`. It is built against `:net` only,
+  so the test fails if `net.py` starts importing a module that `:net` does not contain.
 - Standard library only: `curses`, `socket`, `threading`, `queue`, `argparse`,
   `unittest`. The demo toolchain has no third-party packages. `curses` is available on
-  macOS and Linux.
+  macOS and Linux. Only `ui.py` imports `curses`.
 
 Run: `buck2 run //cli_client:cli_client -- --server-port 8008 --port 9001 --name Alice`.
 Test: `buck2 test //cli_client/...`.
@@ -102,28 +119,68 @@ startup or the join fails. Exit with an error if stdin/stdout is not a TTY.
 
 ## Networking (`net.py`)
 
+### Networking library
+`net.py` is the `:net` target. It is the only part of cli_client that other projects
+may depend on (`//bot_client` today). The contract is:
+- **Public API** (`__all__`): `HOST`, `DISCONNECTED`, `ConnectionLost`,
+  `ServerConnection`, `CallbackListener`. Changing their signatures or behaviour
+  affects `//bot_client` too.
+- **Imports**: only the standard library (`socket`, `threading`, `queue`, `logging`)
+  and `cli_server.protocol` (`read_message`, `write_message`, `ProtocolError`,
+  `LineTooLongError`). It never imports `curses`, `state`, `controller`, `render`,
+  `cards`, `ui` or `main`. Importing it does not import `curses`.
+- **No UI or table assumptions**:
+  - The inbox is any `queue.Queue` the caller supplies. The library puts raw message
+    dicts on it, plus the `DISCONNECTED` marker. Decoding (`protocol.decode_*`) is
+    left to the caller.
+  - It holds no player state other than the name used for the `to` filter.
+  - It writes nothing to stdout or stderr. It logs to the `cli_client.net` logger at
+    debug / warning level and installs no handlers. The caller decides where the log
+    goes: cli_client uses `--log-file`, and bot_client uses its own log.
+- **Callers do their own protocol steps**: building requests (`protocol.*_request`),
+  sending them in order (the listener before `join`), checking `ok`, and answering
+  `turn` / `hand_end`. All of this happens above the library. cli_client does it in
+  `main.py` / `controller.py`.
+- **Threads**:
+  - `ServerConnection.request` is safe to call from any thread, because a lock
+    serialises calls.
+  - `CallbackListener`'s threads are daemon threads, so they never keep a process
+    alive.
+  - `close()` on either object can be called more than once, from any thread. A
+    `request` after `close()` raises `ConnectionLost`.
+
 ### `ServerConnection` (client → server, the server's port)
-- One persistent TCP connection to `127.0.0.1:server_port`, opened at startup.
+- One persistent TCP connection to `127.0.0.1:server_port`, opened lazily on the
+  first request. In cli_client, that is the `join` at startup.
 - `request(msg) -> dict` writes one line with `protocol.write_message` and reads one
-  `response` line. A lock serialises calls. Timeout is 10 s.
-- A response with `ok: false` is returned to the caller; the controller shows the
-  `error` text. A socket error or timeout raises `ConnectionLost`, and the UI then
-  shows "Connection to server lost".
-- If the connection drops, it reconnects once before giving up. The server tells
-  clients apart by `name`, not by connection.
-- Called only from the UI thread, never from the callback reader thread. Responses
-  are immediate, so the UI never waits long.
+  `response` line. A lock serialises calls. Timeout is 10 s (constructor argument).
+- A response with `ok: false` is returned to the caller; cli_client's controller shows
+  the `error` text. A malformed response line comes back as an `ok: false` response
+  whose error is "bad response: …". The stream is still in sync after it.
+- A socket error, a timeout or an over-long line drops the connection. It then
+  reconnects and resends once, before raising `ConnectionLost`. The server tells
+  clients apart by `name`, not by connection. cli_client's UI shows "Connection to
+  server lost" when `ConnectionLost` is raised.
+- In cli_client it is called only from the UI thread, never from the callback reader
+  thread. Responses are immediate, so the UI never waits long.
 
 ### `CallbackListener` (server → client, own port)
-- A listening socket on `127.0.0.1:port`, with an accept thread. The server opens one
-  connection per joined player and keeps it open. If a new connection arrives, it
-  replaces the old one.
+- `CallbackListener(name, inbox, host=HOST, port=0)` binds and listens in the
+  constructor. Bind errors are raised there, so the caller can report them before
+  `join`. `port` 0 picks a free port, and the bound port is in `.port`. `start()`
+  launches the accept thread and returns `self`.
+- The server opens one connection per joined player and keeps it open. If a new
+  connection arrives, it replaces the old one, and the old one is closed without a
+  `DISCONNECTED` marker.
 - A reader thread runs `protocol.read_message` in a loop. Each message is put on the
-  controller's `inbox` (`queue.Queue`). Messages whose `to` is not this player's name
-  are dropped.
-- End of stream or a socket error puts a `("disconnected",)` marker on the inbox.
-- Decoding is done in the controller, not in the reader. A malformed or unknown
-  message must not kill the reader thread: it is logged and skipped.
+  inbox. Messages whose `to` is not this player's name are dropped and counted in
+  `.dropped`.
+- End of stream, a socket error or an over-long line on the current connection puts
+  the `DISCONNECTED` marker (`("disconnected",)`) on the inbox. Nothing is put after
+  `close()`.
+- A malformed line must not kill the reader thread. It is logged, counted in
+  `.malformed`, and skipped. Unknown message types are passed through unchanged.
+  Decoding is done by the consumer (cli_client's controller), not in the reader.
 
 ## Table model (`state.py`)
 
@@ -344,6 +401,8 @@ shown: "Please enlarge the terminal to at least 100×30".
   bottom-right cell raises `curses.error`, which is ignored.
 - Ctrl-C (`KeyboardInterrupt`) is passed to the controller as the leave key, as
   described above.
+- This is the only module that imports `curses`. It is part of `:cli_client_lib`,
+  never of `:net`.
 
 ## Server capabilities used
 The client needs only what the protocol already provides: `join` / `action` /
@@ -401,8 +460,21 @@ All tests use `unittest` and the standard library.
   drawn at the bottom centre for every seat index; the acting seat and the winners
   are highlighted; a too-small terminal shows the enlarge message.
 - `test_net`: `CallbackListener` delivers lines in order, drops other players'
-  messages, survives a malformed line and reports disconnects. `ServerConnection`
-  pairs requests with responses and raises `ConnectionLost` on a closed socket.
+  messages, survives a malformed line and reports disconnects; a replaced connection
+  does not report a disconnect, and nothing is reported after `close()`.
+  `ServerConnection` pairs requests with responses, reconnects once after a dropped
+  connection, and raises `ConnectionLost` on a closed socket and after `close()`.
+- `test_net_library` (`:net_library_test`, built against `:net` only):
+  - `import cli_client.net` works without the rest of cli_client;
+  - after the import, `curses` is not in `sys.modules`, and none of
+    `cli_client.ui`, `controller`, `state`, `render`, `cards` or `main` is loaded or
+    importable;
+  - every name in `net.__all__` exists;
+  - a round trip, with a stub server on port 0, a `ServerConnection` and a
+    `CallbackListener` feeding a plain `queue.Queue`, works with no other cli_client
+    module.
+
+  This is the test that guards the library contract that `//bot_client` relies on.
 - `test_integration`: an in-process `GameServer` on port 0 with a short grace period
   and a fixed seed, and two or three headless `Client`s driven by scripted key
   presses. They join, play hands to the end, and the hand ends with consistent
