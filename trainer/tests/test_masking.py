@@ -1,6 +1,7 @@
 """Masking: illegal actions get exactly MASK_VALUE and zero probability, legal
-probabilities sum to 1, log-probabilities, entropy and their gradients are
-finite - for every mask rl_env produces and for extreme inputs."""
+probabilities sum to 1, log-probabilities (Categorical and `log_probs`), entropy
+and their gradients are finite - for every mask rl_env produces and for extreme
+inputs."""
 
 import itertools
 import math
@@ -11,12 +12,14 @@ import torch
 from torch.distributions import Categorical
 
 from rl_env import CHECK_CALL, N_ACTIONS
-from trainer import LOGIT_LIMIT, MASK_VALUE, PolicyNet, masked_logits
+from trainer import LOGIT_LIMIT, MASK_VALUE, PolicyNet, log_probs, masked_logits
 
 try:
     from . import helpers
 except ImportError:  # run as a top-level module
     import helpers  # type: ignore[no-redef]
+
+_EPS32 = float(torch.finfo(torch.float32).eps)
 
 
 class MaskingTest(unittest.TestCase):
@@ -41,11 +44,26 @@ class MaskingTest(unittest.TestCase):
         dist = Categorical(logits=logits)
         ent = dist.entropy()
         self.assertTrue(torch.isfinite(ent).all())
+        lps = log_probs(logits).detach()
+        self.assertEqual(tuple(lps.shape), tuple(logits.shape))
+        self.assertEqual(lps.dtype, torch.float32)
+        self.assertTrue(torch.isfinite(lps).all())
+        # log_softmax and Categorical round differently at the scale of the
+        # largest legal logit (1 ulp of 1e4 is ~1e-3 for the clamped extremes):
+        # 1e-6 for normal logits, a few ulps of that scale beyond.
+        scale = logits.detach().masked_fill(~mask, 0.0).abs().amax(-1)
+        tol = 1e-6 + 4.0 * _EPS32 * scale
         loss = ent.sum()
         b = logits.shape[0]
         for a in range(N_ACTIONS):
             lp = dist.log_prob(torch.full((b,), a, dtype=torch.long))
             self.assertTrue(torch.isfinite(lp).all(), f"log_prob of action {a}")
+            legal = mask[:, a]
+            err = (lps[:, a] - lp.detach()).abs()
+            self.assertTrue(
+                torch.all(err[legal] <= tol[legal]),
+                f"log_probs differs from Categorical for action {a}: max {err[legal].max()}",
+            )
             loss = loss + (lp * mask[:, a]).sum()
 
         single = (mask == torch.from_numpy(helpers.SINGLE_LEGAL)).all(-1)
@@ -54,6 +72,9 @@ class MaskingTest(unittest.TestCase):
             self.assertTrue(torch.all(p == 1))
             lp = dist.log_prob(torch.full((b,), CHECK_CALL, dtype=torch.long))[single]
             torch.testing.assert_close(lp, torch.zeros_like(lp), atol=1e-6, rtol=0)
+            torch.testing.assert_close(
+                lps[single][:, CHECK_CALL], torch.zeros_like(lp), atol=1e-6, rtol=0
+            )
             torch.testing.assert_close(ent[single], torch.zeros_like(ent[single]), atol=1e-6, rtol=0)
 
         params = list(params)
@@ -114,6 +135,16 @@ class MaskingTest(unittest.TestCase):
             masked_logits(raw, mask.to(torch.uint8))
         with self.assertRaises(ValueError):
             masked_logits(raw, mask[:3])
+
+    def test_log_probs_normal_logits(self):
+        # Real (small) logits: log_probs matches Categorical to 1e-6.
+        obs, mask = helpers.all_mask_batch(self.recs.obs[:100])
+        m = torch.from_numpy(mask)
+        with torch.no_grad():
+            logits = self.net(torch.from_numpy(obs), m)
+        lps = log_probs(logits)
+        cat = Categorical(logits=logits).logits  # normalised log-probabilities
+        torch.testing.assert_close(lps[m], cat[m], atol=1e-6, rtol=0)
 
     def test_initial_policy_near_uniform(self):
         m = torch.from_numpy(self.recs.mask)

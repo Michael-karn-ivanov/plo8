@@ -10,6 +10,7 @@
 Masking sets illegal logits to the finite `MASK_VALUE = -1e9` (never -inf) and
 clamps legal logits to +-`LOGIT_LIMIT`, so softmax, log-probabilities and entropy
 never produce NaN and illegal actions get exactly zero probability.
+`log_probs(logits)` is the one place action log-probabilities are computed.
 
 Both networks record their config and the rl_env `ENCODER_VERSION` in the state
 dict (`_extra_state`) and refuse to load a state dict built for another one.
@@ -34,6 +35,7 @@ __all__ = [
     "NetConfigError",
     "mlp",
     "masked_logits",
+    "log_probs",
     "PolicyNet",
     "CriticNet",
     "critic_input",
@@ -121,6 +123,13 @@ def masked_logits(raw: Tensor, mask: Tensor) -> Tensor:
     1e9 - 1e4, so a float32 softmax gives illegal actions exactly 0."""
     _check_mask(mask, raw.shape)
     return raw.clamp(-LOGIT_LIMIT, LOGIT_LIMIT).masked_fill(~mask, MASK_VALUE)
+
+
+def log_probs(logits: Tensor) -> Tensor:
+    """Action log-probabilities `log_softmax(logits, -1)` of masked logits,
+    (B, N_ACTIONS). The one place they are computed from logits (acting policy
+    and, later, the PPO loss), so an unchanged network gives a ratio of 1."""
+    return torch.log_softmax(logits, dim=-1)
 
 
 # --- config in the state dict ----------------------------------------------------

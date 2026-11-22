@@ -19,6 +19,7 @@ from .nets import (
     NetConfigError,
     PolicyNet,
     critic_input,
+    log_probs,
     masked_logits,
     mlp,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "CriticNet",
     "mlp",
     "masked_logits",
+    "log_probs",
     "critic_input",
     "MASK_VALUE",
     "LOGIT_LIMIT",
