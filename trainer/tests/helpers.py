@@ -1,22 +1,26 @@
 """Test data from rl_env: training records of real hands, every mask rl_env can
-produce, and a sampling controller over a PolicyNet."""
+produce, hand-built decision batches, peaked policy networks, a view counter
+and a table driver for controllers."""
 
 from __future__ import annotations
 
+import contextlib
 import functools
-from typing import Iterable
+from typing import Any, Callable, Hashable, Iterable, Mapping, Optional
 
 import numpy as np
 import torch
 
 from rl_env import (
-    N_ACTIONS,
+    DecisionBatch,
     HandSampler,
     RandomController,
     Recorder,
+    Table,
     TableBatch,
     TrainingRecords,
 )
+from trainer import PolicyNet
 
 # Every mask rl_env can produce, over (fold, check-or-call, bet-or-raise).
 ALL_MASKS = np.array(
@@ -81,27 +85,118 @@ def rows_with_masks(recs: TrainingRecords, n: int, per_mask: int) -> np.ndarray:
     return np.array(sorted(picked), dtype=np.int64)
 
 
-class SamplingController:
-    """Test-only rl_env Controller: samples from the masked PolicyNet (its own
-    seeded torch.Generator) and checks every action against its row's mask
-    before returning it."""
+def decision_batch(obs: Optional[np.ndarray], mask: np.ndarray, key: Hashable = "nn") -> DecisionBatch:
+    """A DecisionBatch from given rows (tables / seats -1, no legal actions, no
+    views); 0-row batches included."""
+    mask = np.ascontiguousarray(mask, dtype=bool)
+    n = mask.shape[0]
+    if obs is not None:
+        obs = np.ascontiguousarray(obs, dtype=np.float32)
+    return DecisionBatch(
+        key=key,
+        tables=np.full(n, -1, dtype=np.int32),
+        seats=np.full(n, -1, dtype=np.int32),
+        obs=obs,
+        mask=mask,
+        legal=[None] * n,
+        views=None,
+    )
 
-    wants_views = False
 
-    def __init__(self, net, seed: int) -> None:
-        self.net = net
-        self.gen = torch.Generator().manual_seed(seed)
-        self.decisions = 0
-        self.counts = np.zeros(N_ACTIONS, dtype=np.int64)
+def small_policy_net(seed: int, hidden: int = 64, layers: int = 2) -> PolicyNet:
+    """A small PolicyNet built from `seed` without moving torch's global RNG."""
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(seed)
+        return PolicyNet(hidden=hidden, layers=layers)
 
-    def act(self, batch):
-        with torch.no_grad():
-            logits = self.net(torch.from_numpy(batch.obs), torch.from_numpy(batch.mask))
-            probs = torch.distributions.Categorical(logits=logits).probs
-            actions = torch.multinomial(probs, 1, generator=self.gen).squeeze(1).numpy()
-        actions = actions.astype(np.int64)
-        for r, a in enumerate(actions):
-            assert batch.mask[r, a], f"illegal action {a} for mask {batch.mask[r]}"
-        self.counts += np.bincount(actions, minlength=N_ACTIONS)
-        self.decisions += len(actions)
-        return actions
+
+def peaked_policy_net(seed: int, hidden: int = 64, layers: int = 2) -> PolicyNet:
+    """A small net whose head weights are scaled (x300), so that action
+    probabilities on real observations are clearly uneven."""
+    net = small_policy_net(seed, hidden, layers)
+    with torch.no_grad():
+        net.head.weight.mul_(300.0)
+    return net
+
+
+class ViewCounter:
+    def __init__(self) -> None:
+        self.n = 0
+
+
+@contextlib.contextmanager
+def count_views():
+    """Patch rl_env's `Table.view` (the batch builds views only through it) with
+    a counting wrapper; yields the counter."""
+    counter = ViewCounter()
+    original = Table.view
+
+    def view(self):
+        counter.n += 1
+        return original(self)
+
+    Table.view = view  # type: ignore[method-assign]
+    try:
+        yield counter
+    finally:
+        Table.view = original  # type: ignore[method-assign]
+
+
+class _Logged:
+    """Forwards to a controller and logs `(key, actions, logp)` of every call."""
+
+    def __init__(self, key: Hashable, inner: Any, log: list) -> None:
+        self.key = key
+        self.inner = inner
+        self.log = log
+        self.wants_views = bool(getattr(inner, "wants_views", False))
+        self.wants_obs = bool(getattr(inner, "wants_obs", True))
+
+    def act(self, batch: DecisionBatch):
+        out = self.inner.act(batch)
+        if isinstance(out, tuple):
+            actions, logp = out
+            self.log.append((self.key, np.array(actions, copy=True), np.array(logp, copy=True)))
+        else:
+            self.log.append((self.key, np.array(out, copy=True), None))
+        return out
+
+
+def play(
+    controllers: Mapping[Hashable, Any],
+    seat_keys: Callable[[Any, np.random.Generator], list],
+    n_hands: int,
+    seed: int,
+    n_tables: int = 64,
+    sizes: Iterable[int] = range(2, 11),
+    recorder: Optional[Recorder] = None,
+) -> tuple[list, list]:
+    """Keep every table of a TableBatch busy with `HandSampler(seed, sizes)` hands
+    (controller keys from `seat_keys(spec, rng)`) until `n_hands` hands finished,
+    via `TableBatch.step`. Returns (finished hands, [(key, actions, logp)] per
+    controller call)."""
+    log: list = []
+    wrapped = {k: _Logged(k, c, log) for k, c in controllers.items()}
+    tb = TableBatch(n_tables, recorder=recorder)
+    sampler = HandSampler(seed, sizes)
+    rng = np.random.default_rng(seed)
+    started = 0
+    finished: list = []
+    for t in range(n_tables):
+        if started >= n_hands:
+            break
+        spec = sampler.sample()
+        tb.start_hand(t, spec, seat_keys(spec, rng))
+        started += 1
+    while len(finished) < n_hands:
+        done = tb.step(wrapped)
+        if not done and not tb.any_in_hand():
+            break
+        for fh in done:
+            finished.append(fh)
+            if started < n_hands and fh.table in tb.idle_tables():
+                spec = sampler.sample()
+                tb.start_hand(fh.table, spec, seat_keys(spec, rng))
+                started += 1
+    assert len(finished) == n_hands, (len(finished), n_hands)
+    return finished, log
