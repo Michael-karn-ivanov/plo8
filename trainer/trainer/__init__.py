@@ -16,11 +16,13 @@ from .nets import (
     LOGIT_LIMIT,
     MASK_VALUE,
     NetConfigError,
+    PolicyNet,
     masked_logits,
     mlp,
 )
 
 __all__ = [
+    "PolicyNet",
     "mlp",
     "masked_logits",
     "MASK_VALUE",

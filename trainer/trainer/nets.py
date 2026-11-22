@@ -23,6 +23,7 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 
+from rl_env import ENCODER_VERSION, N_ACTIONS, OBS_DIM
 
 __all__ = [
     "MASK_VALUE",
@@ -32,6 +33,7 @@ __all__ = [
     "NetConfigError",
     "mlp",
     "masked_logits",
+    "PolicyNet",
 ]
 
 MASK_VALUE = -1e9  # logit of an illegal action (finite: never -inf)
@@ -116,3 +118,76 @@ def masked_logits(raw: Tensor, mask: Tensor) -> Tensor:
     1e9 - 1e4, so a float32 softmax gives illegal actions exactly 0."""
     _check_mask(mask, raw.shape)
     return raw.clamp(-LOGIT_LIMIT, LOGIT_LIMIT).masked_fill(~mask, MASK_VALUE)
+
+
+# --- config in the state dict ----------------------------------------------------
+
+_MISSING = object()
+
+
+class _ConfigMixin:
+    """`get_extra_state` / `set_extra_state`: the network's config (plain ints and
+    strings, readable with `torch.load(weights_only=True)`) is stored in the state
+    dict and must match on load."""
+
+    def _config(self) -> dict:
+        raise NotImplementedError
+
+    def get_extra_state(self) -> dict:
+        return dict(self._config())
+
+    def set_extra_state(self, state: Any) -> None:
+        own = self._config()
+        if not isinstance(state, dict):
+            raise NetConfigError(f"expected a config dict in _extra_state, got {type(state).__name__}")
+        keys = sorted(set(own) | set(state), key=str)
+        diff = [k for k in keys if own.get(k, _MISSING) != state.get(k, _MISSING)]
+        if diff:
+            details = ", ".join(
+                f"{k}: state {state.get(k, '<missing>')!r} != net {own.get(k, '<missing>')!r}"
+                for k in diff
+            )
+            raise NetConfigError(f"state dict does not match this network ({details})")
+
+
+# --- networks --------------------------------------------------------------------
+
+
+class PolicyNet(_ConfigMixin, nn.Module):
+    """Masked action logits from the observation and the mask only."""
+
+    def __init__(
+        self,
+        obs_dim: int = OBS_DIM,
+        n_actions: int = N_ACTIONS,
+        hidden: int = DEFAULT_HIDDEN,
+        layers: int = DEFAULT_LAYERS,
+        encoder_version: int = ENCODER_VERSION,
+    ) -> None:
+        super().__init__()
+        self.obs_dim = _positive_int("obs_dim", obs_dim)
+        self.n_actions = _positive_int("n_actions", n_actions)
+        self.hidden = _positive_int("hidden", hidden)
+        self.layers = _positive_int("layers", layers)
+        self.encoder_version = int(encoder_version)
+        # Body first (first to last layer), then the head: a fixed RNG order.
+        self.body = mlp(obs_dim, hidden, layers)
+        self.head = _linear(hidden, n_actions, _POLICY_HEAD_GAIN)
+
+    def _config(self) -> dict:
+        return {
+            "net": "policy",
+            "encoder_version": self.encoder_version,
+            "in_dim": self.obs_dim,
+            "hidden": self.hidden,
+            "layers": self.layers,
+            "n_actions": self.n_actions,
+        }
+
+    def forward(self, obs: Tensor, mask: Tensor) -> Tensor:
+        """obs float32 (B, obs_dim), mask bool (B, n_actions) -> logits float32
+        (B, n_actions), columns in rl_env's action order. No copy, reshape or
+        dtype conversion of the inputs."""
+        _check_input(obs, self.obs_dim, "obs")
+        _check_mask(mask, (obs.shape[0], self.n_actions))
+        return masked_logits(self.head(self.body(obs)), mask)
