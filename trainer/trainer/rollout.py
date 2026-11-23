@@ -33,7 +33,7 @@ from .lineup import DEFAULT_OPPONENTS, LEARNER_KEY, MAX_LEARNER_SEATS, draw_line
 from .nets import DEFAULT_HIDDEN, DEFAULT_LAYERS, PolicyNet
 from .policy import NeuralPolicy
 
-__all__ = ["RolloutStats", "ResultStats"]
+__all__ = ["RolloutWorker", "RolloutStats", "ResultStats"]
 
 CHIPS_PER_BB = 100  # TableBatch's default
 CHIPS_PER_BIG_BET = 2 * CHIPS_PER_BB
@@ -173,3 +173,101 @@ class _StatsAccumulator:
             decisions_per_second=n_dec / wall if wall > 0 else math.nan,
             all_decisions_per_second=all_decisions / wall if wall > 0 else math.nan,
         )
+
+
+# --- the worker --------------------------------------------------------------------
+
+
+class RolloutWorker:
+    """Plays the learner against arena's bots in one TableBatch and returns the
+    learner's training records (see the module docstring). Single-threaded, in
+    the caller's process; later wrapped as a Ray actor."""
+
+    def __init__(
+        self,
+        *,
+        seed: int,
+        n_tables: int = 256,
+        opponents: Sequence[str] = DEFAULT_OPPONENTS,
+        sizes: Iterable[int] = range(2, 11),
+        max_learner_seats: int = MAX_LEARNER_SEATS,
+        hidden: int = DEFAULT_HIDDEN,
+        layers: int = DEFAULT_LAYERS,
+        num_threads: Optional[int] = 1,
+    ) -> None:
+        seed = _int_arg("seed", seed, 0)
+        n_tables = _int_arg("n_tables", n_tables, 1)
+        self.max_learner_seats = _int_arg("max_learner_seats", max_learner_seats, 1)
+        if isinstance(opponents, str):
+            raise TypeError("opponents must be a sequence of bot names, not a string")
+        opponents = tuple(opponents)
+        if not opponents:
+            raise ValueError("opponents must not be empty")
+        for name in opponents:
+            if not isinstance(name, str):
+                raise TypeError(f"opponent names must be strings, got {name!r}")
+            if name == LEARNER_KEY:
+                raise ValueError(f"{LEARNER_KEY!r} is the learner's key, not an opponent")
+            if name not in BOT_NAMES:
+                raise ValueError(f"unknown bot {name!r}; known bots: {', '.join(BOT_NAMES)}")
+        if len(set(opponents)) != len(opponents):
+            raise ValueError(f"duplicate opponent names in {opponents}")
+        self._opponents = opponents
+        sizes = tuple(sizes)
+        if not sizes:
+            raise ValueError("sizes must not be empty")
+        for s in sizes:
+            if isinstance(s, (bool, np.bool_)) or not isinstance(s, numbers.Integral):
+                raise TypeError(f"table sizes must be ints, got {s!r}")
+
+        hand_ss, lineup_ss, policy_ss, bot_ss = np.random.SeedSequence(seed).spawn(4)
+        self._sampler = HandSampler(_seed_int(hand_ss), sizes)  # checks 2..10
+        self._lineup_rng = np.random.Generator(np.random.PCG64(_seed_int(lineup_ss)))
+        bot_seeds = bot_ss.spawn(len(opponents))
+        self._bots = {
+            name: make_bot(name, seed=_seed_int(bot_seeds[i])) for i, name in enumerate(opponents)
+        }
+        # Initial weights are irrelevant (every collection loads weights first);
+        # building them must not move torch's global RNG.
+        with torch.random.fork_rng(devices=[]):
+            net = PolicyNet(hidden=hidden, layers=layers)
+        self._policy = NeuralPolicy(net, seed=_seed_int(policy_ss, np.uint32), num_threads=num_threads)
+        self._controllers: dict = {LEARNER_KEY: self._policy, **self._bots}
+        self._recorder = Recorder(keys=[LEARNER_KEY])  # bots are not recorded
+        self._batch = TableBatch(n_tables, recorder=self._recorder)
+
+    # --- read-only views ---------------------------------------------------------
+
+    @property
+    def policy(self) -> NeuralPolicy:
+        return self._policy
+
+    @property
+    def batch(self) -> TableBatch:
+        return self._batch
+
+    @property
+    def recorder(self) -> Recorder:
+        return self._recorder
+
+    @property
+    def opponents(self) -> tuple[str, ...]:
+        return self._opponents
+
+    @property
+    def sizes(self) -> tuple[int, ...]:
+        return self._sampler.sizes
+
+    # --- collection --------------------------------------------------------------
+
+    def collect(
+        self,
+        weights: Mapping[str, Any],
+        n_decisions: int,
+        *,
+        on_finished: Optional[Callable[[FinishedHand], None]] = None,
+    ) -> tuple[TrainingRecords, RolloutStats]:
+        """At least `n_decisions` learner records from finished hands, played with
+        exactly `weights`, and the collection's statistics. `on_finished` sees
+        every finished hand before its table is restarted."""
+        raise NotImplementedError

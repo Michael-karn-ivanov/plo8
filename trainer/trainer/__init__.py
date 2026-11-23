@@ -10,6 +10,9 @@ loop.
   network that receives the privileged critic input.
 - `NeuralPolicy(net, seed=...)` is an rl_env Controller over a private copy of a
   `PolicyNet`: samples with its own generator, returns `(actions, logp)`.
+- `RolloutWorker(seed=...).collect(weights, n_decisions)` plays the learner
+  against arena's bots (lineups from `draw_lineup`) in one TableBatch and returns
+  the learner's `TrainingRecords` of finished hands and `RolloutStats`.
 
 trainer never re-implements rl_env's encoder, mask or critic expansion; it only
 consumes their arrays.
@@ -29,12 +32,13 @@ from .nets import (
     mlp,
 )
 from .policy import NeuralPolicy
-from .rollout import ResultStats, RolloutStats
+from .rollout import ResultStats, RolloutStats, RolloutWorker
 
 __all__ = [
     "PolicyNet",
     "CriticNet",
     "NeuralPolicy",
+    "RolloutWorker",
     "RolloutStats",
     "ResultStats",
     "draw_lineup",
