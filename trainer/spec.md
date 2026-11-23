@@ -1,5 +1,5 @@
 Python library (`trainer`): the neural networks and, later, the training loop for a fixed-limit Omaha Hi-Lo 8-or-better bot.
-It sits on top of plo8/rl_env (observation vectors, action masks, critic input, the table batch and the training records) and plo8/arena (the fixed opponent bots now; the evaluator in a later stage). The project grows in stages; this spec currently covers the first stages: the networks, the acting policy and the rollout loop that plays the learner against the arena bots and collects its training records. The PPO learner, single-process driver, Ray, the opponent league, AWS and ONNX export are later changes to this spec.
+It sits on top of plo8/rl_env (observation vectors, action masks, critic input, the table batch and the training records) and plo8/arena (the fixed opponent bots now; the evaluator in a later stage). The project grows in stages; this spec currently covers the first stages: the networks, the acting policy, the rollout loop that plays the learner against the arena bots and collects its training records, and the PPO learner that updates the policy and critic from those records. The single-process driver, Ray, the opponent league (including the MMD magnet term of the loss), AWS and ONNX export are later changes to this spec.
 Mistakes here rarely crash: a wrong mask, a wrong input size or hidden information reaching the policy gives a network that trains and plays badly, or cheats. So the shapes, the masking and the separation between what the policy and the critic may see matter more than speed.
 
 Dependencies
@@ -54,7 +54,36 @@ Dependencies
 * Statistics per collection: hands played, learner decisions, the learner's total and mean result per hand in big bets (bb/100, counting all learner seats of a hand), broken down by table size and by opponent bot name (a hand counts for every bot name present at the table), and the wall time with decisions per second. These are for logging and the health checks of later stages; they are not an evaluation (that is arena's duplicate match).
 * Reproducible: the worker has a seed; the same seed, weights and `n_decisions` give exactly the same lineups, hands, records and statistics (apart from wall time), also over a sequence of collections; another seed gives different hands.
 
-4. Acceptance
+4. PPO learner (`Learner`)
+4.1 What it does
+* The `Learner` owns the trainable `PolicyNet` and `CriticNet` (sections 1.1, 1.2), one Adam optimiser over both, and the PPO hyperparameters. It turns one or more `TrainingRecords` (as returned by `RolloutWorker.collect`, possibly from several workers) into one PPO update of both networks, and hands out its policy weights for the next collection.
+* Each record is one learner decision of a finished hand: the hand is a single episode with one terminal reward (the seat's net result in big bets) and no discounting, so the return of every decision is the hand's reward. There is no bootstrapping and no GAE in this stage.
+* Advantage: for each decision, its reward minus the critic's value of that decision (observation plus expanded critic input), computed once per update with the critic as it was before the update and without gradients. Because the critic sees all hole cards, this subtracts most of the card luck out of the reward.
+* The critic input is built with rl_env's `expand_critic` from the records' critic cards (the same critic input as section 1.2); trainer never re-implements it.
+
+4.2 The loss (per minibatch)
+* Policy: the PPO clipped surrogate. The ratio is exp(new log-probability of the recorded action under the current policy − recorded log-probability). Advantages are normalised within the minibatch (mean 0, std 1, with a small epsilon). The policy loss is −mean(min(ratio · adv, clip(ratio, 1 − clip, 1 + clip) · adv)).
+* Critic: 0.5 · mean squared error between the critic's value and the reward.
+* Entropy bonus: the mean entropy of the masked policy distribution.
+* Total: policy loss + `vf_coef` · critic loss − `ent_coef` · entropy.
+* New log-probabilities and entropy use the same masked logits and log-softmax as `NeuralPolicy` (sections 1.1, 2), so a policy that has not changed gives a ratio of exactly 1 for every record, and illegal actions contribute nothing (no NaN or inf, also when only one action is legal).
+* The loss is a separate function from the `Learner` (given the networks, the tensors of the batch, the advantages, the minibatch indices and the config), so it can be tested on its own and extended later (the MMD magnet term of a later stage) without changing the update loop.
+
+4.3 The update
+* `update(*records)` concatenates the given records, computes the advantages (4.1), then runs `epochs` passes; each pass shuffles the decisions and splits them into minibatches of `minibatch` decisions (the last one may be smaller). For each minibatch: compute the loss, zero the gradients, back-propagate, clip the global gradient norm of all parameters to `max_grad_norm`, take one optimiser step.
+* Records with a missing log-probability (NaN, i.e. not from a `NeuralPolicy`), with a different observation width than `OBS_DIM`, or an empty batch are refused before any weight changes.
+* It returns statistics of the update for logging and the health checks of later stages: the policy loss, critic loss, entropy, approximate KL divergence between the old and new policy (mean of (ratio − 1) − log ratio), clip fraction (share of decisions with |ratio − 1| > clip), the critic's explained variance on the batch (computed with the pre-update values), the gradient norm before clipping, and the number of decisions and minibatch steps. Loss, entropy, KL and clip-fraction values are averaged over all minibatches of the last epoch.
+* The policy weights used for collection are the learner's current `PolicyNet` state dict (`get_weights()`), in the form `NeuralPolicy` and `RolloutWorker.collect` accept (section 2), detached and on CPU, so changing them later does not change the learner and vice versa.
+* Everything runs on CPU in this stage; the number of torch threads of the learner is a constructor parameter.
+
+4.4 Configuration
+* The hyperparameters are one config object with these defaults: lr 3e-4 (Adam), clip 0.2, epochs 3, minibatch 4,096, vf_coef 0.5, ent_coef 0.01, max_grad_norm 1.0, network 3 hidden layers of 512 units for both networks. All are constructor parameters.
+* Reproducible: the learner has a seed that sets the initial weights of both networks and the minibatch shuffling; the same seed, config and records give identical weights and statistics after any number of updates.
+
+4.5 Checkpoints
+* The learner saves and restores its full state (both networks, the optimiser state, the config and the number of updates done) as one file; a restored learner continues exactly as the original would have (same weights and statistics after the next update with the same records). A checkpoint built for another `ENCODER_VERSION` or network config is refused (section 1.3).
+
+5. Acceptance
 * Shapes: for batch sizes 1 and several hundred, the policy returns (B, `N_ACTIONS`) and the critic (B,), both float32, from real rl_env observations, masks and critic inputs of hands played through a `TableBatch` (2 to 10 players).
 * Masking: for every mask rl_env can produce (including only check-or-call legal, and fold masked when checking is free), illegal actions get probability ~0, the legal probabilities sum to 1, and log-probabilities and entropy of a categorical distribution over the logits are finite (no NaN or inf), also for extreme inputs.
 * Sampling from the masked policy over many decisions never picks an illegal action.
@@ -69,3 +98,10 @@ Dependencies
 * Rollout statistics: the hand and decision counts match the records, and the learner's total result equals the sum of the rewards of its records' hands per learner seat (each hand's learner result counted once per learner seat, not once per decision).
 * Rollout determinism: two workers with the same seed and weights give identical records and statistics (apart from wall time) over two consecutive collections; another seed gives different records.
 * Import boundary: rl_env and arena do not import torch or trainer (checked by a test).
+* PPO loss: with the policy unchanged since the records were collected (by a `RolloutWorker` with the learner's weights), every ratio is 1 (to float precision), approx_kl is ~0 and clip fraction is 0; the loss, its parts and all gradients are finite, including for records where only one action is legal.
+* PPO clipping: when the ratio of a decision is outside [1 − clip, 1 + clip] in the direction its advantage favours, that decision contributes no policy gradient.
+* Advantages: computed once per update from the pre-update critic, without gradients; equal to reward minus critic value.
+* Learner update: one update on real records changes the weights of both networks, keeps them finite, and never changes the records; the gradient norm is clipped to `max_grad_norm`; the returned statistics are finite and the decision and step counts match the batch size, `minibatch` and `epochs`. Records with missing log-probabilities, a wrong observation width or no rows are refused and leave the weights unchanged.
+* Learner weights: `get_weights()` loads into a `NeuralPolicy` and a `RolloutWorker`, and the policy then gives the learner's log-probabilities; the returned weights do not change when the learner updates afterwards.
+* Learning: on a small synthetic problem (for example a fixed batch of decisions where one legal action always has a higher reward), repeated updates raise that action's probability and lower the critic loss. Against the arena bots, a short run of collect-and-update iterations (a few thousand decisions each) on CPU finishes in reasonable time with finite statistics, entropy starting near ln 3 for three legal actions and not collapsing within those iterations.
+* Learner determinism and checkpoints: two learners with the same seed and records give identical weights and statistics over two updates; a learner restored from a checkpoint after one update gives the same weights and statistics after the second as the original; mismatched checkpoints are refused.
