@@ -46,7 +46,7 @@ mark { background: #ffe48a; color: #000; }
 <body>
 <main>
 <h1>trainer</h1>
-<p class="lead">Neural networks, the acting policy and the rollout loop of the Omaha Hi-Lo 8-or-better bot, built on rl_env and arena: PolicyNet, CriticNet, NeuralPolicy, draw_lineup and RolloutWorker.
+<p class="lead">Neural networks, the acting policy, the rollout loop and the PPO learner of the Omaha Hi-Lo 8-or-better bot, built on rl_env and arena: PolicyNet, CriticNet, NeuralPolicy, draw_lineup, RolloutWorker and Learner.
 Tree: folders → files → classes / functions → logical blocks → code. Only <code>.py</code> sources are covered (BUCK, JSON test sets, markdown and unit tests are omitted).</p>
 <div class="toolbar">
 <button onclick="setAll(true)">Expand all</button>
@@ -55,20 +55,20 @@ Tree: folders → files → classes / functions → logical blocks → code. Onl
 <button onclick="expandTo(2)">Classes &amp; functions</button>
 <input id="q" placeholder="Filter by name / description" oninput="filter(this.value)">
 </div>
-<details class="d0"><summary><span class="name ">./trainer</span><span class="desc"> – neural networks, the acting policy and the rollout loop of the learning bot, on top of rl_env and arena (PPO training comes in later stages)</span>
+<details class="d0"><summary><span class="name ">./trainer</span><span class="desc"> – neural networks, the acting policy, the rollout loop and the PPO learner of the learning bot, on top of rl_env and arena (driver, Ray and league come in later stages)</span>
 </summary>
 <div class="kids">
-<details class="d1"><summary><span class="name ">__init__.py</span><span class="desc"> – package entry: describes the networks, NeuralPolicy and the rollout loop, and re-exports them</span>
+<details class="d1"><summary><span class="name ">__init__.py</span><span class="desc"> – package entry: describes the networks, NeuralPolicy, the rollout loop and the PPO learner, and re-exports them</span>
 </summary>
 <div class="kids">
-<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – this stage&#x27;s pieces (networks, acting policy, rollout loop) and the rule that trainer only consumes rl_env arrays</span>
-<span class="loc">trainer/__init__.py:1–19</span>
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – this stage&#x27;s pieces (networks, acting policy, rollout loop, PPO learner) and the rule that trainer only consumes rl_env arrays</span>
+<span class="loc">trainer/__init__.py:1–23</span>
 </summary>
 <pre><code>&quot;&quot;&quot;trainer: neural networks and (in stages) the training loop for a fixed-limit
 Omaha Hi-Lo 8-or-better bot, on top of `//rl_env` and `//arena`.
 
-This stage: the policy and critic networks, the acting policy and the rollout
-loop.
+This stage: the policy and critic networks, the acting policy, the rollout loop
+and the PPO learner.
 
 - `PolicyNet(obs, mask) -&gt; logits` sees only rl_env&#x27;s observation and action
   mask; illegal actions get the finite logit `MASK_VALUE` (never -inf).
@@ -79,13 +79,17 @@ loop.
 - `RolloutWorker(seed=...).collect(weights, n_decisions)` plays the learner
   against arena&#x27;s bots (lineups from `draw_lineup`) in one TableBatch and returns
   the learner&#x27;s `TrainingRecords` of finished hands and `RolloutStats`.
+- `Learner(PPOConfig(), seed=...).update(*records)` turns those records into PPO
+  updates of both networks (`make_batch`, `compute_advantages`, `ppo_loss`) and
+  returns `UpdateStats`; `get_weights()` feeds the next collection; `save` /
+  `load` resume exactly.
 
 trainer never re-implements rl_env&#x27;s encoder, mask or critic expansion; it only
 consumes their arrays.
 &quot;&quot;&quot;</code></pre>
 </details>
-<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – lineup helpers, networks, NeuralPolicy and the rollout worker / stats</span>
-<span class="loc">trainer/__init__.py:21–35</span>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – lineup helpers, networks, NeuralPolicy, the PPO learner and the rollout worker / stats</span>
+<span class="loc">trainer/__init__.py:25–49</span>
 </summary>
 <pre><code>from .lineup import DEFAULT_OPPONENTS, LEARNER_KEY, draw_lineup
 from .nets import (
@@ -101,10 +105,20 @@ from .nets import (
     mlp,
 )
 from .policy import NeuralPolicy
+from .ppo import (
+    Learner,
+    LossParts,
+    PPOBatch,
+    PPOConfig,
+    UpdateStats,
+    compute_advantages,
+    make_batch,
+    ppo_loss,
+)
 from .rollout import ResultStats, RolloutStats, RolloutWorker</code></pre>
 </details>
-<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__ (now with the rollout and lineup names)</span>
-<span class="loc">trainer/__init__.py:37–55</span>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__ (now with the PPO learner names)</span>
+<span class="loc">trainer/__init__.py:51–77</span>
 </summary>
 <pre><code>__all__ = [
     &quot;PolicyNet&quot;,
@@ -116,6 +130,14 @@ from .rollout import ResultStats, RolloutStats, RolloutWorker</code></pre>
     &quot;draw_lineup&quot;,
     &quot;LEARNER_KEY&quot;,
     &quot;DEFAULT_OPPONENTS&quot;,
+    &quot;Learner&quot;,
+    &quot;PPOConfig&quot;,
+    &quot;PPOBatch&quot;,
+    &quot;UpdateStats&quot;,
+    &quot;LossParts&quot;,
+    &quot;make_batch&quot;,
+    &quot;compute_advantages&quot;,
+    &quot;ppo_loss&quot;,
     &quot;mlp&quot;,
     &quot;masked_logits&quot;,
     &quot;log_probs&quot;,
@@ -361,22 +383,23 @@ _EXTRA = &quot;_extra_state&quot;</code></pre>
     _check_mask(mask, raw.shape)
     return raw.clamp(-LOGIT_LIMIT, LOGIT_LIMIT).masked_fill(~mask, MASK_VALUE)</code></pre>
 </details>
-<details class="d2"><summary><span class="name def">def log_probs</span><span class="desc"> – log_softmax of masked logits; the one place log-probabilities are computed</span>
-<span class="loc">trainer/nets.py:133–137</span>
+<details class="d2"><summary><span class="name def">def log_probs</span><span class="desc"> – log_softmax of masked logits; the one place log-probabilities are computed (acting policy and PPO loss, also its entropy)</span>
+<span class="loc">trainer/nets.py:133–138</span>
 </summary>
 <pre><code>def log_probs(logits: Tensor) -&gt; Tensor:
     &quot;&quot;&quot;Action log-probabilities `log_softmax(logits, -1)` of masked logits,
     (B, N_ACTIONS). The one place they are computed from logits (acting policy
-    and, later, the PPO loss), so an unchanged network gives a ratio of 1.&quot;&quot;&quot;
+    and the PPO loss, also for its entropy), so an unchanged network gives a
+    ratio of 1.&quot;&quot;&quot;
     return torch.log_softmax(logits, dim=-1)</code></pre>
 </details>
 <details class="d2"><summary><span class="name ">constants</span><span class="desc"> – _MISSING sentinel</span>
-<span class="loc">trainer/nets.py:142–142</span>
+<span class="loc">trainer/nets.py:143–143</span>
 </summary>
 <pre><code>_MISSING = object()</code></pre>
 </details>
 <details class="d2"><summary><span class="name def">def _config_diff</span><span class="desc"> – None if two configs match, else a message naming the differing keys</span>
-<span class="loc">trainer/nets.py:145–157</span>
+<span class="loc">trainer/nets.py:146–158</span>
 </summary>
 <pre><code>def _config_diff(own: dict, state: Any) -&gt; Optional[str]:
     &quot;&quot;&quot;None if `state` equals the config `own`, else a message naming the
@@ -396,7 +419,7 @@ _EXTRA = &quot;_extra_state&quot;</code></pre>
 </summary>
 <div class="kids">
 <details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring</span>
-<span class="loc">trainer/nets.py:160–164</span>
+<span class="loc">trainer/nets.py:161–165</span>
 </summary>
 <pre><code>class _ConfigMixin:
     &quot;&quot;&quot;`get_extra_state` / `set_extra_state`: the network&#x27;s config (plain ints and
@@ -404,19 +427,19 @@ _EXTRA = &quot;_extra_state&quot;</code></pre>
     dict and must match on load.&quot;&quot;&quot;</code></pre>
 </details>
 <details class="d3"><summary><span class="name def">def _config</span><span class="desc"> – the network&#x27;s config (implemented by each network)</span>
-<span class="loc">trainer/nets.py:165–166</span>
+<span class="loc">trainer/nets.py:166–167</span>
 </summary>
 <pre><code>def _config(self) -&gt; dict:
     raise NotImplementedError</code></pre>
 </details>
 <details class="d3"><summary><span class="name def">def get_extra_state</span><span class="desc"> – the config as extra state</span>
-<span class="loc">trainer/nets.py:168–169</span>
+<span class="loc">trainer/nets.py:169–170</span>
 </summary>
 <pre><code>def get_extra_state(self) -&gt; dict:
     return dict(self._config())</code></pre>
 </details>
 <details class="d3"><summary><span class="name def">def set_extra_state</span><span class="desc"> – raises NetConfigError when the loaded config differs</span>
-<span class="loc">trainer/nets.py:171–174</span>
+<span class="loc">trainer/nets.py:172–175</span>
 </summary>
 <pre><code>def set_extra_state(self, state: Any) -&gt; None:
     diff = _config_diff(self._config(), state)
@@ -429,7 +452,7 @@ _EXTRA = &quot;_extra_state&quot;</code></pre>
 </summary>
 <div class="kids">
 <details class="d3"><summary><span class="desc">argument types</span>
-<span class="loc">trainer/nets.py:183–186</span>
+<span class="loc">trainer/nets.py:184–187</span>
 </summary>
 <pre><code>if not isinstance(net, _ConfigMixin) or not isinstance(net, nn.Module):
     raise TypeError(f&quot;net must be a PolicyNet or CriticNet, got {type(net).__name__}&quot;)
@@ -437,7 +460,7 @@ if not isinstance(state_dict, Mapping):
     raise NetConfigError(f&quot;a state dict must be a mapping, got {type(state_dict).__name__}&quot;)</code></pre>
 </details>
 <details class="d3"><summary><span class="desc">recorded config must match</span>
-<span class="loc">trainer/nets.py:187–193</span>
+<span class="loc">trainer/nets.py:188–194</span>
 </summary>
 <pre><code>problems: list[str] = []
 if _EXTRA not in state_dict:
@@ -448,7 +471,7 @@ else:
         problems.append(diff)</code></pre>
 </details>
 <details class="d3"><summary><span class="desc">missing / unexpected keys</span>
-<span class="loc">trainer/nets.py:194–202</span>
+<span class="loc">trainer/nets.py:195–203</span>
 </summary>
 <pre><code>own = net.state_dict()
 expected = [k for k in own if k != _EXTRA]
@@ -461,7 +484,7 @@ if unexpected:
     problems.append(f&quot;unexpected keys {unexpected}&quot;)</code></pre>
 </details>
 <details class="d3"><summary><span class="desc">per-tensor shape and dtype; raise naming every problem</span>
-<span class="loc">trainer/nets.py:203–214</span>
+<span class="loc">trainer/nets.py:204–215</span>
 </summary>
 <pre><code>for k in expected:
     if k not in state_dict:
@@ -482,7 +505,7 @@ if problems:
 </summary>
 <div class="kids">
 <details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – validated sizes and encoder version; body then head (fixed RNG order)</span>
-<span class="loc">trainer/nets.py:223–239</span>
+<span class="loc">trainer/nets.py:224–240</span>
 </summary>
 <pre><code>def __init__(
     self,
@@ -503,7 +526,7 @@ if problems:
     self.head = _linear(hidden, n_actions, _POLICY_HEAD_GAIN)</code></pre>
 </details>
 <details class="d3"><summary><span class="name def">def _config</span><span class="desc"> – kind &quot;policy&quot;, encoder version and sizes</span>
-<span class="loc">trainer/nets.py:241–249</span>
+<span class="loc">trainer/nets.py:242–250</span>
 </summary>
 <pre><code>def _config(self) -&gt; dict:
     return {
@@ -516,7 +539,7 @@ if problems:
     }</code></pre>
 </details>
 <details class="d3"><summary><span class="name def">def forward</span><span class="desc"> – checks obs / mask and returns masked logits</span>
-<span class="loc">trainer/nets.py:251–257</span>
+<span class="loc">trainer/nets.py:252–258</span>
 </summary>
 <pre><code>def forward(self, obs: Tensor, mask: Tensor) -&gt; Tensor:
     &quot;&quot;&quot;obs float32 (B, obs_dim), mask bool (B, n_actions) -&gt; logits float32
@@ -532,14 +555,14 @@ if problems:
 </summary>
 <div class="kids">
 <details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring</span>
-<span class="loc">trainer/nets.py:260–263</span>
+<span class="loc">trainer/nets.py:261–264</span>
 </summary>
 <pre><code>class CriticNet(_ConfigMixin, nn.Module):
     &quot;&quot;&quot;Value (big bets) of the acting seat from the observation plus the
     privileged critic input. Training only; never used at play time.&quot;&quot;&quot;</code></pre>
 </details>
 <details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – validated sizes and encoder version; body and a 1-wide head</span>
-<span class="loc">trainer/nets.py:264–277</span>
+<span class="loc">trainer/nets.py:265–278</span>
 </summary>
 <pre><code>def __init__(
     self,
@@ -557,7 +580,7 @@ if problems:
     self.head = _linear(hidden, 1, _CRITIC_HEAD_GAIN)</code></pre>
 </details>
 <details class="d3"><summary><span class="name def">def _config</span><span class="desc"> – kind &quot;critic&quot;, encoder version and sizes</span>
-<span class="loc">trainer/nets.py:279–287</span>
+<span class="loc">trainer/nets.py:280–288</span>
 </summary>
 <pre><code>def _config(self) -&gt; dict:
     return {
@@ -570,7 +593,7 @@ if problems:
     }</code></pre>
 </details>
 <details class="d3"><summary><span class="name def">def forward</span><span class="desc"> – checks the input and returns one value per row</span>
-<span class="loc">trainer/nets.py:289–292</span>
+<span class="loc">trainer/nets.py:290–293</span>
 </summary>
 <pre><code>def forward(self, x: Tensor) -&gt; Tensor:
     &quot;&quot;&quot;x float32 (B, in_dim) -&gt; values float32 (B,) (also for B = 1).&quot;&quot;&quot;
@@ -583,7 +606,7 @@ if problems:
 </summary>
 <div class="kids">
 <details class="d3"><summary><span class="desc">validate obs type, dtype and shape</span>
-<span class="loc">trainer/nets.py:307–312</span>
+<span class="loc">trainer/nets.py:309–314</span>
 </summary>
 <pre><code>if not isinstance(obs, np.ndarray):
     raise TypeError(f&quot;obs must be a numpy array, got {type(obs).__name__}&quot;)
@@ -593,7 +616,7 @@ if obs.ndim != 2 or obs.shape[1] != OBS_DIM:
     raise ValueError(f&quot;obs must have shape (B, {OBS_DIM}), got {obs.shape}&quot;)</code></pre>
 </details>
 <details class="d3"><summary><span class="desc">validate the critic cards and concatenate with expand_critic</span>
-<span class="loc">trainer/nets.py:313–318</span>
+<span class="loc">trainer/nets.py:315–320</span>
 </summary>
 <pre><code>cards = np.asarray(critic_cards)
 if cards.ndim != 3 or len(cards) != obs.shape[0]:
@@ -814,6 +837,772 @@ actions = a.squeeze(1).numpy()</code></pre>
 if not mask[np.arange(n), actions].all():
     raise RuntimeError(&quot;sampled an illegal action&quot;)
 return actions, logp.numpy()</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">ppo.py</span><span class="desc"> – the PPO learner: records → batch, pre-update advantages, clipped PPO loss, Adam updates of both networks, weights for collection and checkpoints</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – make_batch, advantages (return = reward), the stateless loss, the Learner and its RNG / refusal rules</span>
+<span class="loc">trainer/ppo.py:1–26</span>
+</summary>
+<pre><code>"""The PPO learner: training records -&gt; PPO updates of both networks.
+
+- `make_batch(*records) -&gt; PPOBatch` validates rl_env `TrainingRecords` (of one
+  or several workers), concatenates them in numpy (always a copy) and builds the
+  tensors the loss needs, including the critic input `critic_x` (rl_env's
+  `expand_critic` through `critic_input`, once per update).
+- `compute_advantages(critic, batch)`: return minus the pre-update critic value,
+  computed once per update without gradient. Every decision belongs to a
+  single-hand episode with one terminal reward, so the return is the reward
+  (no discounting, no GAE, no bootstrapping).
+- `ppo_loss(policy, critic, batch, adv, idx, cfg) -&gt; (loss, LossParts)`: the
+  clipped surrogate, the critic's MSE and the entropy bonus of one minibatch. A
+  stateless function (the later magnet term extends it). Log-probabilities come
+  from `log_probs(PolicyNet(obs, mask))`, exactly as `NeuralPolicy` acts, so an
+  unchanged policy gives a ratio of 1. The policy sees only `obs` and `mask`;
+  the privileged `critic_x` goes only to the critic.
+- `Learner(config, seed=...)` owns both networks, one Adam optimiser over them
+  and a private shuffle generator. `update(*records)` runs `epochs` passes of
+  shuffled minibatches; `get_weights()` hands out an unaliased copy of the
+  policy weights for the next collection; `save` / `load` write and restore
+  everything needed to resume exactly.
+
+Torch's global RNG is never used (network initialisation runs inside
+`torch.random.fork_rng`), and every refused input raises before any weight,
+optimiser state, generator or counter changes.
+"""</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – contextlib, copy, dataclasses, time, numpy, torch, rl_env sizes / TrainingRecords, nets (not arena, not the rollout loop)</span>
+<span class="loc">trainer/ppo.py:28–55</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import contextlib
+import copy
+import dataclasses
+import math
+import numbers
+import os
+import time
+from dataclasses import dataclass
+from typing import Any, Iterator, Optional
+
+import numpy as np
+import torch
+from torch import Tensor
+
+from rl_env import ENCODER_VERSION, N_ACTIONS, OBS_DIM, TrainingRecords
+
+from .nets import (
+    DEFAULT_HIDDEN,
+    DEFAULT_LAYERS,
+    CriticNet,
+    NetConfigError,
+    PolicyNet,
+    check_state_dict,
+    critic_input,
+    log_probs,
+)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, CHECKPOINT_FORMAT = &quot;trainer.learner/1&quot;, the checkpoint keys, the critic card shape (9, 4), the network fields</span>
+<span class="loc">trainer/ppo.py:57–83</span>
+</summary>
+<pre><code>__all__ = [
+    "PPOConfig",
+    "PPOBatch",
+    "make_batch",
+    "compute_advantages",
+    "explained_variance",
+    "ppo_loss",
+    "LossParts",
+    "Learner",
+    "UpdateStats",
+    "CHECKPOINT_FORMAT",
+]
+
+CHECKPOINT_FORMAT = "trainer.learner/1"
+_CHECKPOINT_KEYS = (
+    "format",
+    "encoder_version",
+    "config",
+    "seed",
+    "n_updates",
+    "policy",
+    "critic",
+    "optimizer",
+    "shuffle_rng",
+)
+_CRITIC_CARDS_SHAPE = (9, 4)  # rl_env's critic_cards rows: 9 other seats x 4 cards
+_NET_FIELDS = ("hidden", "layers")</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _is_int</span><span class="desc"> – an integral value that is not a bool</span>
+<span class="loc">trainer/ppo.py:89–90</span>
+</summary>
+<pre><code>def _is_int(value: Any) -&gt; bool:
+    return isinstance(value, numbers.Integral) and not isinstance(value, (bool, np.bool_))</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _check_seed</span><span class="desc"> – an int &gt;= 0</span>
+<span class="loc">trainer/ppo.py:93–99</span>
+</summary>
+<pre><code>def _check_seed(seed: Any) -&gt; int:
+    if not _is_int(seed):
+        raise TypeError(f"seed must be an int, got {seed!r}")
+    seed = int(seed)
+    if seed &lt; 0:
+        raise ValueError(f"seed must be &gt;= 0, got {seed}")
+    return seed</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _check_threads</span><span class="desc"> – None or a positive int</span>
+<span class="loc">trainer/ppo.py:102–110</span>
+</summary>
+<pre><code>def _check_threads(num_threads: Any) -&gt; Optional[int]:
+    if num_threads is None:
+        return None
+    if not _is_int(num_threads):
+        raise TypeError(f"num_threads must be an int or None, got {num_threads!r}")
+    num_threads = int(num_threads)
+    if num_threads &lt; 1:
+        raise ValueError(f"num_threads must be &gt;= 1, got {num_threads}")
+    return num_threads</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _seed32</span><span class="desc"> – one uint32 torch seed from a SeedSequence</span>
+<span class="loc">trainer/ppo.py:113–114</span>
+</summary>
+<pre><code>def _seed32(ss: np.random.SeedSequence) -&gt; int:
+    return int(ss.generate_state(1, np.uint32)[0])</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _torch_threads</span><span class="desc"> – context manager: run with a torch thread count and restore the previous one (also on error); None changes nothing</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">None: leave torch&#x27;s setting alone</span>
+<span class="loc">trainer/ppo.py:123–125</span>
+</summary>
+<pre><code>if num_threads is None:
+    yield
+    return</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">set the count, restore the previous one in finally</span>
+<span class="loc">trainer/ppo.py:126–131</span>
+</summary>
+<pre><code>previous = torch.get_num_threads()
+torch.set_num_threads(num_threads)
+try:
+    yield
+finally:
+    torch.set_num_threads(previous)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – the int and float fields of PPOConfig</span>
+<span class="loc">trainer/ppo.py:136–137</span>
+</summary>
+<pre><code>_INT_FIELDS = ("epochs", "minibatch", "hidden", "layers")
+_FLOAT_FIELDS = ("lr", "clip", "vf_coef", "ent_coef", "max_grad_norm", "adam_eps", "adv_eps")</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">PPOConfig</span><span class="desc"> – frozen PPO hyper-parameters and network size (plain ints / floats, validated)</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – lr 3e-4, clip 0.2, epochs 3, minibatch 4096, vf_coef 0.5, ent_coef 0.01, max_grad_norm 1.0, 512 x 3, adam_eps 1e-5, adv_eps 1e-8</span>
+<span class="loc">trainer/ppo.py:140–155</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class PPOConfig:
+    """PPO hyper-parameters and the size of both networks. Plain ints and floats
+    only, so `dataclasses.asdict` goes into a `weights_only` checkpoint."""
+
+    lr: float = 3e-4  # Adam
+    clip: float = 0.2
+    epochs: int = 3
+    minibatch: int = 4096  # decisions per minibatch
+    vf_coef: float = 0.5
+    ent_coef: float = 0.01
+    max_grad_norm: float = 1.0
+    hidden: int = DEFAULT_HIDDEN  # both networks
+    layers: int = DEFAULT_LAYERS  # both networks
+    adam_eps: float = 1e-5  # CleanRL's PPO value
+    adv_eps: float = 1e-8  # advantage normalisation</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __post_init__</span><span class="desc"> – validates every field (TypeError / ValueError naming it) and stores plain ints / floats</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">int fields are ints, not bools</span>
+<span class="loc">trainer/ppo.py:158–162</span>
+</summary>
+<pre><code>for name in _INT_FIELDS:
+    v = getattr(self, name)
+    if not _is_int(v):
+        raise TypeError(f"PPOConfig.{name} must be an int, got {v!r}")
+    object.__setattr__(self, name, int(v))</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">float fields are real, finite numbers</span>
+<span class="loc">trainer/ppo.py:163–170</span>
+</summary>
+<pre><code>for name in _FLOAT_FIELDS:
+    v = getattr(self, name)
+    if isinstance(v, (bool, np.bool_)) or not isinstance(v, numbers.Real):
+        raise TypeError(f"PPOConfig.{name} must be a float, got {v!r}")
+    v = float(v)
+    if not math.isfinite(v):
+        raise ValueError(f"PPOConfig.{name} must be finite, got {v!r}")
+    object.__setattr__(self, name, v)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">range of every field</span>
+<span class="loc">trainer/ppo.py:171–186</span>
+</summary>
+<pre><code>checks = (
+    ("lr", self.lr &gt; 0, "&gt; 0"),
+    ("clip", 0 &lt; self.clip &lt; 1, "in (0, 1)"),
+    ("epochs", self.epochs &gt;= 1, "&gt;= 1"),
+    ("minibatch", self.minibatch &gt;= 1, "&gt;= 1"),
+    ("vf_coef", self.vf_coef &gt;= 0, "&gt;= 0"),
+    ("ent_coef", self.ent_coef &gt;= 0, "&gt;= 0"),
+    ("max_grad_norm", self.max_grad_norm &gt; 0, "&gt; 0"),
+    ("hidden", self.hidden &gt;= 1, "&gt;= 1"),
+    ("layers", self.layers &gt;= 1, "&gt;= 1"),
+    ("adam_eps", self.adam_eps &gt; 0, "&gt; 0"),
+    ("adv_eps", self.adv_eps &gt; 0, "&gt; 0"),
+)
+for name, ok, rule in checks:
+    if not ok:
+        raise ValueError(f"PPOConfig.{name} must be {rule}, got {getattr(self, name)!r}")</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">PPOBatch</span><span class="desc"> – the tensors of one update: obs, mask, action, recorded logp, PRIVILEGED critic_x, reward</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – six CPU tensors with their own memory</span>
+<span class="loc">trainer/ppo.py:192–201</span>
+</summary>
+<pre><code>@dataclass(frozen=True, eq=False)
+class PPOBatch:
+    """The tensors of one update (CPU, own memory)."""
+
+    obs: Tensor  # float32 (N, OBS_DIM)
+    mask: Tensor  # bool (N, N_ACTIONS)
+    action: Tensor  # int64 (N,)
+    logp: Tensor  # float32 (N,): recorded (old) log-probabilities
+    critic_x: Tensor  # float32 (N, OBS_DIM + PRIV_DIM): PRIVILEGED, critic only
+    reward: Tensor  # float32 (N,): the return of each decision, big bets</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __len__</span><span class="desc"> – number of decisions</span>
+<span class="loc">trainer/ppo.py:203–204</span>
+</summary>
+<pre><code>def __len__(self) -&gt; int:
+    return int(self.action.shape[0])</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def _check_array</span><span class="desc"> – one record field is a numpy array of the given dtype and shape</span>
+<span class="loc">trainer/ppo.py:207–213</span>
+</summary>
+<pre><code>def _check_array(i: int, name: str, x: Any, dtype: Any, shape: tuple) -&gt; None:
+    if not isinstance(x, np.ndarray):
+        raise TypeError(f"records[{i}].{name} must be a numpy array, got {type(x).__name__}")
+    if x.dtype != dtype:
+        raise TypeError(f"records[{i}].{name} must be {np.dtype(dtype)}, got {x.dtype}")
+    if x.shape != shape:
+        raise ValueError(f"records[{i}].{name} must have shape {shape}, got {x.shape}")</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _check_record</span><span class="desc"> – shapes and dtypes of one TrainingRecords; returns its row count</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">obs: (N, OBS_DIM) float32 (another width = another encoder layout)</span>
+<span class="loc">trainer/ppo.py:218–228</span>
+</summary>
+<pre><code>obs = r.obs
+if not isinstance(obs, np.ndarray):
+    raise TypeError(f"records[{i}].obs must be a numpy array, got {type(obs).__name__}")
+if obs.ndim != 2 or obs.shape[1] != OBS_DIM:
+    raise ValueError(
+        f"records[{i}].obs must have shape (N, {OBS_DIM}), got {obs.shape} "
+        f"(records of another encoder layout?)"
+    )
+if obs.dtype != np.float32:
+    raise TypeError(f"records[{i}].obs must be float32, got {obs.dtype}")
+n = obs.shape[0]</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">mask, action, logp, reward of the same row count</span>
+<span class="loc">trainer/ppo.py:229–232</span>
+</summary>
+<pre><code>_check_array(i, "mask", r.mask, np.bool_, (n, N_ACTIONS))
+_check_array(i, "action", r.action, np.int64, (n,))
+_check_array(i, "logp", r.logp, np.float32, (n,))
+_check_array(i, "reward", r.reward, np.float32, (n,))</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">critic cards: integer (N, 9, 4)</span>
+<span class="loc">trainer/ppo.py:233–242</span>
+</summary>
+<pre><code>critic = r.critic
+if not isinstance(critic, np.ndarray):
+    raise TypeError(f"records[{i}].critic must be a numpy array, got {type(critic).__name__}")
+if critic.dtype.kind not in "iu":
+    raise TypeError(f"records[{i}].critic must be an integer array, got {critic.dtype}")
+if critic.shape != (n, *_CRITIC_CARDS_SHAPE):
+    raise ValueError(
+        f"records[{i}].critic must have shape {(n, *_CRITIC_CARDS_SHAPE)}, got {critic.shape}"
+    )
+return n</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def make_batch</span><span class="desc"> – validates the records, then concatenates them (always a copy) into a PPOBatch</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">at least one argument, each a TrainingRecords</span>
+<span class="loc">trainer/ppo.py:249–253</span>
+</summary>
+<pre><code>if not records:
+    raise TypeError("make_batch needs at least one TrainingRecords")
+for i, r in enumerate(records):
+    if not isinstance(r, TrainingRecords):
+        raise TypeError(f"records[{i}] must be an rl_env.TrainingRecords, got {type(r).__name__}")</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">shapes / dtypes of every record; refuse zero rows</span>
+<span class="loc">trainer/ppo.py:254–256</span>
+</summary>
+<pre><code>total = sum(_check_record(i, r) for i, r in enumerate(records))
+if total == 0:
+    raise ValueError("no decisions")</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">every logp finite (NaN rows are not from a NeuralPolicy)</span>
+<span class="loc">trainer/ppo.py:257–262</span>
+</summary>
+<pre><code>no_logp = sum(int((~np.isfinite(r.logp)).sum()) for r in records)
+if no_logp:
+    raise ValueError(
+        f"{no_logp} records without log-probability, not from a NeuralPolicy "
+        f"(e.g. rows of a RandomController or an arena bot)"
+    )</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">recorded actions in range and allowed by their mask; rewards finite</span>
+<span class="loc">trainer/ppo.py:263–272</span>
+</summary>
+<pre><code>for i, r in enumerate(records):
+    n = len(r.action)
+    if n == 0:
+        continue
+    if ((r.action &lt; 0) | (r.action &gt;= N_ACTIONS)).any():
+        raise ValueError(f"records[{i}] has actions outside 0..{N_ACTIONS - 1}")
+    if not r.mask[np.arange(n), r.action].all():
+        raise ValueError(f"records[{i}] has recorded actions not allowed by their mask")
+    if not np.isfinite(r.reward).all():
+        raise ValueError(f"records[{i}] has non-finite rewards")</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def cat</span><span class="desc"> – one field of all records, concatenated (a copy)</span>
+<span class="loc">trainer/ppo.py:274–275</span>
+</summary>
+<pre><code>def cat(name: str) -&gt; np.ndarray:  # np.concatenate always copies
+    return np.concatenate([getattr(r, name) for r in records])</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">critic input built once with critic_input, then the six tensors</span>
+<span class="loc">trainer/ppo.py:277–286</span>
+</summary>
+<pre><code>obs, critic = cat("obs"), cat("critic")
+x = critic_input(obs, critic)  # PRIVILEGED: only for the critic
+return PPOBatch(
+    obs=torch.from_numpy(obs),
+    mask=torch.from_numpy(cat("mask")),
+    action=torch.from_numpy(cat("action")),
+    logp=torch.from_numpy(cat("logp")),
+    critic_x=torch.from_numpy(x),
+    reward=torch.from_numpy(cat("reward")),
+)</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name def">def compute_advantages</span><span class="desc"> – (reward − V, V) with the current critic, without gradient, in chunks</span>
+<span class="loc">trainer/ppo.py:292–304</span>
+</summary>
+<pre><code>def compute_advantages(
+    critic: CriticNet, batch: PPOBatch, chunk: int = 8192
+) -&gt; tuple[Tensor, Tensor]:
+    """(adv, values), both float32 (N,): `reward - critic(critic_x)` with the
+    critic as it is now, without gradient, in chunks of `chunk` rows. Called once
+    per update, before the first optimiser step."""
+    if not _is_int(chunk) or chunk &lt; 1:
+        raise ValueError(f"chunk must be a positive int, got {chunk!r}")
+    with torch.no_grad():
+        values = torch.cat(
+            [critic(batch.critic_x[s : s + chunk]) for s in range(0, len(batch), chunk)]
+        )
+    return batch.reward - values, values</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def explained_variance</span><span class="desc"> – 1 − Var(R − V) / Var(R) in float64 (nan when Var(R) = 0)</span>
+<span class="loc">trainer/ppo.py:307–315</span>
+</summary>
+<pre><code>def explained_variance(values: Tensor, returns: Tensor) -&gt; float:
+    """1 - Var(R - V) / Var(R) in float64 with population variances; nan when
+    Var(R) == 0."""
+    v = values.detach().double().numpy()
+    r = returns.detach().double().numpy()
+    var_r = float(np.var(r))
+    if var_r == 0.0:
+        return math.nan
+    return float(1.0 - np.var(r - v) / var_r)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">LossParts</span><span class="desc"> – policy / value loss and entropy (with graph), approx_kl, clip fraction and ratios (detached)</span>
+<span class="loc">trainer/ppo.py:321–328</span>
+</summary>
+<pre><code>@dataclass(frozen=True, eq=False)
+class LossParts:
+    policy_loss: Tensor  # scalar, with graph
+    value_loss: Tensor  # scalar, with graph
+    entropy: Tensor  # scalar, with graph
+    approx_kl: Tensor  # scalar, detached
+    clip_frac: Tensor  # scalar, detached
+    ratio: Tensor  # (len(idx),), detached</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def ppo_loss</span><span class="desc"> – stateless PPO loss of one minibatch: clipped surrogate + vf_coef · value MSE − ent_coef · entropy</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">new log-probabilities from the policy (obs and mask only) and the probability ratio</span>
+<span class="loc">trainer/ppo.py:343–346</span>
+</summary>
+<pre><code>lp = log_probs(policy(batch.obs[idx], batch.mask[idx]))  # (M, N_ACTIONS)
+new_logp = lp.gather(1, batch.action[idx].unsqueeze(1)).squeeze(1)
+log_ratio = new_logp - batch.logp[idx]
+ratio = log_ratio.exp()</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">advantages normalised within the minibatch (population std: one row gives 0)</span>
+<span class="loc">trainer/ppo.py:347–348</span>
+</summary>
+<pre><code>a = adv[idx]
+a = (a - a.mean()) / (a.std(correction=0) + cfg.adv_eps)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">clipped surrogate, critic MSE on critic_x, NaN-free masked entropy, total loss</span>
+<span class="loc">trainer/ppo.py:349–353</span>
+</summary>
+<pre><code>pg = -torch.min(ratio * a, ratio.clamp(1 - cfg.clip, 1 + cfg.clip) * a).mean()
+v = 0.5 * (critic(batch.critic_x[idx]) - batch.reward[idx]).pow(2).mean()
+# Illegal actions: exp(lp) == 0 exactly and lp is finite, so 0 * lp == 0.
+ent = -(lp.exp() * lp).sum(-1).mean()
+loss = pg + cfg.vf_coef * v - cfg.ent_coef * ent</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">detached diagnostics: approx KL and clip fraction</span>
+<span class="loc">trainer/ppo.py:354–357</span>
+</summary>
+<pre><code>with torch.no_grad():
+    kl = ((ratio - 1) - log_ratio).mean()
+    cf = ((ratio - 1).abs() &gt; cfg.clip).float().mean()
+return loss, LossParts(pg, v, ent, kl, cf, ratio.detach())</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">UpdateStats</span><span class="desc"> – logging figures of one update (last-epoch loss means, gradient norms, explained variance, counts, wall time)</span>
+<span class="loc">trainer/ppo.py:363–379</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class UpdateStats:
+    policy_loss: float  # \
+    value_loss: float  #  | means over the minibatches of the last epoch
+    entropy: float  #  | (each minibatch weighs equally)
+    approx_kl: float  #  | mean of (ratio - 1) - log ratio
+    clip_frac: float  #  | share of decisions with |ratio - 1| &gt; clip
+    grad_norm: float  # /  global norm before clipping
+    grad_norm_max: float  # max over all steps of the update, before clipping
+    explained_variance: float  # 1 - Var(R - V_old) / Var(R), pre-update values
+    value_mean: float  # mean pre-update critic value, big bets
+    reward_mean: float  # mean return, big bets
+    adv_std: float  # std of the raw (unnormalised) advantages
+    decisions: int  # rows of the update
+    steps: int  # minibatch steps = epochs * ceil(decisions / minibatch)
+    update: int  # n_updates after this update
+    wall_time: float  # seconds</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">Learner</span><span class="desc"> – both networks, one Adam optimiser and a private shuffle generator; PPO updates, weights and checkpoints</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring</span>
+<span class="loc">trainer/ppo.py:385–387</span>
+</summary>
+<pre><code>class Learner:
+    """Both networks, one Adam optimiser over them and a private shuffle
+    generator; PPO updates from training records (see the module docstring)."""</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – seeded networks (global RNG untouched), shuffle generator, Adam over both networks</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">config (default PPOConfig()), seed and thread count validated</span>
+<span class="loc">trainer/ppo.py:396–400</span>
+</summary>
+<pre><code>cfg = PPOConfig() if config is None else config
+if not isinstance(cfg, PPOConfig):
+    raise TypeError(f"config must be a PPOConfig, got {type(cfg).__name__}")
+seed = _check_seed(seed)
+num_threads = _check_threads(num_threads)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">three child seeds; both networks built inside fork_rng from their own seed, in train mode</span>
+<span class="loc">trainer/ppo.py:401–410</span>
+</summary>
+<pre><code>policy_ss, critic_ss, shuffle_ss = np.random.SeedSequence(seed).spawn(3)
+# The seed sets both networks' initial weights; torch's global RNG is
+# left where it was.
+with torch.random.fork_rng(devices=[]):
+    torch.manual_seed(_seed32(policy_ss))
+    policy = PolicyNet(hidden=cfg.hidden, layers=cfg.layers)
+    torch.manual_seed(_seed32(critic_ss))
+    critic = CriticNet(hidden=cfg.hidden, layers=cfg.layers)
+policy.train()
+critic.train()</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">state, shuffle generator, one Adam over both networks&#x27; parameters, update counter</span>
+<span class="loc">trainer/ppo.py:411–420</span>
+</summary>
+<pre><code>self._cfg = cfg
+self._seed = seed
+self._num_threads = num_threads
+self._policy = policy
+self._critic = critic
+self._gen = torch.Generator(device="cpu")
+self._gen.manual_seed(_seed32(shuffle_ss))  # minibatch permutations only
+self._params = [*policy.parameters(), *critic.parameters()]
+self._opt = torch.optim.Adam(self._params, lr=cfg.lr, eps=cfg.adam_eps)
+self._n_updates = 0</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def config</span><span class="desc"> – the PPOConfig (read-only property)</span>
+<span class="loc">trainer/ppo.py:424–426</span>
+</summary>
+<pre><code>@property
+def config(self) -&gt; PPOConfig:
+    return self._cfg</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def policy</span><span class="desc"> – the live trainable PolicyNet</span>
+<span class="loc">trainer/ppo.py:428–431</span>
+</summary>
+<pre><code>@property
+def policy(self) -&gt; PolicyNet:
+    """The live trainable policy network."""
+    return self._policy</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def critic</span><span class="desc"> – the live trainable CriticNet</span>
+<span class="loc">trainer/ppo.py:433–436</span>
+</summary>
+<pre><code>@property
+def critic(self) -&gt; CriticNet:
+    """The live trainable critic network."""
+    return self._critic</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def optimizer</span><span class="desc"> – the Adam optimiser</span>
+<span class="loc">trainer/ppo.py:438–440</span>
+</summary>
+<pre><code>@property
+def optimizer(self) -&gt; torch.optim.Adam:
+    return self._opt</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def n_updates</span><span class="desc"> – completed updates</span>
+<span class="loc">trainer/ppo.py:442–444</span>
+</summary>
+<pre><code>@property
+def n_updates(self) -&gt; int:
+    return self._n_updates</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def seed</span><span class="desc"> – the construction seed</span>
+<span class="loc">trainer/ppo.py:446–448</span>
+</summary>
+<pre><code>@property
+def seed(self) -&gt; int:
+    return self._seed</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def update</span><span class="desc"> – one PPO update from one or several workers&#x27; records; returns UpdateStats</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">build the batch first (a refusal changes nothing)</span>
+<span class="loc">trainer/ppo.py:456–457</span>
+</summary>
+<pre><code>batch = make_batch(*records)
+cfg, n = self._cfg, len(batch)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">with the learner&#x27;s thread count: advantages and explained variance once, from the pre-update critic</span>
+<span class="loc">trainer/ppo.py:458–463</span>
+</summary>
+<pre><code>with _torch_threads(self._num_threads):
+    t0 = time.perf_counter()
+    adv, values = compute_advantages(self._critic, batch)
+    ev = explained_variance(values, batch.reward)
+    last: list[tuple[LossParts, float]] = []
+    gmax, steps = 0.0, 0</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">epochs × shuffled minibatches: loss (via the module global ppo_loss), backward, global norm clipping, Adam step</span>
+<span class="loc">trainer/ppo.py:464–481</span>
+</summary>
+<pre><code>for epoch in range(cfg.epochs):
+    perm = torch.randperm(n, generator=self._gen)
+    for s in range(0, n, cfg.minibatch):
+        idx = perm[s : s + cfg.minibatch]  # the last one may be smaller
+        # Through the module global, so tests (and later stages) can wrap it.
+        loss, parts = ppo_loss(self._policy, self._critic, batch, adv, idx, cfg)
+        self._opt.zero_grad(set_to_none=True)
+        loss.backward()
+        gn = float(
+            torch.nn.utils.clip_grad_norm_(
+                self._params, cfg.max_grad_norm, error_if_nonfinite=True
+            )
+        )
+        self._opt.step()
+        steps += 1
+        gmax = max(gmax, gn)
+        if epoch == cfg.epochs - 1:
+            last.append((parts, gn))</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">count the update and stop the clock</span>
+<span class="loc">trainer/ppo.py:482–483</span>
+</summary>
+<pre><code>self._n_updates += 1
+wall = time.perf_counter() - t0</code></pre>
+</details>
+<details class="d4"><summary><span class="name def">def mean</span><span class="desc"> – equal-weight mean of one figure over the last epoch&#x27;s minibatches</span>
+<span class="loc">trainer/ppo.py:485–486</span>
+</summary>
+<pre><code>def mean(get) -&gt; float:
+    return float(np.mean([get(p, g) for p, g in last]))</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">assemble UpdateStats</span>
+<span class="loc">trainer/ppo.py:488–504</span>
+</summary>
+<pre><code>return UpdateStats(
+    policy_loss=mean(lambda p, g: float(p.policy_loss.detach())),
+    value_loss=mean(lambda p, g: float(p.value_loss.detach())),
+    entropy=mean(lambda p, g: float(p.entropy.detach())),
+    approx_kl=mean(lambda p, g: float(p.approx_kl)),
+    clip_frac=mean(lambda p, g: float(p.clip_frac)),
+    grad_norm=mean(lambda p, g: g),
+    grad_norm_max=float(gmax),
+    explained_variance=ev,
+    value_mean=float(values.double().mean()),
+    reward_mean=float(batch.reward.double().mean()),
+    adv_std=float(adv.double().std(correction=0)),
+    decisions=n,
+    steps=steps,
+    update=self._n_updates,
+    wall_time=float(wall),
+)</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def get_weights</span><span class="desc"> – an unaliased copy of the policy state dict (with config and encoder version) for collection</span>
+<span class="loc">trainer/ppo.py:506–512</span>
+</summary>
+<pre><code>def get_weights(self) -&gt; dict[str, Any]:
+    """The current policy weights (with config and encoder version) as an
+    unaliased copy: the form NeuralPolicy and RolloutWorker.collect accept."""
+    return {
+        k: copy.deepcopy(v) if k.endswith("_extra_state") else v.detach().clone()
+        for k, v in self._policy.state_dict().items()
+    }</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def save</span><span class="desc"> – one weights_only-readable checkpoint, written to .tmp then renamed</span>
+<span class="loc">trainer/ppo.py:516–537</span>
+</summary>
+<pre><code>def save(self, path: str | os.PathLike) -&gt; None:
+    """Everything needed to resume, in one `weights_only`-readable file
+    (written to `path + ".tmp"`, then renamed over `path`)."""
+    path = os.fspath(path)
+    tmp = path + ".tmp"
+    state = {
+        "format": CHECKPOINT_FORMAT,
+        "encoder_version": ENCODER_VERSION,
+        "config": dataclasses.asdict(self._cfg),
+        "seed": self._seed,
+        "n_updates": self._n_updates,
+        "policy": self._policy.state_dict(),
+        "critic": self._critic.state_dict(),
+        "optimizer": self._opt.state_dict(),
+        "shuffle_rng": self._gen.get_state(),
+    }
+    try:
+        torch.save(state, tmp)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def load</span><span class="desc"> – class method: a learner restored from a checkpoint, validated before any weight is copied</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">argument types</span>
+<span class="loc">trainer/ppo.py:551–553</span>
+</summary>
+<pre><code>if config is not None and not isinstance(config, PPOConfig):
+    raise TypeError(f"config must be a PPOConfig, got {type(config).__name__}")
+num_threads = _check_threads(num_threads)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">read with weights_only; format, keys and top-level encoder version (NetConfigError)</span>
+<span class="loc">trainer/ppo.py:554–569</span>
+</summary>
+<pre><code>with _torch_threads(num_threads):
+    ckpt = torch.load(os.fspath(path), map_location="cpu", weights_only=True)
+    if not isinstance(ckpt, dict):
+        raise ValueError(f"not a learner checkpoint: {type(ckpt).__name__}")
+    if ckpt.get("format") != CHECKPOINT_FORMAT:
+        raise ValueError(
+            f"not a learner checkpoint: format {ckpt.get('format')!r} != {CHECKPOINT_FORMAT!r}"
+        )
+    missing = [k for k in _CHECKPOINT_KEYS if k not in ckpt]
+    if missing:
+        raise ValueError(f"learner checkpoint is missing {missing}")
+    if ckpt["encoder_version"] != ENCODER_VERSION:
+        raise NetConfigError(
+            f"checkpoint encoder_version {ckpt['encoder_version']!r} != "
+            f"rl_env.ENCODER_VERSION {ENCODER_VERSION!r}"
+        )</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">stored config; a given config may change training fields but not hidden / layers (NetConfigError)</span>
+<span class="loc">trainer/ppo.py:570–585</span>
+</summary>
+<pre><code>stored = ckpt["config"]
+names = [f.name for f in dataclasses.fields(PPOConfig)]
+if not isinstance(stored, dict) or set(stored) != set(names):
+    raise ValueError(f"checkpoint config must have exactly the fields {names}")
+stored_cfg = PPOConfig(**stored)
+if config is None:
+    cfg = stored_cfg
+else:
+    diff = [k for k in _NET_FIELDS if getattr(config, k) != getattr(stored_cfg, k)]
+    if diff:
+        details = ", ".join(
+            f"{k}: config {getattr(config, k)!r} != checkpoint {getattr(stored_cfg, k)!r}"
+            for k in diff
+        )
+        raise NetConfigError(f"network config differs from the checkpoint ({details})")
+    cfg = config</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">update counter, shuffle generator state and optimizer state are well-formed</span>
+<span class="loc">trainer/ppo.py:586–593</span>
+</summary>
+<pre><code>seed, n_updates = ckpt["seed"], ckpt["n_updates"]
+if not _is_int(n_updates) or n_updates &lt; 0:
+    raise ValueError(f"checkpoint n_updates must be an int &gt;= 0, got {n_updates!r}")
+rng = ckpt["shuffle_rng"]
+if not isinstance(rng, Tensor) or rng.dtype != torch.uint8:
+    raise ValueError("checkpoint shuffle_rng must be a uint8 tensor")
+if not isinstance(ckpt["optimizer"], dict):
+    raise ValueError("checkpoint optimizer must be a state dict")</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">build a learner, check both network state dicts, then load networks, Adam (lr / eps from cfg), generator and counter</span>
+<span class="loc">trainer/ppo.py:595–606</span>
+</summary>
+<pre><code>learner = cls(cfg, seed=seed, num_threads=num_threads)
+check_state_dict(learner._policy, ckpt["policy"])  # nothing copied yet
+check_state_dict(learner._critic, ckpt["critic"])
+learner._policy.load_state_dict(ckpt["policy"])
+learner._critic.load_state_dict(ckpt["critic"])
+learner._opt.load_state_dict(ckpt["optimizer"])
+for group in learner._opt.param_groups:  # Adam's state carries the stored ones
+    group["lr"] = cfg.lr
+    group["eps"] = cfg.adam_eps
+learner._gen.set_state(rng)
+learner._n_updates = int(n_updates)
+return learner</code></pre>
 </details>
 </div>
 </details>
