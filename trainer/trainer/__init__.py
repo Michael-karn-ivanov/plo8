@@ -1,7 +1,8 @@
-"""trainer: neural networks (and, in later stages, the training loop) for a
-fixed-limit Omaha Hi-Lo 8-or-better bot, on top of `//rl_env`.
+"""trainer: neural networks and (in stages) the training loop for a fixed-limit
+Omaha Hi-Lo 8-or-better bot, on top of `//rl_env` and `//arena`.
 
-This stage: the policy and critic networks and the acting policy.
+This stage: the policy and critic networks, the acting policy and the rollout
+loop.
 
 - `PolicyNet(obs, mask) -> logits` sees only rl_env's observation and action
   mask; illegal actions get the finite logit `MASK_VALUE` (never -inf).
@@ -14,6 +15,7 @@ trainer never re-implements rl_env's encoder, mask or critic expansion; it only
 consumes their arrays.
 """
 
+from .lineup import DEFAULT_OPPONENTS, LEARNER_KEY, draw_lineup
 from .nets import (
     LOGIT_LIMIT,
     MASK_VALUE,
@@ -32,6 +34,9 @@ __all__ = [
     "PolicyNet",
     "CriticNet",
     "NeuralPolicy",
+    "draw_lineup",
+    "LEARNER_KEY",
+    "DEFAULT_OPPONENTS",
     "mlp",
     "masked_logits",
     "log_probs",
