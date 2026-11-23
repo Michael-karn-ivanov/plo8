@@ -14,7 +14,7 @@ In each project folder, plan.md defines how this specification should be impleme
 3. After you update code, also update or create unit tests in /tests subfolder. Ensure tests pass.
 3a. If you changes implementation of cli_server or engine or entities - ensure e2e tests pass also
 4. For folders touched, update their doc.html (use skill doc-keep)
-5. For each root folder touched, in doc-diff folder create an html file, name it in format YYYY-MM-DD HH:MI.<folder toucher>.html
+5. For each root folder touched, in .doc-diff folder create an html file, name it in format YYYY-MM-DD HH:MI.<folder toucher>.html
 This format should contain 2 panels - left and right.
 In the left panel you should render content of foler's doc.html BEFORE the changes.
 In the right panel you should render content of foler's doc.html BEFORE the changes.
