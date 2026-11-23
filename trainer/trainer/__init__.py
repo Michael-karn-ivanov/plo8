@@ -15,7 +15,8 @@ and the PPO learner.
   the learner's `TrainingRecords` of finished hands and `RolloutStats`.
 - `Learner(PPOConfig(), seed=...).update(*records)` turns those records into PPO
   updates of both networks (`make_batch`, `compute_advantages`, `ppo_loss`) and
-  returns `UpdateStats`; `get_weights()` feeds the next collection.
+  returns `UpdateStats`; `get_weights()` feeds the next collection; `save` /
+  `load` resume exactly.
 
 trainer never re-implements rl_env's encoder, mask or critic expansion; it only
 consumes their arrays.

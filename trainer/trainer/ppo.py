@@ -17,7 +17,8 @@
 - `Learner(config, seed=...)` owns both networks, one Adam optimiser over them
   and a private shuffle generator. `update(*records)` runs `epochs` passes of
   shuffled minibatches; `get_weights()` hands out an unaliased copy of the
-  policy weights for the next collection.
+  policy weights for the next collection; `save` / `load` write and restore
+  everything needed to resume exactly.
 
 Torch's global RNG is never used (network initialisation runs inside
 `torch.random.fork_rng`), and every refused input raises before any weight,
@@ -63,9 +64,23 @@ __all__ = [
     "LossParts",
     "Learner",
     "UpdateStats",
+    "CHECKPOINT_FORMAT",
 ]
 
+CHECKPOINT_FORMAT = "trainer.learner/1"
+_CHECKPOINT_KEYS = (
+    "format",
+    "encoder_version",
+    "config",
+    "seed",
+    "n_updates",
+    "policy",
+    "critic",
+    "optimizer",
+    "shuffle_rng",
+)
 _CRITIC_CARDS_SHAPE = (9, 4)  # rl_env's critic_cards rows: 9 other seats x 4 cards
+_NET_FIELDS = ("hidden", "layers")
 
 
 # --- small validators --------------------------------------------------------------
@@ -495,3 +510,97 @@ class Learner:
             k: copy.deepcopy(v) if k.endswith("_extra_state") else v.detach().clone()
             for k, v in self._policy.state_dict().items()
         }
+
+    # --- checkpoints -------------------------------------------------------------
+
+    def save(self, path: str | os.PathLike) -> None:
+        """Everything needed to resume, in one `weights_only`-readable file
+        (written to `path + ".tmp"`, then renamed over `path`)."""
+        path = os.fspath(path)
+        tmp = path + ".tmp"
+        state = {
+            "format": CHECKPOINT_FORMAT,
+            "encoder_version": ENCODER_VERSION,
+            "config": dataclasses.asdict(self._cfg),
+            "seed": self._seed,
+            "n_updates": self._n_updates,
+            "policy": self._policy.state_dict(),
+            "critic": self._critic.state_dict(),
+            "optimizer": self._opt.state_dict(),
+            "shuffle_rng": self._gen.get_state(),
+        }
+        try:
+            torch.save(state, tmp)
+            os.replace(tmp, path)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+    @classmethod
+    def load(
+        cls,
+        path: str | os.PathLike,
+        *,
+        config: Optional[PPOConfig] = None,
+        num_threads: Optional[int] = None,
+    ) -> "Learner":
+        """A learner restored from `save`. `config` may change the training
+        fields (lr, clip, ...) but not the network fields (`hidden`, `layers`:
+        NetConfigError). Another encoder version raises NetConfigError, a
+        malformed file ValueError."""
+        if config is not None and not isinstance(config, PPOConfig):
+            raise TypeError(f"config must be a PPOConfig, got {type(config).__name__}")
+        num_threads = _check_threads(num_threads)
+        with _torch_threads(num_threads):
+            ckpt = torch.load(os.fspath(path), map_location="cpu", weights_only=True)
+            if not isinstance(ckpt, dict):
+                raise ValueError(f"not a learner checkpoint: {type(ckpt).__name__}")
+            if ckpt.get("format") != CHECKPOINT_FORMAT:
+                raise ValueError(
+                    f"not a learner checkpoint: format {ckpt.get('format')!r} != {CHECKPOINT_FORMAT!r}"
+                )
+            missing = [k for k in _CHECKPOINT_KEYS if k not in ckpt]
+            if missing:
+                raise ValueError(f"learner checkpoint is missing {missing}")
+            if ckpt["encoder_version"] != ENCODER_VERSION:
+                raise NetConfigError(
+                    f"checkpoint encoder_version {ckpt['encoder_version']!r} != "
+                    f"rl_env.ENCODER_VERSION {ENCODER_VERSION!r}"
+                )
+            stored = ckpt["config"]
+            names = [f.name for f in dataclasses.fields(PPOConfig)]
+            if not isinstance(stored, dict) or set(stored) != set(names):
+                raise ValueError(f"checkpoint config must have exactly the fields {names}")
+            stored_cfg = PPOConfig(**stored)
+            if config is None:
+                cfg = stored_cfg
+            else:
+                diff = [k for k in _NET_FIELDS if getattr(config, k) != getattr(stored_cfg, k)]
+                if diff:
+                    details = ", ".join(
+                        f"{k}: config {getattr(config, k)!r} != checkpoint {getattr(stored_cfg, k)!r}"
+                        for k in diff
+                    )
+                    raise NetConfigError(f"network config differs from the checkpoint ({details})")
+                cfg = config
+            seed, n_updates = ckpt["seed"], ckpt["n_updates"]
+            if not _is_int(n_updates) or n_updates < 0:
+                raise ValueError(f"checkpoint n_updates must be an int >= 0, got {n_updates!r}")
+            rng = ckpt["shuffle_rng"]
+            if not isinstance(rng, Tensor) or rng.dtype != torch.uint8:
+                raise ValueError("checkpoint shuffle_rng must be a uint8 tensor")
+            if not isinstance(ckpt["optimizer"], dict):
+                raise ValueError("checkpoint optimizer must be a state dict")
+
+            learner = cls(cfg, seed=seed, num_threads=num_threads)
+            check_state_dict(learner._policy, ckpt["policy"])  # nothing copied yet
+            check_state_dict(learner._critic, ckpt["critic"])
+            learner._policy.load_state_dict(ckpt["policy"])
+            learner._critic.load_state_dict(ckpt["critic"])
+            learner._opt.load_state_dict(ckpt["optimizer"])
+            for group in learner._opt.param_groups:  # Adam's state carries the stored ones
+                group["lr"] = cfg.lr
+                group["eps"] = cfg.adam_eps
+            learner._gen.set_state(rng)
+            learner._n_updates = int(n_updates)
+        return learner
