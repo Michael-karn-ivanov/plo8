@@ -13,8 +13,9 @@ and the PPO learner.
 - `RolloutWorker(seed=...).collect(weights, n_decisions)` plays the learner
   against arena's bots (lineups from `draw_lineup`) in one TableBatch and returns
   the learner's `TrainingRecords` of finished hands and `RolloutStats`.
-- `make_batch`, `compute_advantages` and `ppo_loss` turn those records into the
-  PPO loss of both networks.
+- `Learner(PPOConfig(), seed=...).update(*records)` turns those records into PPO
+  updates of both networks (`make_batch`, `compute_advantages`, `ppo_loss`) and
+  returns `UpdateStats`; `get_weights()` feeds the next collection.
 
 trainer never re-implements rl_env's encoder, mask or critic expansion; it only
 consumes their arrays.
@@ -35,9 +36,11 @@ from .nets import (
 )
 from .policy import NeuralPolicy
 from .ppo import (
+    Learner,
     LossParts,
     PPOBatch,
     PPOConfig,
+    UpdateStats,
     compute_advantages,
     make_batch,
     ppo_loss,
@@ -54,8 +57,10 @@ __all__ = [
     "draw_lineup",
     "LEARNER_KEY",
     "DEFAULT_OPPONENTS",
+    "Learner",
     "PPOConfig",
     "PPOBatch",
+    "UpdateStats",
     "LossParts",
     "make_batch",
     "compute_advantages",

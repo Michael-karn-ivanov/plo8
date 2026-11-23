@@ -14,6 +14,10 @@
   from `log_probs(PolicyNet(obs, mask))`, exactly as `NeuralPolicy` acts, so an
   unchanged policy gives a ratio of 1. The policy sees only `obs` and `mask`;
   the privileged `critic_x` goes only to the critic.
+- `Learner(config, seed=...)` owns both networks, one Adam optimiser over them
+  and a private shuffle generator. `update(*records)` runs `epochs` passes of
+  shuffled minibatches; `get_weights()` hands out an unaliased copy of the
+  policy weights for the next collection.
 
 Torch's global RNG is never used (network initialisation runs inside
 `torch.random.fork_rng`), and every refused input raises before any weight,
@@ -57,6 +61,8 @@ __all__ = [
     "explained_variance",
     "ppo_loss",
     "LossParts",
+    "Learner",
+    "UpdateStats",
 ]
 
 _CRITIC_CARDS_SHAPE = (9, 4)  # rl_env's critic_cards rows: 9 other seats x 4 cards
@@ -334,3 +340,158 @@ def ppo_loss(
         kl = ((ratio - 1) - log_ratio).mean()
         cf = ((ratio - 1).abs() > cfg.clip).float().mean()
     return loss, LossParts(pg, v, ent, kl, cf, ratio.detach())
+
+
+# --- statistics --------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class UpdateStats:
+    policy_loss: float  # \
+    value_loss: float  #  | means over the minibatches of the last epoch
+    entropy: float  #  | (each minibatch weighs equally)
+    approx_kl: float  #  | mean of (ratio - 1) - log ratio
+    clip_frac: float  #  | share of decisions with |ratio - 1| > clip
+    grad_norm: float  # /  global norm before clipping
+    grad_norm_max: float  # max over all steps of the update, before clipping
+    explained_variance: float  # 1 - Var(R - V_old) / Var(R), pre-update values
+    value_mean: float  # mean pre-update critic value, big bets
+    reward_mean: float  # mean return, big bets
+    adv_std: float  # std of the raw (unnormalised) advantages
+    decisions: int  # rows of the update
+    steps: int  # minibatch steps = epochs * ceil(decisions / minibatch)
+    update: int  # n_updates after this update
+    wall_time: float  # seconds
+
+
+# --- the learner -------------------------------------------------------------------
+
+
+class Learner:
+    """Both networks, one Adam optimiser over them and a private shuffle
+    generator; PPO updates from training records (see the module docstring)."""
+
+    def __init__(
+        self,
+        config: Optional[PPOConfig] = None,
+        *,
+        seed: int,
+        num_threads: Optional[int] = None,
+    ) -> None:
+        cfg = PPOConfig() if config is None else config
+        if not isinstance(cfg, PPOConfig):
+            raise TypeError(f"config must be a PPOConfig, got {type(cfg).__name__}")
+        seed = _check_seed(seed)
+        num_threads = _check_threads(num_threads)
+        policy_ss, critic_ss, shuffle_ss = np.random.SeedSequence(seed).spawn(3)
+        # The seed sets both networks' initial weights; torch's global RNG is
+        # left where it was.
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(_seed32(policy_ss))
+            policy = PolicyNet(hidden=cfg.hidden, layers=cfg.layers)
+            torch.manual_seed(_seed32(critic_ss))
+            critic = CriticNet(hidden=cfg.hidden, layers=cfg.layers)
+        policy.train()
+        critic.train()
+        self._cfg = cfg
+        self._seed = seed
+        self._num_threads = num_threads
+        self._policy = policy
+        self._critic = critic
+        self._gen = torch.Generator(device="cpu")
+        self._gen.manual_seed(_seed32(shuffle_ss))  # minibatch permutations only
+        self._params = [*policy.parameters(), *critic.parameters()]
+        self._opt = torch.optim.Adam(self._params, lr=cfg.lr, eps=cfg.adam_eps)
+        self._n_updates = 0
+
+    # --- read-only views ---------------------------------------------------------
+
+    @property
+    def config(self) -> PPOConfig:
+        return self._cfg
+
+    @property
+    def policy(self) -> PolicyNet:
+        """The live trainable policy network."""
+        return self._policy
+
+    @property
+    def critic(self) -> CriticNet:
+        """The live trainable critic network."""
+        return self._critic
+
+    @property
+    def optimizer(self) -> torch.optim.Adam:
+        return self._opt
+
+    @property
+    def n_updates(self) -> int:
+        return self._n_updates
+
+    @property
+    def seed(self) -> int:
+        return self._seed
+
+    # --- training ----------------------------------------------------------------
+
+    def update(self, *records: TrainingRecords) -> UpdateStats:
+        """One PPO update from the records of one or several collections
+        (concatenated in argument order). Refused records raise before anything
+        changes; the records are only read."""
+        batch = make_batch(*records)
+        cfg, n = self._cfg, len(batch)
+        with _torch_threads(self._num_threads):
+            t0 = time.perf_counter()
+            adv, values = compute_advantages(self._critic, batch)
+            ev = explained_variance(values, batch.reward)
+            last: list[tuple[LossParts, float]] = []
+            gmax, steps = 0.0, 0
+            for epoch in range(cfg.epochs):
+                perm = torch.randperm(n, generator=self._gen)
+                for s in range(0, n, cfg.minibatch):
+                    idx = perm[s : s + cfg.minibatch]  # the last one may be smaller
+                    # Through the module global, so tests (and later stages) can wrap it.
+                    loss, parts = ppo_loss(self._policy, self._critic, batch, adv, idx, cfg)
+                    self._opt.zero_grad(set_to_none=True)
+                    loss.backward()
+                    gn = float(
+                        torch.nn.utils.clip_grad_norm_(
+                            self._params, cfg.max_grad_norm, error_if_nonfinite=True
+                        )
+                    )
+                    self._opt.step()
+                    steps += 1
+                    gmax = max(gmax, gn)
+                    if epoch == cfg.epochs - 1:
+                        last.append((parts, gn))
+            self._n_updates += 1
+            wall = time.perf_counter() - t0
+
+        def mean(get) -> float:
+            return float(np.mean([get(p, g) for p, g in last]))
+
+        return UpdateStats(
+            policy_loss=mean(lambda p, g: float(p.policy_loss.detach())),
+            value_loss=mean(lambda p, g: float(p.value_loss.detach())),
+            entropy=mean(lambda p, g: float(p.entropy.detach())),
+            approx_kl=mean(lambda p, g: float(p.approx_kl)),
+            clip_frac=mean(lambda p, g: float(p.clip_frac)),
+            grad_norm=mean(lambda p, g: g),
+            grad_norm_max=float(gmax),
+            explained_variance=ev,
+            value_mean=float(values.double().mean()),
+            reward_mean=float(batch.reward.double().mean()),
+            adv_std=float(adv.double().std(correction=0)),
+            decisions=n,
+            steps=steps,
+            update=self._n_updates,
+            wall_time=float(wall),
+        )
+
+    def get_weights(self) -> dict[str, Any]:
+        """The current policy weights (with config and encoder version) as an
+        unaliased copy: the form NeuralPolicy and RolloutWorker.collect accept."""
+        return {
+            k: copy.deepcopy(v) if k.endswith("_extra_state") else v.detach().clone()
+            for k, v in self._policy.state_dict().items()
+        }

@@ -1,6 +1,7 @@
 """Test data from rl_env: training records of real hands, every mask rl_env can
-produce, hand-built decision batches, peaked policy networks, small weights and
-rollout workers, a view counter and a table driver for controllers."""
+produce, hand-built decision batches, peaked policy networks, small weights,
+rollout workers and learners, records built from NeuralPolicy actions, a view
+counter and a table driver for controllers."""
 
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from rl_env import (
     TableBatch,
     TrainingRecords,
 )
-from trainer import PolicyNet, RolloutWorker
+from trainer import Learner, NeuralPolicy, PolicyNet, PPOConfig, RolloutWorker
 
 # Every mask rl_env can produce, over (fold, check-or-call, bet-or-raise).
 ALL_MASKS = np.array(
@@ -49,7 +50,8 @@ def _records(n_hands: int, seed: int, sizes: tuple) -> TrainingRecords:
 
 def records(n_hands: int = 400, seed: int = 0, sizes: Iterable[int] = range(2, 11)) -> TrainingRecords:
     """Records of `n_hands` random-play hands (every seat recorded) of 2- to
-    10-player tables with training stacks. Cached: do not modify the arrays."""
+    10-player tables with training stacks. Cached: do not modify the arrays.
+    Their logp is NaN (RandomController returns none)."""
     return _records(int(n_hands), int(seed), tuple(int(s) for s in sizes))
 
 
@@ -133,6 +135,60 @@ def small_worker(seed: int, **kw: Any) -> RolloutWorker:
     kw.setdefault("hidden", 64)
     kw.setdefault("layers", 2)
     return RolloutWorker(seed=seed, **kw)
+
+
+def small_config(**kw: Any) -> PPOConfig:
+    """A PPOConfig with small networks (64 x 2) and minibatches of 256
+    (overridable)."""
+    kw.setdefault("hidden", 64)
+    kw.setdefault("layers", 2)
+    kw.setdefault("minibatch", 256)
+    return PPOConfig(**kw)
+
+
+def small_learner(seed: int, num_threads: Optional[int] = None, **kw: Any) -> Learner:
+    """A Learner with `small_config(**kw)`."""
+    return Learner(small_config(**kw), seed=seed, num_threads=num_threads)
+
+
+def acted_records(
+    weights: Mapping[str, Any],
+    obs: np.ndarray,
+    mask: np.ndarray,
+    critic: np.ndarray,
+    reward_fn: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    seed: int,
+) -> TrainingRecords:
+    """TrainingRecords of given rows acted on by a `NeuralPolicy` holding
+    `weights` (its sampled actions and logp); `reward = reward_fn(actions,
+    rows)` as float32. Table / seat / controller 0, hand_id = row index. The
+    policy leaves torch's thread count alone."""
+    obs = np.ascontiguousarray(obs, dtype=np.float32)
+    mask = np.ascontiguousarray(mask, dtype=bool)
+    n = obs.shape[0]
+    policy = NeuralPolicy.from_state_dict(weights, seed=seed, num_threads=None)
+    actions, logp = policy.act(decision_batch(obs, mask))
+    rows = np.arange(n, dtype=np.int64)
+    reward = np.asarray(reward_fn(actions, rows), dtype=np.float32).reshape(n)
+    return TrainingRecords(
+        table=np.zeros(n, dtype=np.int32),
+        hand_id=rows.copy(),
+        seat=np.zeros(n, dtype=np.int32),
+        controller=np.zeros(n, dtype=np.int32),
+        obs=obs.copy(),
+        mask=mask.copy(),
+        action=np.asarray(actions, dtype=np.int64).copy(),
+        logp=np.asarray(logp, dtype=np.float32).copy(),
+        critic=np.ascontiguousarray(critic, dtype=np.int8).copy(),
+        reward=reward,
+    )
+
+
+def replace_records(recs: TrainingRecords, **fields: Any) -> TrainingRecords:
+    """A TrainingRecords with some fields replaced (others shared)."""
+    kw = {name: getattr(recs, name) for name in recs.__dataclass_fields__}
+    kw.update(fields)
+    return TrainingRecords(**kw)
 
 
 def net_from_weights(weights: Mapping[str, Any]) -> PolicyNet:
