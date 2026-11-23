@@ -1,6 +1,6 @@
 """Test data from rl_env: training records of real hands, every mask rl_env can
-produce, hand-built decision batches, peaked policy networks, a view counter
-and a table driver for controllers."""
+produce, hand-built decision batches, peaked policy networks, small weights and
+rollout workers, a view counter and a table driver for controllers."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from rl_env import (
     TableBatch,
     TrainingRecords,
 )
-from trainer import PolicyNet
+from trainer import PolicyNet, RolloutWorker
 
 # Every mask rl_env can produce, over (fold, check-or-call, bet-or-raise).
 ALL_MASKS = np.array(
@@ -117,6 +117,42 @@ def peaked_policy_net(seed: int, hidden: int = 64, layers: int = 2) -> PolicyNet
     with torch.no_grad():
         net.head.weight.mul_(300.0)
     return net
+
+
+def small_weights(seed: int, peaked: bool = False) -> dict:
+    """`state_dict()` of a `PolicyNet(hidden=64, layers=2)` built from `seed`
+    (head scaled as in `peaked_policy_net` with `peaked=True`). Global torch RNG
+    untouched."""
+    net = peaked_policy_net(seed) if peaked else small_policy_net(seed)
+    return net.state_dict()
+
+
+def small_worker(seed: int, **kw: Any) -> RolloutWorker:
+    """A RolloutWorker with small networks (64 x 2) and 32 tables (overridable)."""
+    kw.setdefault("n_tables", 32)
+    kw.setdefault("hidden", 64)
+    kw.setdefault("layers", 2)
+    return RolloutWorker(seed=seed, **kw)
+
+
+def net_from_weights(weights: Mapping[str, Any]) -> PolicyNet:
+    """A small PolicyNet holding `weights` (global torch RNG untouched)."""
+    extra = weights["_extra_state"]
+    with torch.random.fork_rng(devices=[]):
+        net = PolicyNet(hidden=extra["hidden"], layers=extra["layers"])
+    net.load_state_dict(weights)
+    net.eval()
+    return net
+
+
+def recorded_logp_under(net: PolicyNet, recs: TrainingRecords) -> np.ndarray:
+    """log pi(recorded action | recorded obs, mask) under `net`, float32 (N,)."""
+    with torch.no_grad():
+        lp = torch.log_softmax(
+            net(torch.from_numpy(recs.obs), torch.from_numpy(recs.mask)), dim=-1
+        )
+        out = lp.gather(1, torch.from_numpy(recs.action).unsqueeze(1)).squeeze(1)
+    return out.numpy()
 
 
 class ViewCounter:

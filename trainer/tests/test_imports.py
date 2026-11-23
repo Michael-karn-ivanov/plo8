@@ -1,6 +1,6 @@
 """Import boundary: rl_env and arena never import torch or trainer (statically
 and at runtime); trainer imports only the standard library, numpy, torch and
-rl_env's public package."""
+the public packages of rl_env and arena (arena only from the rollout loop)."""
 
 import ast
 import importlib.util
@@ -16,9 +16,11 @@ import rl_env
 import trainer
 
 FORBIDDEN = {"torch", "trainer"}
-TRAINER_ALLOWED = {"numpy", "torch", "rl_env", "trainer", "__future__"} | set(
+TRAINER_ALLOWED = {"numpy", "torch", "rl_env", "arena", "trainer", "__future__"} | set(
     sys.stdlib_module_names
 )
+# The only trainer modules that may import arena (the baseline bots).
+ARENA_USERS = {"trainer.lineup", "trainer.rollout"}
 
 
 def modules_of(pkg) -> list[str]:
@@ -91,13 +93,16 @@ class ImportsTest(unittest.TestCase):
     def test_trainer_imports(self):
         names = modules_of(trainer)
         self.assertIn("trainer.nets", names)
+        self.assertIn("trainer.rollout", names)
         for name in names:
             mods = absolute_imports(source_of(name))
             extra = roots(mods) - TRAINER_ALLOWED
             self.assertFalse(extra, f"{name} imports {sorted(extra)}")
-            # Only rl_env's public package, never its internals.
-            internals = sorted(m for m in mods if m.startswith("rl_env."))
+            # Only the public packages of rl_env and arena, never their internals.
+            internals = sorted(m for m in mods if m.startswith(("rl_env.", "arena.")))
             self.assertFalse(internals, f"{name} imports {internals}")
+            if "arena" in roots(mods):
+                self.assertIn(name, ARENA_USERS, f"{name} imports arena")
 
 
 if __name__ == "__main__":

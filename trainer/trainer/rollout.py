@@ -270,4 +270,40 @@ class RolloutWorker:
         """At least `n_decisions` learner records from finished hands, played with
         exactly `weights`, and the collection's statistics. `on_finished` sees
         every finished hand before its table is restarted."""
-        raise NotImplementedError
+        n = _int_arg("n_decisions", n_decisions, 1)  # before anything else
+        self._policy.load_state_dict(weights)  # NetConfigError: nothing played
+        batch, rec = self._batch, self._recorder
+        assert not batch.any_in_hand() and rec.n_pending == 0 and rec.n_ready == 0
+        acc = _StatsAccumulator(self._opponents, self._sampler.sizes)
+        t0, all0 = time.perf_counter(), batch.n_decisions
+
+        def recorded() -> int:  # learner decisions, finished or still running
+            return rec.n_ready + rec.n_pending
+
+        def account(hands: list) -> None:
+            for fh in hands:
+                acc.add(fh)
+                if on_finished is not None:
+                    on_finished(fh)  # before fh.table restarts
+
+        while True:
+            if recorded() < n:
+                for t in batch.idle_tables():
+                    spec = self._sampler.sample()
+                    keys = draw_lineup(
+                        self._lineup_rng, spec.n_seats, self._opponents, self.max_learner_seats
+                    )
+                    acc.start(batch.start_hand(t, spec, keys), spec, keys)
+            if not batch.any_in_hand():
+                account(batch.collect_finished())  # hands that needed no decision
+                if recorded() >= n:
+                    break
+                continue
+            account(batch.step(self._controllers))
+
+        records = rec.drain()
+        assert rec.n_pending == 0 and rec.n_ready == 0 and len(records) >= n
+        stats = acc.finish(
+            records, wall=time.perf_counter() - t0, all_decisions=batch.n_decisions - all0
+        )
+        return records, stats
