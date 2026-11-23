@@ -46,7 +46,7 @@ mark { background: #ffe48a; color: #000; }
 <body>
 <main>
 <h1>trainer</h1>
-<p class="lead">Neural networks and the acting policy of the Omaha Hi-Lo 8-or-better bot, built on rl_env: PolicyNet, CriticNet and NeuralPolicy.
+<p class="lead">Neural networks, the acting policy and the rollout loop of the Omaha Hi-Lo 8-or-better bot, built on rl_env and arena: PolicyNet, CriticNet, NeuralPolicy, draw_lineup and RolloutWorker.
 Tree: folders → files → classes / functions → logical blocks → code. Only <code>.py</code> sources are covered (BUCK, JSON test sets, markdown and unit tests are omitted).</p>
 <div class="toolbar">
 <button onclick="setAll(true)">Expand all</button>
@@ -55,19 +55,20 @@ Tree: folders → files → classes / functions → logical blocks → code. Onl
 <button onclick="expandTo(2)">Classes &amp; functions</button>
 <input id="q" placeholder="Filter by name / description" oninput="filter(this.value)">
 </div>
-<details class="d0"><summary><span class="name ">./trainer</span><span class="desc"> – neural networks and the acting policy of the learning bot, on top of rl_env (the training loop comes in later stages)</span>
+<details class="d0"><summary><span class="name ">./trainer</span><span class="desc"> – neural networks, the acting policy and the rollout loop of the learning bot, on top of rl_env and arena (PPO training comes in later stages)</span>
 </summary>
 <div class="kids">
-<details class="d1"><summary><span class="name ">__init__.py</span><span class="desc"> – package entry: describes the policy / critic networks and NeuralPolicy, and re-exports them</span>
+<details class="d1"><summary><span class="name ">__init__.py</span><span class="desc"> – package entry: describes the networks, NeuralPolicy and the rollout loop, and re-exports them</span>
 </summary>
 <div class="kids">
-<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – this stage&#x27;s pieces and the rule that trainer only consumes rl_env arrays</span>
-<span class="loc">trainer/__init__.py:1–15</span>
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – this stage&#x27;s pieces (networks, acting policy, rollout loop) and the rule that trainer only consumes rl_env arrays</span>
+<span class="loc">trainer/__init__.py:1–19</span>
 </summary>
-<pre><code>&quot;&quot;&quot;trainer: neural networks (and, in later stages, the training loop) for a
-fixed-limit Omaha Hi-Lo 8-or-better bot, on top of `//rl_env`.
+<pre><code>&quot;&quot;&quot;trainer: neural networks and (in stages) the training loop for a fixed-limit
+Omaha Hi-Lo 8-or-better bot, on top of `//rl_env` and `//arena`.
 
-This stage: the policy and critic networks and the acting policy.
+This stage: the policy and critic networks, the acting policy and the rollout
+loop.
 
 - `PolicyNet(obs, mask) -&gt; logits` sees only rl_env&#x27;s observation and action
   mask; illegal actions get the finite logit `MASK_VALUE` (never -inf).
@@ -75,15 +76,19 @@ This stage: the policy and critic networks and the acting policy.
   network that receives the privileged critic input.
 - `NeuralPolicy(net, seed=...)` is an rl_env Controller over a private copy of a
   `PolicyNet`: samples with its own generator, returns `(actions, logp)`.
+- `RolloutWorker(seed=...).collect(weights, n_decisions)` plays the learner
+  against arena&#x27;s bots (lineups from `draw_lineup`) in one TableBatch and returns
+  the learner&#x27;s `TrainingRecords` of finished hands and `RolloutStats`.
 
 trainer never re-implements rl_env&#x27;s encoder, mask or critic expansion; it only
 consumes their arrays.
 &quot;&quot;&quot;</code></pre>
 </details>
-<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – networks, helpers and NeuralPolicy</span>
-<span class="loc">trainer/__init__.py:17–29</span>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – lineup helpers, networks, NeuralPolicy and the rollout worker / stats</span>
+<span class="loc">trainer/__init__.py:21–35</span>
 </summary>
-<pre><code>from .nets import (
+<pre><code>from .lineup import DEFAULT_OPPONENTS, LEARNER_KEY, draw_lineup
+from .nets import (
     LOGIT_LIMIT,
     MASK_VALUE,
     CriticNet,
@@ -95,15 +100,22 @@ consumes their arrays.
     masked_logits,
     mlp,
 )
-from .policy import NeuralPolicy</code></pre>
+from .policy import NeuralPolicy
+from .rollout import ResultStats, RolloutStats, RolloutWorker</code></pre>
 </details>
-<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__</span>
-<span class="loc">trainer/__init__.py:31–43</span>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__ (now with the rollout and lineup names)</span>
+<span class="loc">trainer/__init__.py:37–55</span>
 </summary>
 <pre><code>__all__ = [
     &quot;PolicyNet&quot;,
     &quot;CriticNet&quot;,
     &quot;NeuralPolicy&quot;,
+    &quot;RolloutWorker&quot;,
+    &quot;RolloutStats&quot;,
+    &quot;ResultStats&quot;,
+    &quot;draw_lineup&quot;,
+    &quot;LEARNER_KEY&quot;,
+    &quot;DEFAULT_OPPONENTS&quot;,
     &quot;mlp&quot;,
     &quot;masked_logits&quot;,
     &quot;log_probs&quot;,
@@ -113,6 +125,85 @@ from .policy import NeuralPolicy</code></pre>
     &quot;LOGIT_LIMIT&quot;,
     &quot;NetConfigError&quot;,
 ]</code></pre>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">lineup.py</span><span class="desc"> – who sits where: one controller key per seat (learner in 1–3 seats, an opponent bot elsewhere)</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – learner count / positions, opponent draws and the fixed draw order</span>
+<span class="loc">trainer/lineup.py:1–13</span>
+</summary>
+<pre><code>&quot;&quot;&quot;Who sits where: one controller key per seat of a new hand.
+
+`draw_lineup(rng, n_seats, opponents)` puts the learner (`LEARNER_KEY`) in 1 to
+`min(max_learner_seats, n_seats - 1)` seats (uniform count, random positions,
+never every seat) and an opponent name, drawn uniformly and independently, in
+every other seat. Later opponent kinds (frozen snapshots, league entries) only
+add other keys and their controllers; the table batch and the recorder already
+work per key.
+
+The draw order is fixed - count, positions, one opponent draw for EVERY seat,
+then the learner seats overwritten - so the number of draws does not depend on
+the outcome and a lineup is a function of the generator state and `n_seats`.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – numbers, typing, numpy</span>
+<span class="loc">trainer/lineup.py:15–20</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import numbers
+from typing import Any, Sequence
+
+import numpy as np</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, LEARNER_KEY = &quot;learner&quot;, DEFAULT_OPPONENTS (the four arena bots), MAX_LEARNER_SEATS = 3</span>
+<span class="loc">trainer/lineup.py:22–26</span>
+</summary>
+<pre><code>__all__ = [&quot;LEARNER_KEY&quot;, &quot;DEFAULT_OPPONENTS&quot;, &quot;MAX_LEARNER_SEATS&quot;, &quot;draw_lineup&quot;]
+
+LEARNER_KEY = &quot;learner&quot;
+DEFAULT_OPPONENTS = (&quot;random&quot;, &quot;calling&quot;, &quot;maniac&quot;, &quot;rule&quot;)  # = arena.BOT_NAMES
+MAX_LEARNER_SEATS = 3</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _int_at_least</span><span class="desc"> – validates an int argument with a lower bound</span>
+<span class="loc">trainer/lineup.py:29–35</span>
+</summary>
+<pre><code>def _int_at_least(name: str, value: Any, low: int) -&gt; int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Integral):
+        raise TypeError(f&quot;{name} must be an int, got {value!r}&quot;)
+    value = int(value)
+    if value &lt; low:
+        raise ValueError(f&quot;{name} must be &gt;= {low}, got {value}&quot;)
+    return value</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def draw_lineup</span><span class="desc"> – controller key per seat, drawn in a fixed order from the given generator</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="desc">validate seat count, learner-seat limit and the opponent set</span>
+<span class="loc">trainer/lineup.py:45–48</span>
+</summary>
+<pre><code>n_seats = _int_at_least(&quot;n_seats&quot;, n_seats, 2)
+max_learner_seats = _int_at_least(&quot;max_learner_seats&quot;, max_learner_seats, 1)
+if len(opponents) == 0:
+    raise ValueError(&quot;opponents must not be empty&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">learner seat count (uniform, never every seat) and random positions</span>
+<span class="loc">trainer/lineup.py:49–50</span>
+</summary>
+<pre><code>k = int(rng.integers(1, min(max_learner_seats, n_seats - 1) + 1))  # never every seat
+learner = rng.choice(n_seats, size=k, replace=False)  # random positions</code></pre>
+</details>
+<details class="d3"><summary><span class="desc">one opponent draw for every seat, then the learner seats overwritten</span>
+<span class="loc">trainer/lineup.py:51–54</span>
+</summary>
+<pre><code>keys = [opponents[int(i)] for i in rng.integers(len(opponents), size=n_seats)]
+for s in learner:
+    keys[int(s)] = LEARNER_KEY
+return tuple(keys)</code></pre>
+</details>
+</div>
 </details>
 </div>
 </details>
@@ -723,6 +814,468 @@ actions = a.squeeze(1).numpy()</code></pre>
 if not mask[np.arange(n), actions].all():
     raise RuntimeError(&quot;sampled an illegal action&quot;)
 return actions, logp.numpy()</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d1"><summary><span class="name ">rollout.py</span><span class="desc"> – RolloutWorker: plays the learner against arena&#x27;s bots in one TableBatch and returns its training records and statistics</span>
+</summary>
+<div class="kids">
+<details class="d2"><summary><span class="name ">module docstring</span><span class="desc"> – what the worker owns, the collection rule (complete hands only) and what stays rl_env&#x27;s job</span>
+<span class="loc">trainer/rollout.py:1–16</span>
+</summary>
+<pre><code>&quot;&quot;&quot;The rollout loop: the learner against arena&#x27;s bots in one rl_env `TableBatch`.
+
+`RolloutWorker(seed=...)` owns a TableBatch, a Recorder that records only the
+learner (`LEARNER_KEY`), a `HandSampler`, a lineup generator, one arena bot per
+opponent name and the learner `NeuralPolicy`. `collect(weights, n_decisions)`
+loads the weights (validated: a mismatch raises before any hand), deals hands
+on idle tables while fewer than `n_decisions` learner decisions exist (ready or
+pending), then stops dealing and plays every running hand to its end, and
+returns `(TrainingRecords, RolloutStats)`. Records only ever come from complete
+hands; nothing is carried from one collection to the next except the
+generators, so a sequence of collections is reproducible from the seed.
+
+The worker only chooses hand specs, lineups and controller keys and calls
+`TableBatch.start_hand` / `step`; batching per controller, mask checks,
+recording and reward attachment are rl_env&#x27;s.
+&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – time, dataclasses, numpy, torch, arena&#x27;s bots, rl_env&#x27;s batch / recorder / sampler, lineup, nets, policy</span>
+<span class="loc">trainer/rollout.py:18–34</span>
+</summary>
+<pre><code>from __future__ import annotations
+
+import math
+import numbers
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
+
+import numpy as np
+import torch
+
+from arena import BOT_NAMES, make_bot
+from rl_env import FinishedHand, HandSampler, HandSpec, Recorder, TableBatch, TrainingRecords
+
+from .lineup import DEFAULT_OPPONENTS, LEARNER_KEY, MAX_LEARNER_SEATS, draw_lineup
+from .nets import DEFAULT_HIDDEN, DEFAULT_LAYERS, PolicyNet
+from .policy import NeuralPolicy</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__, 100 chips per BB, 200 chips per big bet</span>
+<span class="loc">trainer/rollout.py:36–39</span>
+</summary>
+<pre><code>__all__ = [&quot;RolloutWorker&quot;, &quot;RolloutStats&quot;, &quot;ResultStats&quot;]
+
+CHIPS_PER_BB = 100  # TableBatch&#x27;s default
+CHIPS_PER_BIG_BET = 2 * CHIPS_PER_BB</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _int_arg</span><span class="desc"> – validates an int argument with a lower bound (TypeError / ValueError)</span>
+<span class="loc">trainer/rollout.py:42–48</span>
+</summary>
+<pre><code>def _int_arg(name: str, value: Any, low: int) -&gt; int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Integral):
+        raise TypeError(f&quot;{name} must be an int, got {value!r}&quot;)
+    value = int(value)
+    if value &lt; low:
+        raise ValueError(f&quot;{name} must be &gt;= {low}, got {value}&quot;)
+    return value</code></pre>
+</details>
+<details class="d2"><summary><span class="name def">def _seed_int</span><span class="desc"> – one integer seed from a SeedSequence (uint64, or uint32 for torch)</span>
+<span class="loc">trainer/rollout.py:51–52</span>
+</summary>
+<pre><code>def _seed_int(ss: np.random.SeedSequence, dtype: Any = np.uint64) -&gt; int:
+    return int(ss.generate_state(1, dtype)[0])</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">ResultStats</span><span class="desc"> – the learner&#x27;s results over one group of hands (hands, seats, decisions, chips, big bets, bb/100)</span>
+<span class="loc">trainer/rollout.py:58–67</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class ResultStats:
+    &quot;&quot;&quot;The learner&#x27;s results over one group of hands.&quot;&quot;&quot;
+
+    hands: int  # hands in the group
+    learner_seats: int  # learner seats over those hands
+    decisions: int  # learner decisions in those hands
+    total_chips: int  # learner&#x27;s net over all its seats, chips (100 per BB)
+    total_bb: float  # big bets: total_chips / 200
+    bb_per_100: float  # 100 * total_bb / hands (nan when hands == 0)</code></pre>
+</details>
+<details class="d2"><summary><span class="name ">RolloutStats</span><span class="desc"> – logging figures of one collection: overall, by table size, by opponent, timing</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – overall, by_size, by_opponent, all_decisions, wall_time and the two rates</span>
+<span class="loc">trainer/rollout.py:70–80</span>
+</summary>
+<pre><code>@dataclass(frozen=True)
+class RolloutStats:
+    &quot;&quot;&quot;Logging figures of one collection (not an evaluation).&quot;&quot;&quot;
+
+    overall: ResultStats
+    by_size: dict  # int -&gt; ResultStats, every size of `sizes`, ascending
+    by_opponent: dict  # str -&gt; ResultStats, every opponent, in `opponents` order
+    all_decisions: int  # every seat&#x27;s decisions, bots included
+    wall_time: float  # seconds, time.perf_counter
+    decisions_per_second: float  # learner decisions / wall_time
+    all_decisions_per_second: float</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def hands</span><span class="desc"> – overall hands</span>
+<span class="loc">trainer/rollout.py:82–84</span>
+</summary>
+<pre><code>@property
+def hands(self) -&gt; int:
+    return self.overall.hands</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def decisions</span><span class="desc"> – overall learner decisions</span>
+<span class="loc">trainer/rollout.py:86–88</span>
+</summary>
+<pre><code>@property
+def decisions(self) -&gt; int:
+    return self.overall.decisions</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def total_bb</span><span class="desc"> – overall result in big bets</span>
+<span class="loc">trainer/rollout.py:90–92</span>
+</summary>
+<pre><code>@property
+def total_bb(self) -&gt; float:
+    return self.overall.total_bb</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def bb_per_100</span><span class="desc"> – overall big bets per 100 hands</span>
+<span class="loc">trainer/rollout.py:94–96</span>
+</summary>
+<pre><code>@property
+def bb_per_100(self) -&gt; float:
+    return self.overall.bb_per_100</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">_Group</span><span class="desc"> – mutable integer counters of one statistics group</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – slots: hands, seats, decisions, chips</span>
+<span class="loc">trainer/rollout.py:99–100</span>
+</summary>
+<pre><code>class _Group:
+    __slots__ = (&quot;hands&quot;, &quot;seats&quot;, &quot;decisions&quot;, &quot;chips&quot;)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – all counters zero</span>
+<span class="loc">trainer/rollout.py:102–106</span>
+</summary>
+<pre><code>def __init__(self) -&gt; None:
+    self.hands = 0
+    self.seats = 0
+    self.decisions = 0
+    self.chips = 0</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def add</span><span class="desc"> – one hand with its learner seats, decisions and chips</span>
+<span class="loc">trainer/rollout.py:108–112</span>
+</summary>
+<pre><code>def add(self, seats: int, decisions: int, chips: int) -&gt; None:
+    self.hands += 1
+    self.seats += seats
+    self.decisions += decisions
+    self.chips += chips</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def result</span><span class="desc"> – frozen ResultStats (big bets = chips / 200, bb/100 nan for an empty group)</span>
+<span class="loc">trainer/rollout.py:114–124</span>
+</summary>
+<pre><code>def result(self) -&gt; ResultStats:
+    total_bb = self.chips / CHIPS_PER_BIG_BET
+    rate = 100.0 * total_bb / self.hands if self.hands else math.nan
+    return ResultStats(
+        hands=self.hands,
+        learner_seats=self.seats,
+        decisions=self.decisions,
+        total_chips=self.chips,
+        total_bb=total_bb,
+        bb_per_100=rate,
+    )</code></pre>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">_StatsAccumulator</span><span class="desc"> – per-hand bookkeeping of one collection, turned into RolloutStats at the end</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring</span>
+<span class="loc">trainer/rollout.py:127–129</span>
+</summary>
+<pre><code>class _StatsAccumulator:
+    &quot;&quot;&quot;Per hand of one collection: table size, learner seats, bot names present
+    (`start`), the learner&#x27;s chips (`add`); decisions from the records (`finish`).&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – opponent order, sorted distinct sizes, empty started / finished maps</span>
+<span class="loc">trainer/rollout.py:131–135</span>
+</summary>
+<pre><code>def __init__(self, opponents: Sequence[str], sizes: Iterable[int]) -&gt; None:
+    self._opponents = tuple(opponents)
+    self._sizes = tuple(sorted(set(int(s) for s in sizes)))
+    self._started: dict[int, tuple[int, tuple[int, ...], tuple[str, ...]]] = {}
+    self._finished: dict[int, int] = {}  # hand_id -&gt; learner chips</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def start</span><span class="desc"> – remembers a started hand&#x27;s size, learner seats and distinct bot names</span>
+<span class="loc">trainer/rollout.py:137–141</span>
+</summary>
+<pre><code>def start(self, hand_id: int, spec: HandSpec, keys: Sequence[Any]) -&gt; None:
+    seats = tuple(s for s, k in enumerate(keys) if k == LEARNER_KEY)
+    present = set(k for k in keys if k != LEARNER_KEY)
+    bots = tuple(name for name in self._opponents if name in present)
+    self._started[int(hand_id)] = (int(spec.n_seats), seats, bots)</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def add</span><span class="desc"> – a finished hand&#x27;s learner result in integer chips over all its learner seats</span>
+<span class="loc">trainer/rollout.py:143–148</span>
+</summary>
+<pre><code>def add(self, fh: FinishedHand) -&gt; None:
+    hand_id = int(fh.hand_id)
+    _, seats, _ = self._started[hand_id]
+    # Integer chips, as arena does: sums are exact and order-free.
+    chips = sum(int(round(float(fh.net_bb[s]) * CHIPS_PER_BB)) for s in seats)
+    self._finished[hand_id] = chips</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def finish</span><span class="desc"> – groups the finished hands into overall / by size / by opponent and adds timing</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">learner decisions per hand from the drained records</span>
+<span class="loc">trainer/rollout.py:151–154</span>
+</summary>
+<pre><code>per_hand: dict[int, int] = {}
+if len(records):
+    ids, counts = np.unique(records.hand_id, return_counts=True)
+    per_hand = {int(h): int(c) for h, c in zip(ids, counts)}</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">every finished hand into overall, its size and each distinct bot name once</span>
+<span class="loc">trainer/rollout.py:155–165</span>
+</summary>
+<pre><code>overall = _Group()
+by_size = {s: _Group() for s in self._sizes}
+by_opp = {name: _Group() for name in self._opponents}
+for hand_id in sorted(self._finished):
+    n_seats, seats, bots = self._started[hand_id]
+    chips = self._finished[hand_id]
+    dec = per_hand.get(hand_id, 0)
+    overall.add(len(seats), dec, chips)
+    by_size[n_seats].add(len(seats), dec, chips)
+    for name in bots:  # once per distinct bot name
+        by_opp[name].add(len(seats), dec, chips)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">build RolloutStats with wall time and decisions per second</span>
+<span class="loc">trainer/rollout.py:166–175</span>
+</summary>
+<pre><code>n_dec = overall.decisions
+return RolloutStats(
+    overall=overall.result(),
+    by_size={s: g.result() for s, g in by_size.items()},
+    by_opponent={name: g.result() for name, g in by_opp.items()},
+    all_decisions=int(all_decisions),
+    wall_time=float(wall),
+    decisions_per_second=n_dec / wall if wall &gt; 0 else math.nan,
+    all_decisions_per_second=all_decisions / wall if wall &gt; 0 else math.nan,
+)</code></pre>
+</details>
+</div>
+</details>
+</div>
+</details>
+<details class="d2"><summary><span class="name ">RolloutWorker</span><span class="desc"> – owns the table batch, recorder, sampler, bots and learner policy; collects learner records</span>
+</summary>
+<div class="kids">
+<details class="d3"><summary><span class="name ">fields</span><span class="desc"> – docstring</span>
+<span class="loc">trainer/rollout.py:181–184</span>
+</summary>
+<pre><code>class RolloutWorker:
+    &quot;&quot;&quot;Plays the learner against arena&#x27;s bots in one TableBatch and returns the
+    learner&#x27;s training records (see the module docstring). Single-threaded, in
+    the caller&#x27;s process; later wrapped as a Ray actor.&quot;&quot;&quot;</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def __init__</span><span class="desc"> – validates the configuration and builds every per-worker component from one seed</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">signature: seed, n_tables, opponents, sizes, max_learner_seats, network size, threads</span>
+<span class="loc">trainer/rollout.py:186–197</span>
+</summary>
+<pre><code>def __init__(
+    self,
+    *,
+    seed: int,
+    n_tables: int = 256,
+    opponents: Sequence[str] = DEFAULT_OPPONENTS,
+    sizes: Iterable[int] = range(2, 11),
+    max_learner_seats: int = MAX_LEARNER_SEATS,
+    hidden: int = DEFAULT_HIDDEN,
+    layers: int = DEFAULT_LAYERS,
+    num_threads: Optional[int] = 1,
+) -&gt; None:</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">validate seed, table count and learner-seat limit</span>
+<span class="loc">trainer/rollout.py:198–200</span>
+</summary>
+<pre><code>seed = _int_arg(&quot;seed&quot;, seed, 0)
+n_tables = _int_arg(&quot;n_tables&quot;, n_tables, 1)
+self.max_learner_seats = _int_arg(&quot;max_learner_seats&quot;, max_learner_seats, 1)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">validate opponents: non-empty, known arena bot names, not the learner key, no duplicates</span>
+<span class="loc">trainer/rollout.py:201–215</span>
+</summary>
+<pre><code>if isinstance(opponents, str):
+    raise TypeError(&quot;opponents must be a sequence of bot names, not a string&quot;)
+opponents = tuple(opponents)
+if not opponents:
+    raise ValueError(&quot;opponents must not be empty&quot;)
+for name in opponents:
+    if not isinstance(name, str):
+        raise TypeError(f&quot;opponent names must be strings, got {name!r}&quot;)
+    if name == LEARNER_KEY:
+        raise ValueError(f&quot;{LEARNER_KEY!r} is the learner&#x27;s key, not an opponent&quot;)
+    if name not in BOT_NAMES:
+        raise ValueError(f&quot;unknown bot {name!r}; known bots: {&#x27;, &#x27;.join(BOT_NAMES)}&quot;)
+if len(set(opponents)) != len(opponents):
+    raise ValueError(f&quot;duplicate opponent names in {opponents}&quot;)
+self._opponents = opponents</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">validate table sizes: non-empty ints (the range 2..10 is HandSampler&#x27;s check)</span>
+<span class="loc">trainer/rollout.py:216–221</span>
+</summary>
+<pre><code>sizes = tuple(sizes)
+if not sizes:
+    raise ValueError(&quot;sizes must not be empty&quot;)
+for s in sizes:
+    if isinstance(s, (bool, np.bool_)) or not isinstance(s, numbers.Integral):
+        raise TypeError(f&quot;table sizes must be ints, got {s!r}&quot;)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">four child seeds: hand sampler, lineup generator, one seeded bot per opponent</span>
+<span class="loc">trainer/rollout.py:223–229</span>
+</summary>
+<pre><code>hand_ss, lineup_ss, policy_ss, bot_ss = np.random.SeedSequence(seed).spawn(4)
+self._sampler = HandSampler(_seed_int(hand_ss), sizes)  # checks 2..10
+self._lineup_rng = np.random.Generator(np.random.PCG64(_seed_int(lineup_ss)))
+bot_seeds = bot_ss.spawn(len(opponents))
+self._bots = {
+    name: make_bot(name, seed=_seed_int(bot_seeds[i])) for i, name in enumerate(opponents)
+}</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">learner NeuralPolicy over a throw-away PolicyNet built without moving torch&#x27;s global RNG</span>
+<span class="loc">trainer/rollout.py:230–234</span>
+</summary>
+<pre><code># Initial weights are irrelevant (every collection loads weights first);
+# building them must not move torch&#x27;s global RNG.
+with torch.random.fork_rng(devices=[]):
+    net = PolicyNet(hidden=hidden, layers=layers)
+self._policy = NeuralPolicy(net, seed=_seed_int(policy_ss, np.uint32), num_threads=num_threads)</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">controller map, learner-only Recorder and the TableBatch (with observations)</span>
+<span class="loc">trainer/rollout.py:235–237</span>
+</summary>
+<pre><code>self._controllers: dict = {LEARNER_KEY: self._policy, **self._bots}
+self._recorder = Recorder(keys=[LEARNER_KEY])  # bots are not recorded
+self._batch = TableBatch(n_tables, recorder=self._recorder)</code></pre>
+</details>
+</div>
+</details>
+<details class="d3"><summary><span class="name def">def policy</span><span class="desc"> – the learner NeuralPolicy (read-only property)</span>
+<span class="loc">trainer/rollout.py:241–243</span>
+</summary>
+<pre><code>@property
+def policy(self) -&gt; NeuralPolicy:
+    return self._policy</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def batch</span><span class="desc"> – the TableBatch (read-only property)</span>
+<span class="loc">trainer/rollout.py:245–247</span>
+</summary>
+<pre><code>@property
+def batch(self) -&gt; TableBatch:
+    return self._batch</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def recorder</span><span class="desc"> – the learner-only Recorder (read-only property)</span>
+<span class="loc">trainer/rollout.py:249–251</span>
+</summary>
+<pre><code>@property
+def recorder(self) -&gt; Recorder:
+    return self._recorder</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def opponents</span><span class="desc"> – the opponent bot names, in configuration order</span>
+<span class="loc">trainer/rollout.py:253–255</span>
+</summary>
+<pre><code>@property
+def opponents(self) -&gt; tuple[str, ...]:
+    return self._opponents</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def sizes</span><span class="desc"> – the table sizes drawn by the hand sampler</span>
+<span class="loc">trainer/rollout.py:257–259</span>
+</summary>
+<pre><code>@property
+def sizes(self) -&gt; tuple[int, ...]:
+    return self._sampler.sizes</code></pre>
+</details>
+<details class="d3"><summary><span class="name def">def collect</span><span class="desc"> – at least n_decisions learner records from complete hands, played with exactly the given weights, plus stats</span>
+</summary>
+<div class="kids">
+<details class="d4"><summary><span class="desc">check n_decisions first, then load (validated) weights; nothing may be pending; start the clock</span>
+<span class="loc">trainer/rollout.py:273–278</span>
+</summary>
+<pre><code>n = _int_arg(&quot;n_decisions&quot;, n_decisions, 1)  # before anything else
+self._policy.load_state_dict(weights)  # NetConfigError: nothing played
+batch, rec = self._batch, self._recorder
+assert not batch.any_in_hand() and rec.n_pending == 0 and rec.n_ready == 0
+acc = _StatsAccumulator(self._opponents, self._sampler.sizes)
+t0, all0 = time.perf_counter(), batch.n_decisions</code></pre>
+</details>
+<details class="d4"><summary><span class="name def">def recorded</span><span class="desc"> – learner decisions so far, ready or still in a running hand</span>
+<span class="loc">trainer/rollout.py:280–281</span>
+</summary>
+<pre><code>def recorded() -&gt; int:  # learner decisions, finished or still running
+    return rec.n_ready + rec.n_pending</code></pre>
+</details>
+<details class="d4"><summary><span class="name def">def account</span><span class="desc"> – adds finished hands to the stats and passes them to on_finished before their table restarts</span>
+<span class="loc">trainer/rollout.py:283–287</span>
+</summary>
+<pre><code>def account(hands: list) -&gt; None:
+    for fh in hands:
+        acc.add(fh)
+        if on_finished is not None:
+            on_finished(fh)  # before fh.table restarts</code></pre>
+</details>
+<details class="d4"><summary><span class="desc">main loop: deal, collect no-decision hands, step until every hand is over</span>
+</summary>
+<div class="kids">
+<details class="d5"><summary><span class="desc">while fewer than n decisions exist: a fresh spec and lineup on every idle table</span>
+<span class="loc">trainer/rollout.py:289–296</span>
+</summary>
+<pre><code>while True:
+    if recorded() &lt; n:
+        for t in batch.idle_tables():
+            spec = self._sampler.sample()
+            keys = draw_lineup(
+                self._lineup_rng, spec.n_seats, self._opponents, self.max_learner_seats
+            )
+            acc.start(batch.start_hand(t, spec, keys), spec, keys)</code></pre>
+</details>
+<details class="d5"><summary><span class="desc">no hand running: account hands that needed no decision; stop once enough are recorded</span>
+<span class="loc">trainer/rollout.py:297–301</span>
+</summary>
+<pre><code>if not batch.any_in_hand():
+    account(batch.collect_finished())  # hands that needed no decision
+    if recorded() &gt;= n:
+        break
+    continue</code></pre>
+</details>
+<details class="d5"><summary><span class="desc">one batched step: one act call per controller key, finished hands accounted</span>
+<span class="loc">trainer/rollout.py:302–302</span>
+</summary>
+<pre><code>account(batch.step(self._controllers))</code></pre>
+</details>
+</div>
+</details>
+<details class="d4"><summary><span class="desc">drain the recorder (finished hands only, nothing left behind) and build the stats</span>
+<span class="loc">trainer/rollout.py:304–309</span>
+</summary>
+<pre><code>records = rec.drain()
+assert rec.n_pending == 0 and rec.n_ready == 0 and len(records) &gt;= n
+stats = acc.finish(
+    records, wall=time.perf_counter() - t0, all_decisions=batch.n_decisions - all0
+)
+return records, stats</code></pre>
 </details>
 </div>
 </details>
