@@ -1,8 +1,8 @@
 """trainer: neural networks and (in stages) the training loop for a fixed-limit
 Omaha Hi-Lo 8-or-better bot, on top of `//rl_env` and `//arena`.
 
-This stage: the policy and critic networks, the acting policy and the rollout
-loop.
+This stage: the policy and critic networks, the acting policy, the rollout loop
+and the PPO learner.
 
 - `PolicyNet(obs, mask) -> logits` sees only rl_env's observation and action
   mask; illegal actions get the finite logit `MASK_VALUE` (never -inf).
@@ -13,6 +13,8 @@ loop.
 - `RolloutWorker(seed=...).collect(weights, n_decisions)` plays the learner
   against arena's bots (lineups from `draw_lineup`) in one TableBatch and returns
   the learner's `TrainingRecords` of finished hands and `RolloutStats`.
+- `make_batch`, `compute_advantages` and `ppo_loss` turn those records into the
+  PPO loss of both networks.
 
 trainer never re-implements rl_env's encoder, mask or critic expansion; it only
 consumes their arrays.
@@ -32,6 +34,14 @@ from .nets import (
     mlp,
 )
 from .policy import NeuralPolicy
+from .ppo import (
+    LossParts,
+    PPOBatch,
+    PPOConfig,
+    compute_advantages,
+    make_batch,
+    ppo_loss,
+)
 from .rollout import ResultStats, RolloutStats, RolloutWorker
 
 __all__ = [
@@ -44,6 +54,12 @@ __all__ = [
     "draw_lineup",
     "LEARNER_KEY",
     "DEFAULT_OPPONENTS",
+    "PPOConfig",
+    "PPOBatch",
+    "LossParts",
+    "make_batch",
+    "compute_advantages",
+    "ppo_loss",
     "mlp",
     "masked_logits",
     "log_probs",

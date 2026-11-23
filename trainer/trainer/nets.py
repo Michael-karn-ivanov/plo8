@@ -133,7 +133,8 @@ def masked_logits(raw: Tensor, mask: Tensor) -> Tensor:
 def log_probs(logits: Tensor) -> Tensor:
     """Action log-probabilities `log_softmax(logits, -1)` of masked logits,
     (B, N_ACTIONS). The one place they are computed from logits (acting policy
-    and, later, the PPO loss), so an unchanged network gives a ratio of 1."""
+    and the PPO loss, also for its entropy), so an unchanged network gives a
+    ratio of 1."""
     return torch.log_softmax(logits, dim=-1)
 
 
@@ -299,7 +300,8 @@ def critic_input(obs: np.ndarray, critic_cards: np.ndarray) -> np.ndarray:
     """PRIVILEGED - the critic's input, training only: the observations followed by
     rl_env's `expand_critic` of the other seats' hole cards. This is the only
     function in trainer that handles hidden information; its result goes only to
-    `CriticNet`, never to `PolicyNet` or `NeuralPolicy`.
+    `CriticNet`, never to `PolicyNet` or `NeuralPolicy` (the learner's
+    `make_batch` calls it once per update).
 
     obs float32 (B, OBS_DIM); critic_cards int8 (B, 9, 4) (`rl_env.critic_cards`
     rows, `TrainingRecords.critic`) -> float32 (B, OBS_DIM + PRIV_DIM), C-contiguous.
