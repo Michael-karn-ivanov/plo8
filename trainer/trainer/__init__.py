@@ -29,11 +29,14 @@ from .nets import (
     mlp,
 )
 from .policy import NeuralPolicy
+from .rollout import ResultStats, RolloutStats
 
 __all__ = [
     "PolicyNet",
     "CriticNet",
     "NeuralPolicy",
+    "RolloutStats",
+    "ResultStats",
     "draw_lineup",
     "LEARNER_KEY",
     "DEFAULT_OPPONENTS",
