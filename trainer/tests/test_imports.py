@@ -1,6 +1,7 @@
 """Import boundary: rl_env and arena never import torch or trainer (statically
 and at runtime); trainer imports only the standard library, numpy, torch and
-the public packages of rl_env and arena (arena only from the rollout loop)."""
+the public packages of rl_env and arena (arena only from the rollout loop; the
+PPO learner imports neither arena nor the rollout loop)."""
 
 import ast
 import importlib.util
@@ -53,6 +54,25 @@ def absolute_imports(src: str) -> set[str]:
     return mods
 
 
+def sibling_imports(src: str, package: str = "trainer") -> set[str]:
+    """Sibling modules of `package` imported relatively (`from .x import`) or
+    absolutely (`import trainer.x`, `from trainer.x import`)."""
+    mods = set()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.ImportFrom):
+            if node.level == 1 and node.module:
+                mods.add(node.module.split(".")[0])
+            elif node.level == 1:
+                mods.update(alias.name for alias in node.names)
+            elif node.level == 0 and node.module and node.module.startswith(package + "."):
+                mods.add(node.module.split(".")[1])
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith(package + "."):
+                    mods.add(alias.name.split(".")[1])
+    return mods
+
+
 def roots(mods: set[str]) -> set[str]:
     return {m.split(".")[0] for m in mods}
 
@@ -94,6 +114,7 @@ class ImportsTest(unittest.TestCase):
         names = modules_of(trainer)
         self.assertIn("trainer.nets", names)
         self.assertIn("trainer.rollout", names)
+        self.assertIn("trainer.ppo", names)
         for name in names:
             mods = absolute_imports(source_of(name))
             extra = roots(mods) - TRAINER_ALLOWED
@@ -103,6 +124,13 @@ class ImportsTest(unittest.TestCase):
             self.assertFalse(internals, f"{name} imports {internals}")
             if "arena" in roots(mods):
                 self.assertIn(name, ARENA_USERS, f"{name} imports arena")
+
+    def test_ppo_independent_of_arena_and_rollout(self):
+        src = source_of("trainer.ppo")
+        self.assertNotIn("arena", roots(absolute_imports(src)))
+        siblings = sibling_imports(src)
+        self.assertIn("nets", siblings)
+        self.assertFalse(siblings & {"rollout", "lineup"}, sorted(siblings))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
-# trainer: the neural networks, the acting policy and the rollout loop (and, in
-# later stages, the training loop) for a fixed-limit Omaha Hi-Lo 8-or-better bot,
-# on top of //rl_env and //arena.
+# trainer: the neural networks, the acting policy, the rollout loop and the PPO
+# learner (and, in later stages, the driver and league) for a fixed-limit Omaha
+# Hi-Lo 8-or-better bot, on top of //rl_env and //arena.
 #
 # torch and numpy are not buck2 targets: the repo's Python toolchain
 # (toolchains/BUCK) runs the repo venv interpreter (.venv, requirements-rl.txt), so
@@ -20,7 +20,8 @@ python_library(
     visibility = ["PUBLIC"],
 )
 
-# Fast tests (CPU, seconds; the table runs use small networks and few tables).
+# CPU tests with small networks (64 x 2) and few tables; most take seconds, the
+# collect-and-update run of test_learning about 15-30 s.
 python_test(
     name = "trainer_test",
     srcs = glob(["tests/*.py"]),
