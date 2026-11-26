@@ -1,6 +1,7 @@
-"""The learner learns: a synthetic one-step problem (raising is best) and a few
-collect -> update iterations against the arena bots (everything finite, logp
-consistent, no entropy collapse)."""
+"""The learner learns: a synthetic one-step problem (raising is best; once the
+policy always raises, an iteration's rewards are all equal and its explained
+variance is NaN) and a few collect -> update iterations against the arena bots
+(everything finite, logp consistent, no entropy collapse)."""
 
 import math
 import unittest
@@ -19,12 +20,18 @@ except ImportError:  # run as a top-level module
 TTT = np.array([True, True, True])
 
 
-def all_finite(obj) -> bool:
+def non_finite(obj, skip=()) -> list:
+    """Names of the float fields of a dataclass that are not finite."""
+    bad = []
     for name in obj.__dataclass_fields__:
         v = getattr(obj, name)
-        if isinstance(v, float) and not math.isfinite(v):
-            return False
-    return True
+        if name not in skip and isinstance(v, float) and not math.isfinite(v):
+            bad.append(name)
+    return bad
+
+
+def all_finite(obj) -> bool:
+    return not non_finite(obj)
 
 
 def ttt_entropy(learner, obs) -> float:
@@ -55,15 +62,26 @@ class SyntheticTest(unittest.TestCase):
         start = p_raise()
         self.assertAlmostEqual(start, 1 / 3, delta=0.05)
         value_losses = []
+        all_equal_iterations = 0
         for it in range(40):
             recs = helpers.acted_records(
                 learner.get_weights(), obs, mask, critic, lambda a, r: table[a], seed=1000 + it
             )
             stats = learner.update(recs)
-            self.assertTrue(all_finite(stats))
+            if np.all(recs.reward == recs.reward[0]):
+                # Every row raised: every reward is 1.0, the explained variance is
+                # undefined (NaN by design); the update still ran and every other
+                # figure is finite.
+                all_equal_iterations += 1
+                self.assertTrue(math.isnan(stats.explained_variance), it)
+                self.assertEqual(non_finite(stats, skip=("explained_variance",)), [], it)
+            else:
+                self.assertEqual(non_finite(stats), [], it)
             value_losses.append(stats.value_loss)
         self.assertGreater(p_raise(), 0.8)
         self.assertLess(np.mean(value_losses[-5:]), np.mean(value_losses[:5]))
+        # Once learned, some iteration samples BET_RAISE for all 512 rows.
+        self.assertGreater(all_equal_iterations, 0)
 
 
 class ArenaTest(unittest.TestCase):
@@ -83,7 +101,8 @@ class ArenaTest(unittest.TestCase):
                 self.assertGreater(len(first_obs), 0)
                 self.assertAlmostEqual(ttt_entropy(learner, first_obs), math.log(3), delta=0.01)
             stats = learner.update(recs)
-            self.assertTrue(all_finite(stats), it)
+            # Real rewards vary: the explained variance is finite too.
+            self.assertEqual(non_finite(stats), [], it)
             update_stats.append(stats)
             print(
                 f"iter {it}: bb/100 {rstats.bb_per_100:+.1f}  entropy {stats.entropy:.3f}  "
