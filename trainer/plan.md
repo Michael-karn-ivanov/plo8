@@ -74,7 +74,7 @@ Guiding rules:
 | `trainer/ppo.py`: `ppo_loss(policy, critic, d, priv, adv, idx, cfg, magnet=None)` | `ppo.py`: `ppo_loss(policy, critic, batch, adv, idx, cfg) -> (loss, LossParts)`; the privileged input is `batch.critic_x`; no `magnet` argument yet (the later league stage adds it) |
 | `Categorical(logits).log_prob` / `.entropy()` | `log_probs(logits)` and the entropy from the same log-softmax (equal to `Categorical`'s, checked by a test) |
 | `a.std()` | population std (`correction=0`), so a one-row minibatch gives advantage 0, not NaN |
-| returns a dict of `.item()`s of the last minibatch | `LossParts` of tensors; `Learner.update` returns `UpdateStats` averaged over the last epoch's minibatches, plus explained variance, gradient norm and counts |
+| returns a dict of `.item()`s of the last minibatch | `LossParts` of tensors; `Learner.update` returns `UpdateStats` averaged over the last epoch's minibatches, plus explained variance (NaN when all rewards are equal), gradient norm and counts |
 | `Learner.update(*batches)`: `to_tensors(concat(batches))` | `make_batch(*records) -> PPOBatch` (validates, concatenates in numpy, copies into tensors) |
 | `shuffled_minibatches(n, mb)` | `torch.randperm(n, generator=self._gen)` split into slices of `minibatch` |
 | `save_checkpoint(learner, it)` | `Learner.save(path)` / `Learner.load(path)` (networks, Adam state, config, update count, shuffle generator state) |
@@ -95,7 +95,7 @@ trainer/
     lineup.py        # LEARNER_KEY, DEFAULT_OPPONENTS, draw_lineup
     rollout.py       # RolloutWorker, RolloutStats, ResultStats
     ppo.py           # PPOConfig, PPOBatch, make_batch, compute_advantages, ppo_loss,
-                     # LossParts, Learner, UpdateStats, checkpoints
+                     # LossParts, Learner, UpdateStats, explained_variance, checkpoints
   tests/
     helpers.py       # rl_env data: records from TableBatch runs, all mask shapes, peaked nets,
                      # view counter, records built from NeuralPolicy actions
@@ -645,7 +645,8 @@ def compute_advantages(critic: CriticNet, batch: PPOBatch, chunk: int = 8192
   before the update, no gradient (`adv.requires_grad is False`), so later minibatch
   steps do not change the advantages. The critic sees all hole cards, so this removes
   most of the card luck from the reward.
-- `values` are also used for the explained variance of the update statistics.
+- `values` are also used for the explained variance of the update statistics (see
+  Statistics).
 
 ### The loss (`ppo_loss`)
 ```python
@@ -751,7 +752,7 @@ def update(self, *records):
     with _torch_threads(self._num_threads):
         t0 = time.perf_counter()
         adv, values = compute_advantages(self._critic, batch)
-        ev = explained_variance(values, batch.reward)
+        ev = explained_variance(values, batch.reward)   # nan if every reward is equal
         last, gmax, steps = [], 0.0, 0
         for epoch in range(cfg.epochs):
             perm = torch.randperm(n, generator=self._gen)
@@ -784,6 +785,10 @@ def update(self, *records):
 - Refusals (`make_batch`): missing log-probabilities, another observation width, no
   rows, wrong dtypes or illegal recorded actions raise before the advantages are
   computed: no weight, no Adam state, no generator and no `n_updates` changes.
+- A batch whose rewards are all equal is not a refusal: the update runs normally
+  (the advantages `R − V` still vary with the critic's values; a one-row minibatch
+  gives advantage 0), only its explained variance is reported as NaN (see
+  Statistics).
 - The records are only read (copied by `make_batch`), never modified.
 
 #### Statistics (`UpdateStats`)
@@ -797,7 +802,8 @@ class UpdateStats:
     clip_frac: float              #  | share of decisions with |ratio − 1| > clip
     grad_norm: float              # /  global norm before clipping
     grad_norm_max: float          # max over all steps of the update, before clipping
-    explained_variance: float     # 1 − Var(R − V_old) / Var(R), pre-update values
+    explained_variance: float     # 1 − Var(R − V_old) / Var(R), pre-update values;
+                                  # nan when every reward of the batch is the same
     value_mean: float             # mean pre-update critic value, big bets
     reward_mean: float            # mean return, big bets
     adv_std: float                # std of the raw (unnormalised) advantages
@@ -806,10 +812,31 @@ class UpdateStats:
     update: int                   # n_updates after this update
     wall_time: float              # seconds
 ```
-- `explained_variance` in float64 with population variances; `nan` when `Var(R) == 0`
-  (cannot happen with real records; the synthetic tests avoid it).
+- `explained_variance(values, reward) -> float` (module-level helper in `ppo.py`):
+  ```python
+  def explained_variance(values: Tensor, reward: Tensor) -> float:
+      if bool((reward == reward[0]).all()):        # every reward the same: undefined
+          return float("nan")
+      r, v = reward.double(), values.double()
+      return float(1.0 - (r - v).var(correction=0) / r.var(correction=0))
+  ```
+  Float64, population variances, computed once per update from the pre-update critic
+  values of `compute_advantages`, before any optimiser step. "Undefined" is decided by
+  exact equality of the rewards, not by `Var(R) == 0` or a tolerance: the float64
+  variance of identical values can come out as a tiny positive number (rounding of the
+  mean), which would report a huge meaningless negative figure instead of NaN; with
+  two or more distinct rewards the variance is clearly positive and the result
+  finite. The batch has at least one row (`make_batch` refuses empty ones), so
+  `reward[0]` exists; a one-decision batch is always "every reward the same".
+- The NaN is only a reported figure: it does not enter the loss or any other field,
+  and every other float of `UpdateStats` stays finite (`adv_std` is a population std,
+  0 or positive). With real collections (rewards of many hands) it practically never
+  occurs; it does with a one-decision batch or synthetic records with a single reward
+  value. Consumers (logging, the health checks of later stages) treat a NaN explained
+  variance as "not available", not as a failed check.
 - Everything except `wall_time` is a deterministic function of the seed, config,
-  state and records.
+  state and records. (NaN ≠ NaN: comparing two `UpdateStats` of an all-equal-reward
+  batch needs a NaN-aware field comparison; tests on real records compare with `==`.)
 
 #### Weights for collection (`get_weights`)
 - `{k: v.detach().clone() for tensors, copy.deepcopy(v) for _extra_state}` of
@@ -856,8 +883,9 @@ class UpdateStats:
 `PolicyNet`, `CriticNet`, `NeuralPolicy`, `RolloutWorker`, `RolloutStats`,
 `ResultStats`, `draw_lineup`, `LEARNER_KEY`, `DEFAULT_OPPONENTS`, `Learner`,
 `PPOConfig`, `PPOBatch`, `UpdateStats`, `LossParts`, `make_batch`,
-`compute_advantages`, `ppo_loss`, `mlp`, `masked_logits`, `log_probs`,
-`critic_input`, `check_state_dict`, `MASK_VALUE`, `LOGIT_LIMIT`, `NetConfigError`.
+`compute_advantages`, `ppo_loss`, `explained_variance`, `mlp`, `masked_logits`,
+`log_probs`, `critic_input`, `check_state_dict`, `MASK_VALUE`, `LOGIT_LIMIT`,
+`NetConfigError`.
 
 ## 5. Tests
 
@@ -903,7 +931,8 @@ class UpdateStats:
   frozen dataclass: `table`/`seat` 0, `hand_id` = row index, `controller` 0, the
   given `obs`, `mask`, `critic`, the sampled `action` and `logp`, `reward =
   reward_fn(action, row)` as float32). Used for one-legal-action rows (`ALL_MASKS`
-  on real observations) and for the synthetic learning problem.
+  on real observations), for constant-reward batches and for the synthetic learning
+  problem.
 
 ### `test_shapes`
 - From `records(...)`: batch sizes 1, 7 and 512 (rows of mixed table sizes); policy
@@ -1172,10 +1201,19 @@ All with `small_learner` / `small_worker`; records of ~2,000–3,000 decisions.
   every step: ≤ `1e-3 · (1 + 1e-5)`; `stats.grad_norm` and `grad_norm_max` (before
   clipping) are larger than 1e-3. With `max_grad_norm = 1e9` the norm at the step
   equals the reported one.
-- Statistics: every float field finite (apart from `wall_time` > 0); `approx_kl >=
-  0`, `0 <= clip_frac <= 1`, `entropy` in `(0, ln 3]`; `explained_variance` equals
-  `1 − Var(R − V_old) / Var(R)` recomputed with the pre-update critic copy;
+- Statistics on real records: every float field finite, the explained variance
+  included (real rewards vary), `wall_time` > 0; `approx_kl >= 0`, `0 <= clip_frac <=
+  1`, `entropy` in `(0, ln 3]`; `explained_variance` equals `1 − Var(R − V_old) /
+  Var(R)` recomputed with the pre-update critic copy (float64, `atol 1e-9`);
   `reward_mean` equals the records' mean reward.
+- Explained variance undefined: `acted_records` on ~300 real rows with a constant
+  `reward_fn` (every reward `0.5`), and a one-row `acted_records` batch: `update`
+  succeeds (counts as an update, `n_updates` advances, the weights change and stay
+  finite), `math.isnan(stats.explained_variance)`, every other float field finite
+  (`adv_std` finite, 0 for the one-row batch). The same rows with two distinct reward
+  values give a finite explained variance. `explained_variance` called directly: NaN
+  for a constant reward tensor (also for values like `0.1` whose float64 variance is
+  not exactly 0), the recomputed formula otherwise.
 - Refusals: records from `helpers.records(...)` (NaN logp), records whose `obs`
   lacks one column (a `TrainingRecords` rebuilt with `obs[:, :-1]`), an empty
   `TrainingRecords` (a fresh recorder's `drain()`), no argument, a non-record
@@ -1195,7 +1233,9 @@ All with `small_learner` / `small_worker`; records of ~2,000–3,000 decisions.
 - Determinism: two learners with the same seed and config, given the same records,
   have identical initial weights and give identical weights (`torch.equal`) and
   `UpdateStats` (after `dataclasses.replace(wall_time=0)`) over two updates (`r1`,
-  then `r2`); another seed gives other initial weights and other stats.
+  then `r2`); another seed gives other initial weights and other stats. (Real
+  records, so no NaN field; the constant-reward case above compares its two runs
+  NaN-aware.)
 
 ### `test_checkpoint`
 - Resume: learner A, `update(r1)`, `save(tmp)`; `B = Learner.load(tmp)`; B's config,
@@ -1223,10 +1263,14 @@ All with `small_learner` / `small_worker`; records of ~2,000–3,000 decisions.
   actions and logp) → `update`. The mean probability of `BET_RAISE` over the rows
   (from `learner.policy`) rises from ≈ 1/3 to > 0.8, and the mean `value_loss` of the
   last 5 updates is below that of the first 5. Seeded, so deterministic; a few
-  seconds.
+  seconds. (The rewards depend on the sampled action; once the policy has learned,
+  an iteration samples `BET_RAISE` for all 512 rows — with seed 0 already by update
+  4 — so every reward is 1.0. For such an iteration the test asserts the explained
+  variance is NaN and every other `UpdateStats` float is finite.)
 - **Against the arena bots**: `small_worker(seed=0)` and `small_learner(seed=0,
   minibatch=1024)`; 5 iterations of `collect(learner.get_weights(), 3000)` →
-  `update(records)`. Every `UpdateStats` and `RolloutStats` figure finite; the first
+  `update(records)`. Every `UpdateStats` and `RolloutStats` figure finite (the
+  explained variance included: real rewards vary); the first
   iteration's records' logp match the learner (ratio ≈ 1 at the first minibatch:
   `approx_kl < 1e-3` in the first update's statistics is not required, but the
   recorded logp equal the learner's recomputed ones, `atol 1e-5`); the policy's
