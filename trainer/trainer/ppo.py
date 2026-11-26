@@ -304,15 +304,15 @@ def compute_advantages(
     return batch.reward - values, values
 
 
-def explained_variance(values: Tensor, returns: Tensor) -> float:
-    """1 - Var(R - V) / Var(R) in float64 with population variances; nan when
-    Var(R) == 0."""
-    v = values.detach().double().numpy()
-    r = returns.detach().double().numpy()
-    var_r = float(np.var(r))
-    if var_r == 0.0:
+def explained_variance(values: Tensor, reward: Tensor) -> float:
+    """1 - Var(R - V) / Var(R), float64, population variances. NaN when every
+    reward is the same - decided by exact equality, not Var(R) == 0: the float64
+    variance of identical values can be a tiny positive number. `reward` has at
+    least one row (make_batch refuses empty batches)."""
+    if bool((reward == reward[0]).all()):  # every reward the same: undefined
         return math.nan
-    return float(1.0 - np.var(r - v) / var_r)
+    r, v = reward.detach().double(), values.detach().double()
+    return float(1.0 - (r - v).var(correction=0) / r.var(correction=0))
 
 
 # --- the loss ----------------------------------------------------------------------
@@ -369,7 +369,7 @@ class UpdateStats:
     clip_frac: float  #  | share of decisions with |ratio - 1| > clip
     grad_norm: float  # /  global norm before clipping
     grad_norm_max: float  # max over all steps of the update, before clipping
-    explained_variance: float  # 1 - Var(R - V_old) / Var(R), pre-update values
+    explained_variance: float  # 1 - Var(R - V_old) / Var(R), pre-update; nan if all R equal
     value_mean: float  # mean pre-update critic value, big bets
     reward_mean: float  # mean return, big bets
     adv_std: float  # std of the raw (unnormalised) advantages
@@ -458,7 +458,7 @@ class Learner:
         with _torch_threads(self._num_threads):
             t0 = time.perf_counter()
             adv, values = compute_advantages(self._critic, batch)
-            ev = explained_variance(values, batch.reward)
+            ev = explained_variance(values, batch.reward)  # nan if every reward is equal
             last: list[tuple[LossParts, float]] = []
             gmax, steps = 0.0, 0
             for epoch in range(cfg.epochs):

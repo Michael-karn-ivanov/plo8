@@ -43,6 +43,7 @@ from .ppo import (
     PPOConfig,
     UpdateStats,
     compute_advantages,
+    explained_variance,
     make_batch,
     ppo_loss,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "make_batch",
     "compute_advantages",
     "ppo_loss",
+    "explained_variance",
     "mlp",
     "masked_logits",
     "log_probs",

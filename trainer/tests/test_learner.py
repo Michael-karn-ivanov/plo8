@@ -1,7 +1,8 @@
 """Learner: configuration, advantages computed once before the update, the
 update itself (all parameters move, records untouched), steps and minibatch
-sizes, gradient clipping, statistics, refusals that change nothing, weights for
-collection, torch thread handling and determinism."""
+sizes, gradient clipping, statistics (explained variance NaN when every reward
+is equal), refusals that change nothing, weights for collection, torch thread
+handling and determinism."""
 
 import copy
 import dataclasses
@@ -13,6 +14,7 @@ import unittest
 import numpy as np
 import torch
 
+import trainer
 import trainer.ppo as ppo_mod
 from rl_env import Recorder, TrainingRecords
 from trainer import (
@@ -21,6 +23,7 @@ from trainer import (
     PPOConfig,
     UpdateStats,
     critic_input,
+    explained_variance,
     log_probs,
 )
 
@@ -60,6 +63,21 @@ def records_copy(r: TrainingRecords) -> dict:
 
 def no_time(stats: UpdateStats) -> UpdateStats:
     return dataclasses.replace(stats, wall_time=0.0)
+
+
+def same_stats_nan_aware(a: UpdateStats, b: UpdateStats) -> bool:
+    """Field-wise equality where NaN equals NaN (NaN != NaN under ==)."""
+    for f in dataclasses.fields(a):
+        x, y = getattr(a, f.name), getattr(b, f.name)
+        if isinstance(x, float) and isinstance(y, float) and math.isnan(x) and math.isnan(y):
+            continue
+        if x != y:
+            return False
+    return True
+
+
+def float_fields(stats: UpdateStats) -> dict:
+    return {f.name: getattr(stats, f.name) for f in dataclasses.fields(stats) if isinstance(getattr(stats, f.name), float)}
 
 
 class WrapLoss:
@@ -259,6 +277,8 @@ class LearnerTest(unittest.TestCase):
         learner = helpers.small_learner(6)
         critic_before = copy.deepcopy(learner.critic)
         stats = learner.update(self.r1)
+        # Real records: rewards vary, so every float is finite, the explained
+        # variance included.
         for f in dataclasses.fields(stats):
             v = getattr(stats, f.name)
             self.assertTrue(math.isfinite(v), f.name)
@@ -273,9 +293,72 @@ class LearnerTest(unittest.TestCase):
             v = critic_before(x).double().numpy()
         r = self.r1.reward.astype(np.float64)
         ev = 1.0 - np.var(r - v) / np.var(r)
-        self.assertAlmostEqual(stats.explained_variance, ev, delta=1e-5)
+        self.assertAlmostEqual(stats.explained_variance, ev, delta=1e-9)
         self.assertAlmostEqual(stats.reward_mean, float(r.mean()), delta=1e-6)
         self.assertAlmostEqual(stats.value_mean, float(v.mean()), delta=1e-5)
+
+    def acted(self, n, reward_fn, seed=5):
+        """`acted_records` on the first `n` real rows of r1, acted on by the
+        policy of `small_learner(14)`."""
+        r = self.r1
+        w = helpers.small_learner(14).get_weights()
+        return helpers.acted_records(w, r.obs[:n], r.mask[:n], r.critic[:n], reward_fn, seed=seed)
+
+    def test_explained_variance_undefined(self):
+        constant = lambda a, rows: np.full(len(a), 0.5, dtype=np.float32)  # noqa: E731
+        cases = {"constant reward": self.acted(300, constant), "one row": self.acted(1, constant)}
+        for name, recs in cases.items():
+            self.assertTrue(np.all(recs.reward == 0.5), name)
+            learner = helpers.small_learner(14)
+            before = params(learner)
+            stats = learner.update(recs)  # not a refusal
+            self.assertEqual(learner.n_updates, 1, name)
+            self.assertEqual(stats.update, 1, name)
+            self.assertEqual(stats.decisions, len(recs), name)
+            after = params(learner)
+            self.assertFalse(all(torch.equal(a, b) for a, b in zip(before, after)), name)
+            self.assertTrue(all(torch.isfinite(a).all() for a in after), name)
+            self.assertTrue(math.isnan(stats.explained_variance), name)
+            for field, v in float_fields(stats).items():
+                if field != "explained_variance":
+                    self.assertTrue(math.isfinite(v), f"{name}: {field}")
+            if name == "one row":
+                self.assertEqual(stats.adv_std, 0.0)
+
+        # Two distinct reward values: defined, finite.
+        two = self.acted(300, lambda a, rows: (rows % 2).astype(np.float32))
+        stats = helpers.small_learner(14).update(two)
+        self.assertTrue(math.isfinite(stats.explained_variance))
+
+        # Deterministic, compared NaN-aware: NaN != NaN, so a field-wise
+        # comparison that treats two NaNs as equal.
+        recs = cases["constant reward"]
+        a, b = helpers.small_learner(15), helpers.small_learner(15)
+        sa, sb = no_time(a.update(recs)), no_time(b.update(recs))
+        self.assertTrue(math.isnan(sa.explained_variance) and math.isnan(sb.explained_variance))
+        self.assertTrue(same_stats_nan_aware(sa, sb))
+        self.assertTrue(all(torch.equal(x, y) for x, y in zip(params(a), params(b))))
+
+    def test_explained_variance_function(self):
+        values = torch.linspace(-1.0, 1.0, 7)
+        # Constant rewards: NaN, also for values like 0.1 whose float64
+        # variance need not come out exactly 0.
+        for c in (0.5, 0.1, -1.0 / 3.0, 0.0):
+            reward = torch.full((7,), c, dtype=torch.float32)
+            self.assertTrue(math.isnan(explained_variance(values, reward)), c)
+        self.assertTrue(math.isnan(explained_variance(torch.zeros(1), torch.ones(1))))
+        # Otherwise the formula, float64 with population variances.
+        g = torch.Generator().manual_seed(0)
+        reward = torch.randn(100, generator=g)
+        v = reward + 0.5 * torch.randn(100, generator=g)
+        rd, vd = reward.double().numpy(), v.double().numpy()
+        expected = 1.0 - np.var(rd - vd) / np.var(rd)
+        self.assertAlmostEqual(explained_variance(v, reward), expected, delta=1e-12)
+        self.assertEqual(explained_variance(torch.tensor([0.0, 1.0]), torch.tensor([0.0, 1.0])), 1.0)
+        self.assertTrue(math.isfinite(explained_variance(torch.zeros(2), torch.tensor([0.0, 1e-6]))))
+        # Exported from the package.
+        self.assertIs(trainer.explained_variance, ppo_mod.explained_variance)
+        self.assertIn("explained_variance", trainer.__all__)
 
     # --- refusals --------------------------------------------------------------
 
@@ -379,6 +462,7 @@ class LearnerTest(unittest.TestCase):
     # --- determinism -----------------------------------------------------------
 
     def test_determinism(self):
+        # Real records: no NaN field, so plain == on UpdateStats.
         a, b = helpers.small_learner(12), helpers.small_learner(12)
         self.assertTrue(all(torch.equal(x, y) for x, y in zip(params(a), params(b))))
         sa = [no_time(a.update(self.r1)), no_time(a.update(self.r2))]
