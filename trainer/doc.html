@@ -88,8 +88,8 @@ trainer never re-implements rl_env&#x27;s encoder, mask or critic expansion; it 
 consumes their arrays.
 &quot;&quot;&quot;</code></pre>
 </details>
-<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – lineup helpers, networks, NeuralPolicy, the PPO learner and the rollout worker / stats</span>
-<span class="loc">trainer/__init__.py:25–49</span>
+<details class="d2"><summary><span class="name ">imports</span><span class="desc"> – lineup helpers, networks, NeuralPolicy, the PPO learner (with explained_variance) and the rollout worker / stats</span>
+<span class="loc">trainer/__init__.py:25–50</span>
 </summary>
 <pre><code>from .lineup import DEFAULT_OPPONENTS, LEARNER_KEY, draw_lineup
 from .nets import (
@@ -112,13 +112,14 @@ from .ppo import (
     PPOConfig,
     UpdateStats,
     compute_advantages,
+    explained_variance,
     make_batch,
     ppo_loss,
 )
 from .rollout import ResultStats, RolloutStats, RolloutWorker</code></pre>
 </details>
-<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__ (now with the PPO learner names)</span>
-<span class="loc">trainer/__init__.py:51–77</span>
+<details class="d2"><summary><span class="name ">constants</span><span class="desc"> – __all__ (with the PPO learner names, explained_variance included)</span>
+<span class="loc">trainer/__init__.py:52–79</span>
 </summary>
 <pre><code>__all__ = [
     &quot;PolicyNet&quot;,
@@ -138,6 +139,7 @@ from .rollout import ResultStats, RolloutStats, RolloutWorker</code></pre>
     &quot;make_batch&quot;,
     &quot;compute_advantages&quot;,
     &quot;ppo_loss&quot;,
+    &quot;explained_variance&quot;,
     &quot;mlp&quot;,
     &quot;masked_logits&quot;,
     &quot;log_probs&quot;,
@@ -1235,18 +1237,18 @@ return PPOBatch(
         )
     return batch.reward - values, values</code></pre>
 </details>
-<details class="d2"><summary><span class="name def">def explained_variance</span><span class="desc"> – 1 − Var(R − V) / Var(R) in float64 (nan when Var(R) = 0)</span>
+<details class="d2"><summary><span class="name def">def explained_variance</span><span class="desc"> – 1 − Var(R − V) / Var(R) in float64 with population variances; NaN when every reward is the same (exact equality, not Var(R) = 0)</span>
 <span class="loc">trainer/ppo.py:307–315</span>
 </summary>
-<pre><code>def explained_variance(values: Tensor, returns: Tensor) -&gt; float:
-    """1 - Var(R - V) / Var(R) in float64 with population variances; nan when
-    Var(R) == 0."""
-    v = values.detach().double().numpy()
-    r = returns.detach().double().numpy()
-    var_r = float(np.var(r))
-    if var_r == 0.0:
+<pre><code>def explained_variance(values: Tensor, reward: Tensor) -&gt; float:
+    """1 - Var(R - V) / Var(R), float64, population variances. NaN when every
+    reward is the same - decided by exact equality, not Var(R) == 0: the float64
+    variance of identical values can be a tiny positive number. `reward` has at
+    least one row (make_batch refuses empty batches)."""
+    if bool((reward == reward[0]).all()):  # every reward the same: undefined
         return math.nan
-    return float(1.0 - np.var(r - v) / var_r)</code></pre>
+    r, v = reward.detach().double(), values.detach().double()
+    return float(1.0 - (r - v).var(correction=0) / r.var(correction=0))</code></pre>
 </details>
 <details class="d2"><summary><span class="name ">LossParts</span><span class="desc"> – policy / value loss and entropy (with graph), approx_kl, clip fraction and ratios (detached)</span>
 <span class="loc">trainer/ppo.py:321–328</span>
@@ -1296,7 +1298,7 @@ return loss, LossParts(pg, v, ent, kl, cf, ratio.detach())</code></pre>
 </details>
 </div>
 </details>
-<details class="d2"><summary><span class="name ">UpdateStats</span><span class="desc"> – logging figures of one update (last-epoch loss means, gradient norms, explained variance, counts, wall time)</span>
+<details class="d2"><summary><span class="name ">UpdateStats</span><span class="desc"> – logging figures of one update (last-epoch loss means, gradient norms, explained variance – NaN when every reward is the same –, counts, wall time)</span>
 <span class="loc">trainer/ppo.py:363–379</span>
 </summary>
 <pre><code>@dataclass(frozen=True)
@@ -1308,7 +1310,7 @@ class UpdateStats:
     clip_frac: float  #  | share of decisions with |ratio - 1| &gt; clip
     grad_norm: float  # /  global norm before clipping
     grad_norm_max: float  # max over all steps of the update, before clipping
-    explained_variance: float  # 1 - Var(R - V_old) / Var(R), pre-update values
+    explained_variance: float  # 1 - Var(R - V_old) / Var(R), pre-update; nan if all R equal
     value_mean: float  # mean pre-update critic value, big bets
     reward_mean: float  # mean return, big bets
     adv_std: float  # std of the raw (unnormalised) advantages
@@ -1422,13 +1424,13 @@ def seed(self) -&gt; int:
 <pre><code>batch = make_batch(*records)
 cfg, n = self._cfg, len(batch)</code></pre>
 </details>
-<details class="d4"><summary><span class="desc">with the learner&#x27;s thread count: advantages and explained variance once, from the pre-update critic</span>
+<details class="d4"><summary><span class="desc">with the learner&#x27;s thread count: advantages and explained variance once, from the pre-update critic (NaN if every reward is equal – not a refusal, the update runs)</span>
 <span class="loc">trainer/ppo.py:458–463</span>
 </summary>
 <pre><code>with _torch_threads(self._num_threads):
     t0 = time.perf_counter()
     adv, values = compute_advantages(self._critic, batch)
-    ev = explained_variance(values, batch.reward)
+    ev = explained_variance(values, batch.reward)  # nan if every reward is equal
     last: list[tuple[LossParts, float]] = []
     gmax, steps = 0.0, 0</code></pre>
 </details>
